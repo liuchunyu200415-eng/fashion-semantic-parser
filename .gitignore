@@ -1,0 +1,31 @@
+.DS_Store
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Runtime artifacts
+outputs/*
+!outputs/.gitkeep
+logs/
+tmp/
+
+# Large local assets
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+models/checkpoints/*
+!models/checkpoints/.gitkeep
+*.pt
+*.pth
+*.onnx
+*.engine
+*.safetensors

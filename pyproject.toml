@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fashion-semantic-parser"
+version = "0.1.0"
+description = "Multimodal fine-grained semantic parsing system for e-commerce fashion images."
+readme = "README.md"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "fastapi>=0.111.0",
+    "numpy>=1.24.0",
+    "opencv-python>=4.8.0",
+    "pydantic>=2.7.0",
+    "pyyaml>=6.0.1",
+    "uvicorn[standard]>=0.29.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black>=24.4.0",
+    "flake8>=7.0.0",
+    "isort>=5.13.0",
+    "mypy>=1.10.0",
+    "pytest>=8.2.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "W503"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+

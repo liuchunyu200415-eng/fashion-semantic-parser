@@ -1,0 +1,20 @@
+app:
+  name: fashion-semantic-parser
+  env: development
+
+paths:
+  data_dir: data
+  raw_data_dir: data/raw
+  processed_data_dir: data/processed
+  knowledge_dir: data/knowledge
+  model_dir: models/checkpoints
+  output_dir: outputs
+
+service:
+  host: 0.0.0.0
+  port: 8000
+
+model:
+  device: cuda
+  precision: fp16
+
