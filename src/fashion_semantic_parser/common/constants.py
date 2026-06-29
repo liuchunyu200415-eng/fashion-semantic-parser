@@ -21,4 +21,3 @@ SUPPORTED_LOCAL_REGIONS = (
     "pattern",
     "decoration",
 )
-

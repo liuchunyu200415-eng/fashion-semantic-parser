@@ -11,4 +11,3 @@ class ConfigurationError(FashionParserError):
 
 class ModelNotReadyError(FashionParserError):
     """Raised when a model-dependent service is called before initialization."""
-

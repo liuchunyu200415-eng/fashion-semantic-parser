@@ -24,6 +24,7 @@ dev = [
     "isort>=5.13.0",
     "mypy>=1.10.0",
     "pytest>=8.2.0",
+    "types-PyYAML>=6.0.12",
 ]
 
 [tool.setuptools.packages.find]
@@ -50,4 +51,3 @@ disallow_untyped_defs = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-

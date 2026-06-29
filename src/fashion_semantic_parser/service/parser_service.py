@@ -29,4 +29,3 @@ class FashionParserService:
             "Model adapters are not implemented yet. "
             f"Received query for image: {request.image_path}"
         )
-

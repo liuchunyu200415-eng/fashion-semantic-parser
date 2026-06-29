@@ -63,4 +63,3 @@ def load_settings(config_path: str | Path = "configs/app.yaml") -> Settings:
     with resolved_path.open("r", encoding="utf-8") as file:
         raw_config: dict[str, Any] = yaml.safe_load(file) or {}
     return Settings.model_validate(raw_config)
-

@@ -42,4 +42,3 @@ class MultimodalQueryResponse(BaseModel):
     answer: str
     regions: list[RegionPrediction] = Field(default_factory=list)
     references: list[str] = Field(default_factory=list)
-

@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -22,4 +21,3 @@ def resolve_project_path(relative_path: str | Path) -> Path:
     if path.is_absolute():
         raise ValueError("Only project-relative paths are allowed.")
     return PROJECT_ROOT / path
-

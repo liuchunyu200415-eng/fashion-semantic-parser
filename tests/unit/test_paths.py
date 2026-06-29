@@ -18,4 +18,3 @@ def test_resolve_project_path_rejects_absolute_path() -> None:
     """Absolute paths should be rejected to keep project configuration portable."""
     with pytest.raises(ValueError):
         resolve_project_path(Path("/tmp/example.jpg"))
-
