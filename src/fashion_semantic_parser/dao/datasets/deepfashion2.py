@@ -6,6 +6,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from fashion_semantic_parser.models.datasets import (
+    FashionItemAnnotation,
+    FashionSample,
+)
+
 
 class DeepFashion2SplitSummary(BaseModel):
     """Summary of one DeepFashion2 split directory."""
@@ -85,3 +90,110 @@ def _read_sample_item_keys(annotation_path: Path) -> list[str]:
 
     item_keys = sorted(key for key in annotation if key.startswith("item"))
     return item_keys[:5]
+
+
+def load_deepfashion2_samples(
+    root: Path,
+    split: str,
+    limit: int | None = None,
+) -> list[FashionSample]:
+    """Load DeepFashion2 split metadata into normalized samples.
+
+    Args:
+        root: DeepFashion2 dataset root directory.
+        split: Dataset split name, such as ``train``, ``validation``, or ``test``.
+        limit: Optional maximum number of samples to return.
+
+    Returns:
+        Normalized image samples with item annotations when available.
+    """
+    split_root = root / split
+    image_root = split_root / "image"
+    annotation_root = split_root / "annos"
+    if not image_root.exists():
+        return []
+
+    image_paths = sorted(image_root.glob("*.jpg"))
+    if limit is not None:
+        image_paths = image_paths[:limit]
+
+    samples: list[FashionSample] = []
+    for image_path in image_paths:
+        annotation_path = annotation_root / f"{image_path.stem}.json"
+        items: list[FashionItemAnnotation] = []
+        metadata: dict[str, Any] = {}
+        sample_annotation_path: str | None = None
+
+        if annotation_path.exists():
+            annotation = _read_annotation(annotation_path)
+            items = _parse_item_annotations(annotation)
+            metadata = _parse_sample_metadata(annotation)
+            sample_annotation_path = str(annotation_path)
+
+        samples.append(
+            FashionSample(
+                dataset_name="deepfashion2",
+                split=split,
+                image_path=str(image_path),
+                annotation_path=sample_annotation_path,
+                items=items,
+                metadata=metadata,
+            )
+        )
+
+    return samples
+
+
+def _read_annotation(annotation_path: Path) -> dict[str, Any]:
+    """Read one DeepFashion2 annotation file."""
+    with annotation_path.open("r", encoding="utf-8") as file:
+        annotation: dict[str, Any] = json.load(file)
+    return annotation
+
+
+def _parse_item_annotations(
+    annotation: dict[str, Any],
+) -> list[FashionItemAnnotation]:
+    """Parse garment item entries from one DeepFashion2 annotation."""
+    items: list[FashionItemAnnotation] = []
+    item_keys = sorted(key for key in annotation if key.startswith("item"))
+    for item_key in item_keys:
+        raw_item = annotation.get(item_key)
+        if not isinstance(raw_item, dict):
+            continue
+
+        items.append(
+            FashionItemAnnotation(
+                item_id=item_key,
+                category_name=_optional_str(raw_item.get("category_name")),
+                category_id=_optional_int(raw_item.get("category_id")),
+                style=_optional_int(raw_item.get("style")),
+                bounding_box=_int_list(raw_item.get("bounding_box")),
+                raw_attributes=raw_item,
+            )
+        )
+    return items
+
+
+def _parse_sample_metadata(annotation: dict[str, Any]) -> dict[str, Any]:
+    """Keep non-item DeepFashion2 fields as sample metadata."""
+    return {
+        key: value for key, value in annotation.items() if not key.startswith("item")
+    }
+
+
+def _optional_str(value: Any) -> str | None:
+    """Return a string value when available."""
+    return value if isinstance(value, str) else None
+
+
+def _optional_int(value: Any) -> int | None:
+    """Return an integer value when available."""
+    return value if isinstance(value, int) else None
+
+
+def _int_list(value: Any) -> list[int]:
+    """Return a list of integers when the raw field is list-like."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, int)]
