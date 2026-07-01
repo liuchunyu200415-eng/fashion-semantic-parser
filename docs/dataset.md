@@ -54,3 +54,25 @@ data/raw/deepfashion2/json_for_validation
 data/raw/deepfashion2/json_for_test
 ```
 
+## Build Lightweight Indexes
+
+After raw datasets are linked, build JSONL indexes on the server:
+
+```bash
+python scripts/build_dataset_indexes.py
+```
+
+Generated files are stored under:
+
+```text
+data/processed/autodl/indexes
+```
+
+Use a small limit for smoke tests:
+
+```bash
+python scripts/build_dataset_indexes.py --limit 10
+```
+
+Index records use project-relative paths so they remain portable across local
+development and AutoDL server environments.
