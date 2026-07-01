@@ -2,6 +2,7 @@
 
 import csv
 from pathlib import Path
+from typing import Iterator
 
 from pydantic import BaseModel, Field
 
@@ -91,25 +92,39 @@ def load_fashionai_attribute_samples(
     Returns:
         Normalized samples with the attribute directory stored as metadata.
     """
+    return list(iter_fashionai_attribute_samples(root=root, limit=limit))
+
+
+def iter_fashionai_attribute_samples(
+    root: Path,
+    limit: int | None = None,
+) -> Iterator[FashionSample]:
+    """Iterate FashionAI attribute images as normalized samples.
+
+    Args:
+        root: FashionAI dataset root directory.
+        limit: Optional maximum number of samples to return.
+
+    Yields:
+        Normalized samples with the attribute directory stored as metadata.
+    """
     image_root = root / "Images"
     if not image_root.exists():
-        return []
+        return
 
-    samples: list[FashionSample] = []
+    record_count = 0
     for attribute_dir in sorted(path for path in image_root.iterdir() if path.is_dir()):
         for image_path in sorted(attribute_dir.glob("*.jpg")):
-            samples.append(
-                FashionSample(
-                    dataset_name="fashionai",
-                    split="test",
-                    image_path=str(image_path),
-                    attributes={"attribute_group": attribute_dir.name},
-                    metadata={"attribute_group": attribute_dir.name},
-                )
+            yield FashionSample(
+                dataset_name="fashionai",
+                split="test",
+                image_path=str(image_path),
+                attributes={"attribute_group": attribute_dir.name},
+                metadata={"attribute_group": attribute_dir.name},
             )
-            if limit is not None and len(samples) >= limit:
-                return samples
-    return samples
+            record_count += 1
+            if limit is not None and record_count >= limit:
+                return
 
 
 def load_fashionai_questions(
@@ -127,11 +142,28 @@ def load_fashionai_questions(
     Returns:
         CSV rows represented as typed question records.
     """
+    return list(iter_fashionai_questions(root=root, file_name=file_name, limit=limit))
+
+
+def iter_fashionai_questions(
+    root: Path,
+    file_name: str = "question.csv",
+    limit: int | None = None,
+) -> Iterator[FashionAIQuestion]:
+    """Iterate a FashionAI CSV file while preserving its original fields.
+
+    Args:
+        root: FashionAI dataset root directory.
+        file_name: CSV file name under the ``Tests`` directory.
+        limit: Optional maximum number of rows to return.
+
+    Yields:
+        CSV rows represented as typed question records.
+    """
     csv_path = root / "Tests" / file_name
     if not csv_path.exists():
-        return []
+        return
 
-    questions: list[FashionAIQuestion] = []
     with csv_path.open("r", encoding="utf-8-sig", newline="") as file:
         reader = csv.DictReader(file)
         for row_index, row in enumerate(reader):
@@ -140,8 +172,6 @@ def load_fashionai_questions(
                 for key, value in row.items()
                 if key is not None and value is not None
             }
-            questions.append(FashionAIQuestion(row_index=row_index, fields=fields))
-            if limit is not None and len(questions) >= limit:
-                return questions
-
-    return questions
+            yield FashionAIQuestion(row_index=row_index, fields=fields)
+            if limit is not None and row_index + 1 >= limit:
+                return

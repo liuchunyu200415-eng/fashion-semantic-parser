@@ -8,14 +8,17 @@ from pydantic import BaseModel, Field
 
 from fashion_semantic_parser.common.paths import to_project_relative_path
 from fashion_semantic_parser.dao.datasets.deepfashion2 import (
-    load_deepfashion2_samples,
+    iter_deepfashion2_samples,
 )
 from fashion_semantic_parser.dao.datasets.fashionai import (
     FashionAIQuestion,
-    load_fashionai_attribute_samples,
-    load_fashionai_questions,
+    iter_fashionai_attribute_samples,
+    iter_fashionai_questions,
 )
-from fashion_semantic_parser.models.datasets import FashionSample
+from fashion_semantic_parser.models.datasets import (
+    FashionItemAnnotation,
+    FashionSample,
+)
 
 
 class DatasetIndexFile(BaseModel):
@@ -84,7 +87,7 @@ def _write_fashionai_attribute_index(
 ) -> DatasetIndexFile:
     """Write the FashionAI attribute image index."""
     output_path = output_dir / "fashionai_attributes.jsonl"
-    samples = load_fashionai_attribute_samples(fashionai_root, limit=limit)
+    samples = iter_fashionai_attribute_samples(fashionai_root, limit=limit)
     records = (_sample_to_index_record(sample) for sample in samples)
     record_count = _write_jsonl(records, output_path)
     return _index_file("fashionai_attributes", output_path, record_count)
@@ -97,7 +100,7 @@ def _write_fashionai_question_index(
 ) -> DatasetIndexFile:
     """Write the FashionAI question CSV index."""
     output_path = output_dir / "fashionai_questions.jsonl"
-    questions = load_fashionai_questions(fashionai_root, limit=limit)
+    questions = iter_fashionai_questions(fashionai_root, limit=limit)
     records = (_question_to_index_record(question) for question in questions)
     record_count = _write_jsonl(records, output_path)
     return _index_file("fashionai_questions", output_path, record_count)
@@ -111,7 +114,7 @@ def _write_deepfashion2_split_index(
 ) -> DatasetIndexFile:
     """Write one DeepFashion2 split index."""
     output_path = output_dir / f"deepfashion2_{split}.jsonl"
-    samples = load_deepfashion2_samples(deepfashion2_root, split=split, limit=limit)
+    samples = iter_deepfashion2_samples(deepfashion2_root, split=split, limit=limit)
     records = (_sample_to_index_record(sample) for sample in samples)
     record_count = _write_jsonl(records, output_path)
     return _index_file(f"deepfashion2_{split}", output_path, record_count)
@@ -127,22 +130,41 @@ def _write_jsonl(records: Iterable[dict[str, object]], output_path: Path) -> int
     Returns:
         Number of records written.
     """
+    tmp_path = output_path.with_suffix(f"{output_path.suffix}.tmp")
     count = 0
-    with output_path.open("w", encoding="utf-8") as file:
+    with tmp_path.open("w", encoding="utf-8") as file:
         for record in records:
             file.write(json.dumps(record, ensure_ascii=False))
             file.write("\n")
             count += 1
+    tmp_path.replace(output_path)
     return count
 
 
 def _sample_to_index_record(sample: FashionSample) -> dict[str, object]:
     """Convert a normalized sample to a portable index record."""
-    record = sample.model_dump()
-    record["image_path"] = to_project_relative_path(sample.image_path)
+    record: dict[str, object] = {
+        "dataset_name": sample.dataset_name,
+        "split": sample.split,
+        "image_path": to_project_relative_path(sample.image_path),
+        "items": [_item_to_index_record(item) for item in sample.items],
+        "attributes": sample.attributes,
+        "metadata": sample.metadata,
+    }
     if sample.annotation_path is not None:
         record["annotation_path"] = to_project_relative_path(sample.annotation_path)
     return record
+
+
+def _item_to_index_record(item: FashionItemAnnotation) -> dict[str, object]:
+    """Convert an item annotation to compact index fields."""
+    return {
+        "item_id": item.item_id,
+        "category_name": item.category_name,
+        "category_id": item.category_id,
+        "style": item.style,
+        "bounding_box": item.bounding_box,
+    }
 
 
 def _question_to_index_record(question: FashionAIQuestion) -> dict[str, object]:

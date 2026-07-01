@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from pydantic import BaseModel, Field
 
@@ -107,17 +107,34 @@ def load_deepfashion2_samples(
     Returns:
         Normalized image samples with item annotations when available.
     """
+    return list(iter_deepfashion2_samples(root=root, split=split, limit=limit))
+
+
+def iter_deepfashion2_samples(
+    root: Path,
+    split: str,
+    limit: int | None = None,
+) -> Iterator[FashionSample]:
+    """Iterate DeepFashion2 split metadata as normalized samples.
+
+    Args:
+        root: DeepFashion2 dataset root directory.
+        split: Dataset split name, such as ``train``, ``validation``, or ``test``.
+        limit: Optional maximum number of samples to return.
+
+    Yields:
+        Normalized image samples with item annotations when available.
+    """
     split_root = root / split
     image_root = split_root / "image"
     annotation_root = split_root / "annos"
     if not image_root.exists():
-        return []
+        return
 
     image_paths = sorted(image_root.glob("*.jpg"))
     if limit is not None:
         image_paths = image_paths[:limit]
 
-    samples: list[FashionSample] = []
     for image_path in image_paths:
         annotation_path = annotation_root / f"{image_path.stem}.json"
         items: list[FashionItemAnnotation] = []
@@ -130,18 +147,14 @@ def load_deepfashion2_samples(
             metadata = _parse_sample_metadata(annotation)
             sample_annotation_path = str(annotation_path)
 
-        samples.append(
-            FashionSample(
-                dataset_name="deepfashion2",
-                split=split,
-                image_path=str(image_path),
-                annotation_path=sample_annotation_path,
-                items=items,
-                metadata=metadata,
-            )
+        yield FashionSample(
+            dataset_name="deepfashion2",
+            split=split,
+            image_path=str(image_path),
+            annotation_path=sample_annotation_path,
+            items=items,
+            metadata=metadata,
         )
-
-    return samples
 
 
 def _read_annotation(annotation_path: Path) -> dict[str, Any]:

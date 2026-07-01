@@ -169,3 +169,7 @@ def test_build_dataset_indexes_writes_jsonl_files(tmp_path: Path) -> None:
     assert (output_dir / "fashionai_attributes.jsonl").read_text(
         encoding="utf-8"
     ).count("\n") == 1
+    deepfashion2_record = json.loads(
+        (output_dir / "deepfashion2_train.jsonl").read_text(encoding="utf-8")
+    )
+    assert "raw_attributes" not in deepfashion2_record["items"][0]
