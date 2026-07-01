@@ -34,6 +34,13 @@ class ModelSettings(BaseModel):
     precision: str = "fp16"
 
 
+class DatasetSettings(BaseModel):
+    """Project-relative dataset root paths."""
+
+    fashionai_root: str = "data/raw/fashionai/round1_fashionAI_attributes_test_a"
+    deepfashion2_root: str = "data/raw/deepfashion2"
+
+
 class AppSettings(BaseModel):
     """Top-level application settings."""
 
@@ -48,6 +55,7 @@ class Settings(BaseModel):
     paths: PathSettings = Field(default_factory=PathSettings)
     service: ServiceSettings = Field(default_factory=ServiceSettings)
     model: ModelSettings = Field(default_factory=ModelSettings)
+    datasets: DatasetSettings = Field(default_factory=DatasetSettings)
 
 
 def load_settings(config_path: str | Path = "configs/app.yaml") -> Settings:

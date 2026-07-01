@@ -18,3 +18,6 @@ model:
   device: cuda
   precision: fp16
 
+datasets:
+  fashionai_root: data/raw/fashionai/round1_fashionAI_attributes_test_a
+  deepfashion2_root: data/raw/deepfashion2
