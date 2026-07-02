@@ -83,3 +83,13 @@ Preview generated indexes:
 python scripts/preview_dataset_index.py --index-name deepfashion2_train --limit 3
 python scripts/preview_dataset_index.py --index-name deepfashion2_train --category-name trousers --limit 3
 ```
+
+Compute dataset statistics:
+
+```bash
+python scripts/analyze_dataset_indexes.py
+python scripts/analyze_dataset_indexes.py --output data/processed/autodl/indexes/statistics.json
+```
+
+The statistics JSON includes FashionAI attribute group counts, DeepFashion2
+category counts, and DeepFashion2 source counts for each split.

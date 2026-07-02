@@ -18,6 +18,7 @@ from fashion_semantic_parser.dao.datasets.fashionai import (
 )
 from fashion_semantic_parser.dao.datasets.index_reader import DatasetIndexReader
 from fashion_semantic_parser.dao.datasets.indexes import build_dataset_indexes
+from fashion_semantic_parser.dao.datasets.statistics import compute_dataset_statistics
 
 
 def test_inspect_fashionai_dataset_counts_splits(tmp_path: Path) -> None:
@@ -224,3 +225,54 @@ def test_dataset_index_reader_filters_index_records(tmp_path: Path) -> None:
     assert len(records) == 1
     assert len(trousers) == 1
     assert trousers[0]["items"][0]["category_name"] == "trousers"
+
+
+def test_compute_dataset_statistics_counts_categories(tmp_path: Path) -> None:
+    """Dataset statistics should count categories, sources, and attributes."""
+    fashionai_root = tmp_path / "fashionai"
+    fashionai_coat_root = fashionai_root / "Images" / "coat_length_labels"
+    fashionai_sleeve_root = fashionai_root / "Images" / "sleeve_length_labels"
+    fashionai_tests_root = fashionai_root / "Tests"
+    deepfashion2_root = tmp_path / "deepfashion2"
+    deepfashion2_image_root = deepfashion2_root / "train" / "image"
+    deepfashion2_annotation_root = deepfashion2_root / "train" / "annos"
+    output_dir = tmp_path / "processed" / "indexes"
+    fashionai_coat_root.mkdir(parents=True)
+    fashionai_sleeve_root.mkdir(parents=True)
+    fashionai_tests_root.mkdir(parents=True)
+    deepfashion2_image_root.mkdir(parents=True)
+    deepfashion2_annotation_root.mkdir(parents=True)
+    (fashionai_coat_root / "coat.jpg").write_bytes(b"fake-image")
+    (fashionai_sleeve_root / "sleeve.jpg").write_bytes(b"fake-image")
+    (fashionai_tests_root / "question.csv").write_text(
+        "image_id,attribute_name\ncoat.jpg,coat_length\n",
+        encoding="utf-8",
+    )
+    (deepfashion2_image_root / "000001.jpg").write_bytes(b"fake-image")
+    (deepfashion2_annotation_root / "000001.json").write_text(
+        json.dumps(
+            {
+                "source": "shop",
+                "item1": {"category_name": "trousers"},
+                "item2": {"category_name": "short sleeve top"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    build_dataset_indexes(
+        fashionai_root=fashionai_root,
+        deepfashion2_root=deepfashion2_root,
+        output_dir=output_dir,
+    )
+    reader = DatasetIndexReader(output_dir / "manifest.json")
+
+    statistics = compute_dataset_statistics(reader)
+
+    assert statistics.fashionai.attribute_sample_count == 2
+    assert statistics.fashionai.question_count == 1
+    assert statistics.fashionai.attribute_group_counts["coat_length_labels"] == 1
+    train_statistics = statistics.deepfashion2["train"]
+    assert train_statistics.sample_count == 1
+    assert train_statistics.item_count == 2
+    assert train_statistics.category_counts["trousers"] == 1
+    assert train_statistics.source_counts["shop"] == 1

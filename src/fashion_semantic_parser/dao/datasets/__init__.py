@@ -19,6 +19,12 @@ from fashion_semantic_parser.dao.datasets.indexes import (
     DatasetIndexManifest,
     build_dataset_indexes,
 )
+from fashion_semantic_parser.dao.datasets.statistics import (
+    DatasetStatistics,
+    DeepFashion2SplitStatistics,
+    FashionAIStatistics,
+    compute_dataset_statistics,
+)
 from fashion_semantic_parser.dao.datasets.summary import (
     DatasetSummary,
     inspect_project_datasets,
@@ -28,11 +34,15 @@ __all__ = [
     "DatasetIndexFile",
     "DatasetIndexManifest",
     "DatasetIndexReader",
+    "DatasetStatistics",
     "DatasetSummary",
     "DeepFashion2Summary",
+    "DeepFashion2SplitStatistics",
     "FashionAIQuestion",
+    "FashionAIStatistics",
     "FashionAISummary",
     "build_dataset_indexes",
+    "compute_dataset_statistics",
     "inspect_project_datasets",
     "iter_deepfashion2_samples",
     "iter_fashionai_attribute_samples",
