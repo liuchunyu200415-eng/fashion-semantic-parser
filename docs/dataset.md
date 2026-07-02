@@ -76,3 +76,10 @@ python scripts/build_dataset_indexes.py --limit 10
 
 Index records use project-relative paths so they remain portable across local
 development and AutoDL server environments.
+
+Preview generated indexes:
+
+```bash
+python scripts/preview_dataset_index.py --index-name deepfashion2_train --limit 3
+python scripts/preview_dataset_index.py --index-name deepfashion2_train --category-name trousers --limit 3
+```

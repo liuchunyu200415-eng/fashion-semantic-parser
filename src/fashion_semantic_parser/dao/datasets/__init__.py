@@ -13,6 +13,7 @@ from fashion_semantic_parser.dao.datasets.fashionai import (
     load_fashionai_attribute_samples,
     load_fashionai_questions,
 )
+from fashion_semantic_parser.dao.datasets.index_reader import DatasetIndexReader
 from fashion_semantic_parser.dao.datasets.indexes import (
     DatasetIndexFile,
     DatasetIndexManifest,
@@ -26,6 +27,7 @@ from fashion_semantic_parser.dao.datasets.summary import (
 __all__ = [
     "DatasetIndexFile",
     "DatasetIndexManifest",
+    "DatasetIndexReader",
     "DatasetSummary",
     "DeepFashion2Summary",
     "FashionAIQuestion",

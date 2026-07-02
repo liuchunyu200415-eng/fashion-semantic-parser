@@ -16,6 +16,7 @@ from fashion_semantic_parser.dao.datasets.fashionai import (
     load_fashionai_attribute_samples,
     load_fashionai_questions,
 )
+from fashion_semantic_parser.dao.datasets.index_reader import DatasetIndexReader
 from fashion_semantic_parser.dao.datasets.indexes import build_dataset_indexes
 
 
@@ -173,3 +174,53 @@ def test_build_dataset_indexes_writes_jsonl_files(tmp_path: Path) -> None:
         (output_dir / "deepfashion2_train.jsonl").read_text(encoding="utf-8")
     )
     assert "raw_attributes" not in deepfashion2_record["items"][0]
+
+
+def test_dataset_index_reader_filters_index_records(tmp_path: Path) -> None:
+    """Index reader should stream records and support category filtering."""
+    fashionai_root = tmp_path / "fashionai"
+    fashionai_image_root = fashionai_root / "Images" / "coat_length_labels"
+    fashionai_tests_root = fashionai_root / "Tests"
+    deepfashion2_root = tmp_path / "deepfashion2"
+    deepfashion2_image_root = deepfashion2_root / "train" / "image"
+    deepfashion2_annotation_root = deepfashion2_root / "train" / "annos"
+    output_dir = tmp_path / "processed" / "indexes"
+    fashionai_image_root.mkdir(parents=True)
+    fashionai_tests_root.mkdir(parents=True)
+    deepfashion2_image_root.mkdir(parents=True)
+    deepfashion2_annotation_root.mkdir(parents=True)
+    (fashionai_image_root / "sample.jpg").write_bytes(b"fake-image")
+    (fashionai_tests_root / "question.csv").write_text(
+        "image_id,attribute_name\nsample.jpg,coat_length\n",
+        encoding="utf-8",
+    )
+    (deepfashion2_image_root / "000001.jpg").write_bytes(b"fake-image")
+    (deepfashion2_image_root / "000002.jpg").write_bytes(b"fake-image")
+    (deepfashion2_annotation_root / "000001.json").write_text(
+        json.dumps({"item1": {"category_name": "trousers"}}),
+        encoding="utf-8",
+    )
+    (deepfashion2_annotation_root / "000002.json").write_text(
+        json.dumps({"item1": {"category_name": "short sleeve top"}}),
+        encoding="utf-8",
+    )
+    build_dataset_indexes(
+        fashionai_root=fashionai_root,
+        deepfashion2_root=deepfashion2_root,
+        output_dir=output_dir,
+    )
+
+    reader = DatasetIndexReader(output_dir / "manifest.json")
+
+    assert "deepfashion2_train" in reader.list_indexes()
+    assert reader.record_counts()["deepfashion2_train"] == 2
+    records = list(reader.iter_records("deepfashion2_train", limit=1))
+    trousers = list(
+        reader.iter_records(
+            "deepfashion2_train",
+            category_name="trousers",
+        )
+    )
+    assert len(records) == 1
+    assert len(trousers) == 1
+    assert trousers[0]["items"][0]["category_name"] == "trousers"
