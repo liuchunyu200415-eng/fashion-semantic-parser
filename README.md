@@ -4,7 +4,7 @@
 
 ## 项目状态
 
-当前阶段为工程目录初始化。已完成基础工程结构、配置文件、相对路径工具、核心数据模型和测试占位。
+当前阶段聚焦 PRD 3.1.1 服饰实例分割功能。已完成基础工程结构、服务器数据路径配置、DeepFashion2/FashionAI 数据集解析、轻量索引构建、数据统计分析，以及 DeepFashion2 到 COCO 实例分割格式转换的基础代码。
 
 ## 目录结构
 
@@ -41,8 +41,15 @@
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -e ".[dev]"
+python -m pip install -r requirements.txt
+python -m pip install -e .
 pytest
+```
+
+也可以使用 `pyproject.toml` 的开发依赖安装方式：
+
+```bash
+python -m pip install -e ".[dev]"
 ```
 
 ## 路径约定
@@ -56,4 +63,3 @@ from fashion_semantic_parser.common.paths import resolve_project_path
 
 image_path = resolve_project_path("data/raw/example.jpg")
 ```
-
