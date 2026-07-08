@@ -1,13 +1,16 @@
-"""Detectron2 Mask R-CNN baseline for PRD 3.1.1 segmentation."""
+"""Detectron2-based segmentation models for PRD 3.1.1."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import cv2
 from pydantic import BaseModel, Field
 
 from fashion_semantic_parser.common.exceptions import ModelNotReadyError
-from fashion_semantic_parser.common.paths import to_project_relative_path
+from fashion_semantic_parser.common.paths import (
+    resolve_project_path,
+    to_project_relative_path,
+)
 from fashion_semantic_parser.dao.segmentation.taxonomy import (
     PRD_SEGMENTATION_CATEGORIES,
 )
@@ -19,12 +22,15 @@ from fashion_semantic_parser.models.segmentation import (
 
 
 class SegmentationBaselineSettings(BaseModel):
-    """Training and inference settings for a Detectron2 Mask R-CNN baseline."""
+    """Training and inference settings for a Detectron2 segmentation model."""
 
+    model_family: Literal["mask_rcnn", "mask2former"] = "mask_rcnn"
     train_json: str = "data/processed/autodl/segmentation/deepfashion2_train.json"
     val_json: str = "data/processed/autodl/segmentation/deepfashion2_validation.json"
     image_root: str = "."
     output_dir: str = "outputs/segmentation/mask_rcnn_r50_fpn"
+    config_source: Literal["detectron2_model_zoo", "local"] = "detectron2_model_zoo"
+    config_file: str | None = None
     model_zoo_config: str = "COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"
     weights: str | None = None
     num_classes: int = Field(default=len(PRD_SEGMENTATION_CATEGORIES), ge=1)
@@ -37,7 +43,7 @@ class SegmentationBaselineSettings(BaseModel):
 
 
 class Detectron2SegmentationBaseline:
-    """Thin adapter around Detectron2 for train and single-image inference."""
+    """Adapter around Detectron2-family models for training and inference."""
 
     train_dataset_name = "prd_3_1_1_deepfashion2_train"
     val_dataset_name = "prd_3_1_1_deepfashion2_validation"
@@ -47,24 +53,24 @@ class Detectron2SegmentationBaseline:
         self.settings = settings
 
     def build_config(self) -> Any:
-        """Build a Detectron2 cfg object for Mask R-CNN.
+        """Build a Detectron2 cfg object for the configured model family.
 
         Raises:
-            ModelNotReadyError: If Detectron2 is not installed.
+            ModelNotReadyError: If the required optional model framework is missing.
         """
         detectron2 = _load_detectron2_modules()
         cfg = detectron2["get_cfg"]()
-        cfg.merge_from_file(
-            detectron2["model_zoo"].get_config_file(self.settings.model_zoo_config)
-        )
+        if self.settings.model_family == "mask2former":
+            _load_mask2former_modules()["add_maskformer2_config"](cfg)
+
+        cfg.merge_from_file(self._resolve_config_file(detectron2["model_zoo"]))
         cfg.DATASETS.TRAIN = (self.train_dataset_name,)
         cfg.DATASETS.TEST = (self.val_dataset_name,)
         cfg.DATALOADER.NUM_WORKERS = self.settings.num_workers
         cfg.SOLVER.IMS_PER_BATCH = self.settings.ims_per_batch
         cfg.SOLVER.BASE_LR = self.settings.base_lr
         cfg.SOLVER.MAX_ITER = self.settings.max_iter
-        cfg.MODEL.ROI_HEADS.NUM_CLASSES = self.settings.num_classes
-        cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = self.settings.score_threshold
+        self._apply_model_head_settings(cfg)
         cfg.MODEL.DEVICE = self.settings.device
         cfg.OUTPUT_DIR = self.settings.output_dir
         cfg.MODEL.WEIGHTS = self._resolve_weights(detectron2["model_zoo"])
@@ -92,7 +98,7 @@ class Detectron2SegmentationBaseline:
         )
 
     def train(self) -> None:
-        """Train the Mask R-CNN baseline on the registered COCO datasets."""
+        """Train the configured segmentation model on registered COCO data."""
         detectron2 = _load_detectron2_modules()
         self.register_datasets()
         cfg = self.build_config()
@@ -118,10 +124,53 @@ class Detectron2SegmentationBaseline:
         )
 
     def _resolve_weights(self, model_zoo: Any) -> str:
-        """Resolve custom or model-zoo weights for the configured baseline."""
+        """Resolve custom, local-config, or model-zoo weights."""
         if self.settings.weights:
             return self.settings.weights
-        return model_zoo.get_checkpoint_url(self.settings.model_zoo_config)
+        if self.settings.config_source == "detectron2_model_zoo":
+            return model_zoo.get_checkpoint_url(self.settings.model_zoo_config)
+        return ""
+
+    def _resolve_config_file(self, model_zoo: Any) -> str:
+        """Resolve a Detectron2 model-zoo or local config path."""
+        config_file = self.settings.config_file or self.settings.model_zoo_config
+        if self.settings.config_source == "detectron2_model_zoo":
+            return model_zoo.get_config_file(config_file)
+
+        path = Path(config_file)
+        if path.is_absolute():
+            if path.exists():
+                return str(path)
+            raise FileNotFoundError(f"Segmentation config file not found: {path}")
+
+        project_path = resolve_project_path(path)
+        if project_path.exists():
+            return str(project_path)
+        if path.exists():
+            return str(path)
+        raise FileNotFoundError(
+            "Segmentation config file not found. For Mask2Former, clone the "
+            "Mask2Former project or pass --config with a YAML file whose "
+            f"config_file exists. Missing: {config_file}"
+        )
+
+    def _apply_model_head_settings(self, cfg: Any) -> None:
+        """Apply class-count and score-threshold settings across model families."""
+        if hasattr(cfg.MODEL, "ROI_HEADS"):
+            cfg.MODEL.ROI_HEADS.NUM_CLASSES = self.settings.num_classes
+            cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = self.settings.score_threshold
+        if hasattr(cfg.MODEL, "SEM_SEG_HEAD"):
+            cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES = self.settings.num_classes
+        if hasattr(cfg.MODEL, "PANOPTIC_FPN"):
+            cfg.MODEL.PANOPTIC_FPN.COMBINE.INSTANCES_CONFIDENCE_THRESH = (
+                self.settings.score_threshold
+            )
+        if hasattr(cfg.MODEL, "MASK_FORMER"):
+            cfg.MODEL.MASK_FORMER.TEST.INSTANCE_ON = True
+            if hasattr(cfg.MODEL.MASK_FORMER.TEST, "OBJECT_MASK_THRESHOLD"):
+                cfg.MODEL.MASK_FORMER.TEST.OBJECT_MASK_THRESHOLD = (
+                    self.settings.score_threshold
+                )
 
 
 def convert_detectron2_instances(
@@ -180,6 +229,20 @@ def _load_detectron2_modules() -> dict[str, Any]:
         "model_zoo": model_zoo,
         "register_coco_instances": register_coco_instances,
     }
+
+
+def _load_mask2former_modules() -> dict[str, Any]:
+    """Import Mask2Former project config lazily for the PRD target model."""
+    try:
+        from mask2former import add_maskformer2_config
+    except ImportError as error:
+        raise ModelNotReadyError(
+            "Mask2Former is the PRD-aligned target model for 3.1.1, but the "
+            "Mask2Former project is not importable. Install/clone Mask2Former "
+            "in the cloud GPU environment and add it to PYTHONPATH before "
+            "running the Mask2Former config."
+        ) from error
+    return {"add_maskformer2_config": add_maskformer2_config}
 
 
 def _tensor_to_list(value: Any) -> list[Any]:

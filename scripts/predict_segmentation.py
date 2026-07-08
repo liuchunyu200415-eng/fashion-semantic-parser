@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         default="configs/segmentation_mask_rcnn.yaml",
-        help="Project-relative baseline YAML config path.",
+        help="Project-relative segmentation YAML config path.",
     )
     parser.add_argument(
         "--weights",

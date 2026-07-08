@@ -1,7 +1,7 @@
 # PRD 3.1.1 Garment Instance Segmentation
 
-The current short-term goal is to complete the data and baseline path for PRD
-3.1.1: garment instance segmentation.
+The current short-term goal is to complete the data, baseline, and PRD-aligned
+model path for PRD 3.1.1: garment instance segmentation.
 
 ## Requirement
 
@@ -58,9 +58,9 @@ local and AutoDL environments.
 
 ## Train Mask R-CNN Baseline
 
-The first baseline for PRD 3.1.1 uses Detectron2 Mask R-CNN with a ResNet-50
-FPN backbone. Detectron2 is intentionally treated as an optional cloud-GPU
-dependency so local data tooling can still run without it.
+The first engineering baseline uses Detectron2 Mask R-CNN with a ResNet-50 FPN
+backbone. This baseline is kept because it is stable, COCO-compatible, and good
+for validating data conversion, class mapping, and the train/inference loop.
 
 Install PyTorch and Detectron2 in the AutoDL environment, then run:
 
@@ -80,10 +80,42 @@ Useful smoke-test override:
 python scripts/train_segmentation_baseline.py --max-iter 20
 ```
 
-The baseline registers the converted COCO files and trains against all eight
-PRD categories. DeepFashion2 currently only provides high-quality examples for
-top, pants, skirt, outerwear, and dress, so shoes, bags, and accessories should
-be treated as data gaps until additional datasets are added.
+## Train Mask2Former Target Model
+
+Mask2Former is the PRD-aligned target model for 3.1.1 because the PRD technical
+stack explicitly includes Mask2Former and the task requires instance masks plus
+category labels.
+
+Recommended AutoDL setup:
+
+```bash
+cd /root/fashion-semantic-parser
+mkdir -p external
+git clone https://github.com/facebookresearch/Mask2Former.git external/Mask2Former
+export PYTHONPATH=$PWD/external/Mask2Former:$PYTHONPATH
+```
+
+After Detectron2 and Mask2Former dependencies are available, run a smoke test:
+
+```bash
+python scripts/train_segmentation_baseline.py \
+  --config configs/segmentation_mask2former.yaml \
+  --max-iter 20
+```
+
+The Mask2Former config file is:
+
+```text
+configs/segmentation_mask2former.yaml
+```
+
+Mask2Former should become the main 3.1.1 model after the baseline train loop is
+verified. Mask R-CNN remains a debugging baseline.
+
+The training path registers the converted COCO files and trains against all
+eight PRD categories. DeepFashion2 currently only provides high-quality
+examples for top, pants, skirt, outerwear, and dress, so shoes, bags, and
+accessories should be treated as data gaps until additional datasets are added.
 
 ## Predict One Image
 
@@ -92,7 +124,8 @@ After training, run single-image inference with the trained weights:
 ```bash
 python scripts/predict_segmentation.py \
   data/raw/example.jpg \
-  --weights outputs/segmentation/mask_rcnn_r50_fpn/model_final.pth \
+  --config configs/segmentation_mask2former.yaml \
+  --weights outputs/segmentation/mask2former_r50/model_final.pth \
   --output outputs/segmentation/example_prediction.json
 ```
 

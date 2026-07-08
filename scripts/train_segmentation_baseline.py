@@ -1,4 +1,4 @@
-"""Train the PRD 3.1.1 Detectron2 Mask R-CNN baseline."""
+"""Train a PRD 3.1.1 garment instance segmentation model."""
 
 import argparse
 import sys
@@ -19,12 +19,12 @@ def add_src_to_python_path() -> None:
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Train PRD 3.1.1 garment instance segmentation baseline."
+        description="Train PRD 3.1.1 garment instance segmentation."
     )
     parser.add_argument(
         "--config",
         default="configs/segmentation_mask_rcnn.yaml",
-        help="Project-relative baseline YAML config path.",
+        help="Project-relative segmentation YAML config path.",
     )
     parser.add_argument("--train-json", default=None)
     parser.add_argument("--val-json", default=None)
@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    """Run Detectron2 Mask R-CNN training."""
+    """Run Detectron2-family segmentation training."""
     args = parse_args()
     add_src_to_python_path()
 

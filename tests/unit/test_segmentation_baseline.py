@@ -41,7 +41,28 @@ def test_segmentation_baseline_settings_defaults() -> None:
     assert settings.num_classes == 8
     assert settings.train_json.endswith("deepfashion2_train.json")
     assert settings.val_json.endswith("deepfashion2_validation.json")
+    assert settings.model_family == "mask_rcnn"
     assert settings.device == "cuda"
+
+
+def test_mask2former_settings_use_local_project_config() -> None:
+    """Mask2Former settings should represent the PRD target model path."""
+    settings = SegmentationBaselineSettings(
+        model_family="mask2former",
+        config_source="local",
+        config_file=(
+            "external/Mask2Former/configs/coco/instance-segmentation/"
+            "maskformer2_R50_bs16_50ep.yaml"
+        ),
+        output_dir="outputs/segmentation/mask2former_r50",
+        base_lr=0.0001,
+    )
+
+    assert settings.model_family == "mask2former"
+    assert settings.config_source == "local"
+    assert settings.config_file is not None
+    assert settings.config_file.endswith("maskformer2_R50_bs16_50ep.yaml")
+    assert settings.output_dir.endswith("mask2former_r50")
 
 
 def test_convert_detectron2_instances_to_prediction_schema() -> None:
