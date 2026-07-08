@@ -56,6 +56,29 @@ data/processed/autodl/segmentation
 The COCO files use project-relative image paths so they can be reused across
 local and AutoDL environments.
 
+## Check AutoDL Environment
+
+After pulling the latest code on AutoDL, check whether the segmentation training
+environment is ready:
+
+```bash
+python scripts/check_segmentation_env.py
+```
+
+The report checks:
+
+```text
+PyTorch and CUDA availability
+OpenCV
+Detectron2
+Mask2Former
+converted COCO files
+project config files
+```
+
+If Detectron2 or Mask2Former is missing, install those dependencies before
+running training.
+
 ## Train Mask R-CNN Baseline
 
 The first engineering baseline uses Detectron2 Mask R-CNN with a ResNet-50 FPN
