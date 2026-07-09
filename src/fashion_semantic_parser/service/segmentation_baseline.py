@@ -191,16 +191,33 @@ class Detectron2SegmentationBaseline:
 
     def _trainer_class(self, detectron2: dict[str, Any]) -> type:
         """Return the trainer class needed by the configured model family."""
+        default_trainer = detectron2["DefaultTrainer"]
+        coco_evaluator = detectron2["COCOEvaluator"]
+
+        class SegmentationTrainer(default_trainer):  # type: ignore[misc, valid-type]
+            """DefaultTrainer with COCO instance segmentation evaluation."""
+
+            @classmethod
+            def build_evaluator(
+                cls,
+                cfg: Any,
+                dataset_name: str,
+                output_folder: str | None = None,
+            ) -> Any:
+                """Build COCO metrics output for validation datasets."""
+                if output_folder is None:
+                    output_folder = str(Path(cfg.OUTPUT_DIR) / "inference")
+                return coco_evaluator(dataset_name, output_dir=output_folder)
+
         if self.settings.model_family != "mask2former":
-            return detectron2["DefaultTrainer"]
+            return SegmentationTrainer
 
         mask2former = _load_mask2former_modules()
-        default_trainer = detectron2["DefaultTrainer"]
         build_detection_train_loader = detectron2["build_detection_train_loader"]
         mapper_class = mask2former["COCOInstanceNewBaselineDatasetMapper"]
 
-        class Mask2FormerTrainer(default_trainer):  # type: ignore[misc, valid-type]
-            """DefaultTrainer with Mask2Former's instance segmentation mapper."""
+        class Mask2FormerTrainer(SegmentationTrainer):
+            """COCO-evaluated trainer with Mask2Former's instance mapper."""
 
             @classmethod
             def build_train_loader(cls, cfg: Any) -> Any:
@@ -254,6 +271,7 @@ def _load_detectron2_modules() -> dict[str, Any]:
         from detectron2.data import build_detection_train_loader
         from detectron2.data.datasets import register_coco_instances
         from detectron2.engine import DefaultPredictor, DefaultTrainer
+        from detectron2.evaluation import COCOEvaluator
     except ImportError as error:
         raise ModelNotReadyError(
             "Detectron2 is required for PRD 3.1.1 baseline training and "
@@ -262,6 +280,7 @@ def _load_detectron2_modules() -> dict[str, Any]:
         ) from error
 
     return {
+        "COCOEvaluator": COCOEvaluator,
         "DefaultPredictor": DefaultPredictor,
         "DefaultTrainer": DefaultTrainer,
         "build_detection_train_loader": build_detection_train_loader,

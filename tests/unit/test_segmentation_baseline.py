@@ -1,8 +1,11 @@
 """Tests for PRD 3.1.1 segmentation baseline helpers."""
 
+from types import SimpleNamespace
+
 import numpy as np
 
 from fashion_semantic_parser.service.segmentation_baseline import (
+    Detectron2SegmentationBaseline,
     SegmentationBaselineSettings,
     convert_detectron2_instances,
 )
@@ -34,6 +37,18 @@ class _FakeInstances:
         ]
 
 
+class _FakeDefaultTrainer:
+    """Minimal trainer base for testing dynamic trainer subclasses."""
+
+
+class _FakeCOCOEvaluator:
+    """Minimal COCOEvaluator stand-in that records constructor values."""
+
+    def __init__(self, dataset_name: str, output_dir: str) -> None:
+        self.dataset_name = dataset_name
+        self.output_dir = output_dir
+
+
 def test_segmentation_baseline_settings_defaults() -> None:
     """Default baseline config should target all PRD 3.1.1 categories."""
     settings = SegmentationBaselineSettings()
@@ -63,6 +78,25 @@ def test_mask2former_settings_use_local_project_config() -> None:
     assert settings.config_file is not None
     assert settings.config_file.endswith("maskformer2_R50_bs16_50ep.yaml")
     assert settings.output_dir.endswith("mask2former_r50")
+
+
+def test_trainer_class_builds_coco_evaluator() -> None:
+    """Training should report COCO instance metrics after validation."""
+    baseline = Detectron2SegmentationBaseline(SegmentationBaselineSettings())
+    trainer_class = baseline._trainer_class(
+        {
+            "COCOEvaluator": _FakeCOCOEvaluator,
+            "DefaultTrainer": _FakeDefaultTrainer,
+        }
+    )
+
+    evaluator = trainer_class.build_evaluator(
+        SimpleNamespace(OUTPUT_DIR="outputs/segmentation/test"),
+        "validation_dataset",
+    )
+
+    assert evaluator.dataset_name == "validation_dataset"
+    assert evaluator.output_dir == "outputs/segmentation/test/inference"
 
 
 def test_convert_detectron2_instances_to_prediction_schema() -> None:
