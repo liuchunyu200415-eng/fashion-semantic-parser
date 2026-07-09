@@ -179,6 +179,8 @@ class Detectron2SegmentationBaseline:
         """Adapt target-model configs to the generic Detectron2 trainer."""
         if self.settings.model_family != "mask2former":
             return
+        cfg.MODEL.MASK_ON = True
+        cfg.INPUT.MASK_FORMAT = "bitmask"
         clip_gradients = cfg.SOLVER.CLIP_GRADIENTS
         if (
             getattr(clip_gradients, "ENABLED", False)
