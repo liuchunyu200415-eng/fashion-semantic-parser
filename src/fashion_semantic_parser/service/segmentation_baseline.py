@@ -106,7 +106,8 @@ class Detectron2SegmentationBaseline:
         self.register_datasets()
         cfg = self.build_config()
         Path(cfg.OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
-        trainer = detectron2["DefaultTrainer"](cfg)
+        trainer_class = self._trainer_class(detectron2)
+        trainer = trainer_class(cfg)
         trainer.resume_or_load(resume=False)
         trainer.train()
 
@@ -188,6 +189,27 @@ class Detectron2SegmentationBaseline:
         ):
             clip_gradients.CLIP_TYPE = "norm"
 
+    def _trainer_class(self, detectron2: dict[str, Any]) -> type:
+        """Return the trainer class needed by the configured model family."""
+        if self.settings.model_family != "mask2former":
+            return detectron2["DefaultTrainer"]
+
+        mask2former = _load_mask2former_modules()
+        default_trainer = detectron2["DefaultTrainer"]
+        build_detection_train_loader = detectron2["build_detection_train_loader"]
+        mapper_class = mask2former["COCOInstanceNewBaselineDatasetMapper"]
+
+        class Mask2FormerTrainer(default_trainer):  # type: ignore[misc, valid-type]
+            """DefaultTrainer with Mask2Former's instance segmentation mapper."""
+
+            @classmethod
+            def build_train_loader(cls, cfg: Any) -> Any:
+                """Build a loader that provides tensor masks expected by Mask2Former."""
+                mapper = mapper_class(cfg, True)
+                return build_detection_train_loader(cfg, mapper=mapper)
+
+        return Mask2FormerTrainer
+
 
 def convert_detectron2_instances(
     instances: Any,
@@ -229,6 +251,7 @@ def _load_detectron2_modules() -> dict[str, Any]:
     try:
         from detectron2 import model_zoo
         from detectron2.config import get_cfg
+        from detectron2.data import build_detection_train_loader
         from detectron2.data.datasets import register_coco_instances
         from detectron2.engine import DefaultPredictor, DefaultTrainer
     except ImportError as error:
@@ -241,6 +264,7 @@ def _load_detectron2_modules() -> dict[str, Any]:
     return {
         "DefaultPredictor": DefaultPredictor,
         "DefaultTrainer": DefaultTrainer,
+        "build_detection_train_loader": build_detection_train_loader,
         "get_cfg": get_cfg,
         "model_zoo": model_zoo,
         "register_coco_instances": register_coco_instances,
@@ -252,6 +276,9 @@ def _load_mask2former_modules() -> dict[str, Any]:
     try:
         from detectron2.projects.deeplab import add_deeplab_config
         from mask2former import add_maskformer2_config
+        from mask2former.data.dataset_mappers.coco_instance_new_baseline_dataset_mapper import (  # noqa: E501
+            COCOInstanceNewBaselineDatasetMapper,
+        )
     except ImportError as error:
         raise ModelNotReadyError(
             "Mask2Former is the PRD-aligned target model for 3.1.1, but the "
@@ -260,6 +287,7 @@ def _load_mask2former_modules() -> dict[str, Any]:
             "and add Mask2Former to PYTHONPATH before running the config."
         ) from error
     return {
+        "COCOInstanceNewBaselineDatasetMapper": COCOInstanceNewBaselineDatasetMapper,
         "add_deeplab_config": add_deeplab_config,
         "add_maskformer2_config": add_maskformer2_config,
     }
