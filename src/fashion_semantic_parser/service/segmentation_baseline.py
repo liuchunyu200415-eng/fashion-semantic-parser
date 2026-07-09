@@ -61,7 +61,9 @@ class Detectron2SegmentationBaseline:
         detectron2 = _load_detectron2_modules()
         cfg = detectron2["get_cfg"]()
         if self.settings.model_family == "mask2former":
-            _load_mask2former_modules()["add_maskformer2_config"](cfg)
+            mask2former = _load_mask2former_modules()
+            mask2former["add_deeplab_config"](cfg)
+            mask2former["add_maskformer2_config"](cfg)
 
         cfg.merge_from_file(self._resolve_config_file(detectron2["model_zoo"]))
         cfg.DATASETS.TRAIN = (self.train_dataset_name,)
@@ -234,15 +236,19 @@ def _load_detectron2_modules() -> dict[str, Any]:
 def _load_mask2former_modules() -> dict[str, Any]:
     """Import Mask2Former project config lazily for the PRD target model."""
     try:
+        from detectron2.projects.deeplab import add_deeplab_config
         from mask2former import add_maskformer2_config
     except ImportError as error:
         raise ModelNotReadyError(
             "Mask2Former is the PRD-aligned target model for 3.1.1, but the "
-            "Mask2Former project is not importable. Install/clone Mask2Former "
-            "in the cloud GPU environment and add it to PYTHONPATH before "
-            "running the Mask2Former config."
+            "Mask2Former or Detectron2 DeepLab project config is not importable. "
+            "Install/clone Mask2Former, install Detectron2 with project modules, "
+            "and add Mask2Former to PYTHONPATH before running the config."
         ) from error
-    return {"add_maskformer2_config": add_maskformer2_config}
+    return {
+        "add_deeplab_config": add_deeplab_config,
+        "add_maskformer2_config": add_maskformer2_config,
+    }
 
 
 def _tensor_to_list(value: Any) -> list[Any]:
