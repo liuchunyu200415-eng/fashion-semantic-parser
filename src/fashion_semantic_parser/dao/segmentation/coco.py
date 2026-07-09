@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import cv2
 from pydantic import BaseModel
 
 from fashion_semantic_parser.common.paths import to_project_relative_path
@@ -62,10 +63,13 @@ def convert_deepfashion2_to_coco(
 
     for image_id, image_path in enumerate(image_paths, start=1):
         annotation_path = annotation_root / f"{image_path.stem}.json"
+        width, height = _image_size(image_path)
         images.append(
             {
                 "id": image_id,
                 "file_name": to_project_relative_path(image_path),
+                "width": width,
+                "height": height,
             }
         )
         if not annotation_path.exists():
@@ -118,6 +122,15 @@ def _read_json(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as file:
         data: dict[str, Any] = json.load(file)
     return data
+
+
+def _image_size(path: Path) -> tuple[int, int]:
+    """Read image width and height for a COCO image record."""
+    image = cv2.imread(str(path))
+    if image is None:
+        raise ValueError(f"Unable to read image size: {path}")
+    height, width = image.shape[:2]
+    return int(width), int(height)
 
 
 def _iter_raw_items(annotation: dict[str, Any]) -> list[dict[str, Any]]:

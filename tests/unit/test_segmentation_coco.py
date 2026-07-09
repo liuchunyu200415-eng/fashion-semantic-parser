@@ -3,6 +3,9 @@
 import json
 from pathlib import Path
 
+import cv2
+import numpy as np
+
 from fashion_semantic_parser.dao.segmentation.coco import (
     convert_deepfashion2_to_coco,
 )
@@ -36,7 +39,10 @@ def test_convert_deepfashion2_to_coco_writes_segmentation_json(
     output_path = tmp_path / "processed" / "deepfashion2_train.json"
     image_root.mkdir(parents=True)
     annotation_root.mkdir(parents=True)
-    (image_root / "000001.jpg").write_bytes(b"fake-image")
+    cv2.imwrite(
+        str(image_root / "000001.jpg"),
+        np.zeros((240, 320, 3), dtype=np.uint8),
+    )
     annotation = {
         "item1": {
             "category_name": "short sleeve top",
@@ -64,6 +70,8 @@ def test_convert_deepfashion2_to_coco_writes_segmentation_json(
     assert summary.annotation_count == 1
     assert summary.skipped_item_count == 1
     assert coco["images"][0]["file_name"].endswith("train/image/000001.jpg")
+    assert coco["images"][0]["width"] == 320
+    assert coco["images"][0]["height"] == 240
     assert coco["annotations"][0]["category_id"] == 1
     assert coco["annotations"][0]["bbox"] == [10.0, 20.0, 100.0, 200.0]
     assert len(coco["categories"]) == 8
