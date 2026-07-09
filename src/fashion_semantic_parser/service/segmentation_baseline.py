@@ -73,6 +73,7 @@ class Detectron2SegmentationBaseline:
         cfg.SOLVER.BASE_LR = self.settings.base_lr
         cfg.SOLVER.MAX_ITER = self.settings.max_iter
         self._apply_model_head_settings(cfg)
+        self._apply_trainer_compatibility_settings(cfg)
         cfg.MODEL.DEVICE = self.settings.device
         cfg.OUTPUT_DIR = self.settings.output_dir
         cfg.MODEL.WEIGHTS = self._resolve_weights(detectron2["model_zoo"])
@@ -173,6 +174,17 @@ class Detectron2SegmentationBaseline:
                 cfg.MODEL.MASK_FORMER.TEST.OBJECT_MASK_THRESHOLD = (
                     self.settings.score_threshold
                 )
+
+    def _apply_trainer_compatibility_settings(self, cfg: Any) -> None:
+        """Adapt target-model configs to the generic Detectron2 trainer."""
+        if self.settings.model_family != "mask2former":
+            return
+        clip_gradients = cfg.SOLVER.CLIP_GRADIENTS
+        if (
+            getattr(clip_gradients, "ENABLED", False)
+            and getattr(clip_gradients, "CLIP_TYPE", "") == "full_model"
+        ):
+            clip_gradients.CLIP_TYPE = "norm"
 
 
 def convert_detectron2_instances(
