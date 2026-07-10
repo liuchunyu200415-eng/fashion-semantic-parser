@@ -219,6 +219,23 @@ python scripts/visualize_segmentation_prediction.py \
 The visualization draws translucent predicted masks, mask-derived boxes, class
 labels, and confidence scores.
 
+If a validation image contains a full scene, provide a subject/person ROI to
+focus diagnosis on the model region:
+
+```bash
+python scripts/visualize_segmentation_prediction.py \
+  data/raw/deepfashion2/validation/image/000001.jpg \
+  --config configs/segmentation_mask2former.yaml \
+  --weights outputs/segmentation/mask2former_r50/model_final.pth \
+  --score-threshold 0.05 \
+  --subject-roi 170,80,330,520 \
+  --output outputs/segmentation/visualizations/val_000001_roi.png \
+  --json-output outputs/segmentation/visualizations/val_000001_roi.json
+```
+
+The ROI format is `x_min,y_min,x_max,y_max` in image pixel coordinates. This is
+a manual stand-in for the planned person/subject detector stage.
+
 ## Evaluate Existing Weights
 
 To compare mask quality without retraining, evaluate a saved checkpoint at

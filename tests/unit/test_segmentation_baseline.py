@@ -10,7 +10,9 @@ from fashion_semantic_parser.service.segmentation_baseline import (
     Detectron2SegmentationBaseline,
     SegmentationBaselineSettings,
     convert_detectron2_instances,
+    filter_prediction_by_subject_roi,
 )
+from fashion_semantic_parser.models.segmentation import SegmentationSubjectROI
 
 
 class _FakeBoxes:
@@ -199,3 +201,25 @@ def test_convert_detectron2_instances_filters_low_scores() -> None:
     assert len(prediction.instances) == 1
     assert prediction.instances[0].category_label == "dress"
     assert prediction.instances[0].confidence == 0.91
+
+
+def test_filter_prediction_by_subject_roi_removes_background_instances() -> None:
+    """Subject ROI filtering should remove predictions outside the model area."""
+    prediction = convert_detectron2_instances(
+        instances=_FakeTwoScoreInstances(),
+        image_path="data/raw/example.jpg",
+        score_threshold=0.0,
+    )
+
+    filtered = filter_prediction_by_subject_roi(
+        prediction,
+        SegmentationSubjectROI(
+            x_min=8.0,
+            y_min=18.0,
+            x_max=120.0,
+            y_max=230.0,
+        ),
+    )
+
+    assert len(filtered.instances) == 1
+    assert filtered.instances[0].category_label == "dress"

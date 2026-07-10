@@ -40,6 +40,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--device", default=None)
     parser.add_argument("--score-threshold", type=float, default=None)
+    parser.add_argument(
+        "--subject-roi",
+        default=None,
+        help="Optional subject ROI as x_min,y_min,x_max,y_max.",
+    )
     return parser.parse_args()
 
 
@@ -52,7 +57,9 @@ def main() -> None:
     from fashion_semantic_parser.service.segmentation_baseline import (
         Detectron2SegmentationBaseline,
         SegmentationBaselineSettings,
+        filter_prediction_by_subject_roi,
     )
+    from fashion_semantic_parser.models.segmentation import SegmentationSubjectROI
 
     raw_config = _read_yaml(resolve_project_path(args.config))
     overrides = {
@@ -67,6 +74,11 @@ def main() -> None:
     prediction = Detectron2SegmentationBaseline(settings).predict_image(
         resolve_project_path(args.image)
     )
+    if args.subject_roi:
+        prediction = filter_prediction_by_subject_roi(
+            prediction,
+            _parse_subject_roi(args.subject_roi, SegmentationSubjectROI),
+        )
     output_json = json.dumps(
         prediction.model_dump(),
         ensure_ascii=False,
@@ -88,6 +100,19 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"Expected mapping in config file: {path}")
     return data
+
+
+def _parse_subject_roi(raw_value: str, roi_class: type[Any]) -> Any:
+    """Parse a subject ROI from x_min,y_min,x_max,y_max text."""
+    values = [float(value.strip()) for value in raw_value.split(",")]
+    if len(values) != 4:
+        raise ValueError("--subject-roi must use x_min,y_min,x_max,y_max")
+    return roi_class(
+        x_min=values[0],
+        y_min=values[1],
+        x_max=values[2],
+        y_max=values[3],
+    )
 
 
 if __name__ == "__main__":

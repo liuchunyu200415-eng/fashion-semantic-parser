@@ -27,3 +27,12 @@ class SegmentationPrediction(BaseModel):
 
     image_path: str
     instances: list[SegmentationInstance] = Field(default_factory=list)
+
+
+class SegmentationSubjectROI(BaseModel):
+    """Subject/person region of interest in xyxy image pixel coordinates."""
+
+    x_min: float = Field(ge=0.0)
+    y_min: float = Field(ge=0.0)
+    x_max: float = Field(ge=0.0)
+    y_max: float = Field(ge=0.0)

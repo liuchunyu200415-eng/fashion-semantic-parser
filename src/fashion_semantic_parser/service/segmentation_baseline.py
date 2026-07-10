@@ -18,6 +18,7 @@ from fashion_semantic_parser.models.segmentation import (
     SegmentationBoundingBox,
     SegmentationInstance,
     SegmentationPrediction,
+    SegmentationSubjectROI,
 )
 
 
@@ -282,6 +283,23 @@ def convert_detectron2_instances(
     )
 
 
+def filter_prediction_by_subject_roi(
+    prediction: SegmentationPrediction,
+    subject_roi: SegmentationSubjectROI,
+    min_box_overlap: float = 0.05,
+) -> SegmentationPrediction:
+    """Keep predicted instances that overlap the subject/person ROI."""
+    filtered_instances = [
+        instance
+        for instance in prediction.instances
+        if _box_overlap_ratio(instance.box, subject_roi) >= min_box_overlap
+    ]
+    return SegmentationPrediction(
+        image_path=prediction.image_path,
+        instances=filtered_instances,
+    )
+
+
 def _load_detectron2_modules() -> dict[str, Any]:
     """Import Detectron2 lazily so local non-GPU tooling keeps working."""
     try:
@@ -340,6 +358,23 @@ def _tensor_to_list(value: Any) -> list[Any]:
     if hasattr(value, "tolist"):
         return value.tolist()
     return list(value)
+
+
+def _box_overlap_ratio(
+    box: SegmentationBoundingBox,
+    roi: SegmentationSubjectROI,
+) -> float:
+    """Return the fraction of a prediction box covered by a subject ROI."""
+    intersection_x_min = max(box.x_min, roi.x_min)
+    intersection_y_min = max(box.y_min, roi.y_min)
+    intersection_x_max = min(box.x_max, roi.x_max)
+    intersection_y_max = min(box.y_max, roi.y_max)
+    intersection_width = max(0.0, intersection_x_max - intersection_x_min)
+    intersection_height = max(0.0, intersection_y_max - intersection_y_min)
+    box_area = max(0.0, box.x_max - box.x_min) * max(0.0, box.y_max - box.y_min)
+    if box_area <= 0.0:
+        return 0.0
+    return (intersection_width * intersection_height) / box_area
 
 
 def _boxes_with_mask_fallback(

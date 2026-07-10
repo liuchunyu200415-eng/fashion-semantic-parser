@@ -58,6 +58,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--device", default=None)
     parser.add_argument("--score-threshold", type=float, default=None)
+    parser.add_argument(
+        "--subject-roi",
+        default=None,
+        help="Optional subject ROI as x_min,y_min,x_max,y_max.",
+    )
     parser.add_argument("--alpha", type=float, default=0.45)
     return parser.parse_args()
 
@@ -71,7 +76,9 @@ def main() -> None:
     from fashion_semantic_parser.service.segmentation_baseline import (
         Detectron2SegmentationBaseline,
         SegmentationBaselineSettings,
+        filter_prediction_by_subject_roi,
     )
+    from fashion_semantic_parser.models.segmentation import SegmentationSubjectROI
 
     raw_config = _read_yaml(resolve_project_path(args.config))
     overrides = {
@@ -85,12 +92,24 @@ def main() -> None:
     settings = SegmentationBaselineSettings.model_validate(raw_config)
     image_path = resolve_project_path(args.image)
     prediction = Detectron2SegmentationBaseline(settings).predict_image(image_path)
+    subject_roi = (
+        _parse_subject_roi(args.subject_roi, SegmentationSubjectROI)
+        if args.subject_roi
+        else None
+    )
+    if subject_roi:
+        prediction = filter_prediction_by_subject_roi(prediction, subject_roi)
 
     image = cv2.imread(str(image_path))
     if image is None:
         raise ValueError(f"Unable to read image: {image_path}")
 
-    visualization = draw_prediction(image, prediction.model_dump(), args.alpha)
+    visualization = draw_prediction(
+        image,
+        prediction.model_dump(),
+        args.alpha,
+        subject_roi.model_dump() if subject_roi else None,
+    )
     output_path = resolve_project_path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(output_path), visualization)
@@ -111,7 +130,10 @@ def main() -> None:
 
 
 def draw_prediction(
-    image: np.ndarray, prediction: dict[str, Any], alpha: float
+    image: np.ndarray,
+    prediction: dict[str, Any],
+    alpha: float,
+    subject_roi: dict[str, float] | None = None,
 ) -> np.ndarray:
     """Draw translucent mask polygons, boxes, and labels on a BGR image."""
     result = image.copy()
@@ -126,6 +148,9 @@ def draw_prediction(
     for instance in prediction["instances"]:
         color = COLORS_BY_CATEGORY.get(instance["category_label"], (255, 255, 255))
         _draw_box_and_label(result, instance, color)
+
+    if subject_roi:
+        _draw_subject_roi(result, subject_roi)
 
     return result
 
@@ -179,6 +204,26 @@ def _draw_box_and_label(
     )
 
 
+def _draw_subject_roi(image: np.ndarray, roi: dict[str, float]) -> None:
+    """Draw the subject/person ROI used to filter predictions."""
+    x_min = int(round(roi["x_min"]))
+    y_min = int(round(roi["y_min"]))
+    x_max = int(round(roi["x_max"]))
+    y_max = int(round(roi["y_max"]))
+    color = (255, 255, 255)
+    cv2.rectangle(image, (x_min, y_min), (x_max, y_max), color, 2)
+    cv2.putText(
+        image,
+        "subject ROI",
+        (x_min + 4, max(18, y_min - 6)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        color,
+        1,
+        cv2.LINE_AA,
+    )
+
+
 def _read_yaml(path: Path) -> dict[str, Any]:
     """Read a YAML mapping from disk."""
     with path.open("r", encoding="utf-8") as file:
@@ -186,6 +231,19 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"Expected mapping in config file: {path}")
     return data
+
+
+def _parse_subject_roi(raw_value: str, roi_class: type[Any]) -> Any:
+    """Parse a subject ROI from x_min,y_min,x_max,y_max text."""
+    values = [float(value.strip()) for value in raw_value.split(",")]
+    if len(values) != 4:
+        raise ValueError("--subject-roi must use x_min,y_min,x_max,y_max")
+    return roi_class(
+        x_min=values[0],
+        y_min=values[1],
+        x_max=values[2],
+        y_max=values[3],
+    )
 
 
 if __name__ == "__main__":
