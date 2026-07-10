@@ -1,8 +1,10 @@
 """Tests for PRD 3.1.1 segmentation baseline helpers."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import yaml
 
 from fashion_semantic_parser.service.segmentation_baseline import (
     Detectron2SegmentationBaseline,
@@ -78,6 +80,16 @@ def test_mask2former_settings_use_local_project_config() -> None:
     assert settings.config_file is not None
     assert settings.config_file.endswith("maskformer2_R50_bs16_50ep.yaml")
     assert settings.output_dir.endswith("mask2former_r50")
+
+
+def test_mask2former_project_config_uses_pretrained_weights() -> None:
+    """Short Mask2Former fine-tuning should start from COCO pretrained weights."""
+    config_path = Path("configs/segmentation_mask2former.yaml")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert config["model_family"] == "mask2former"
+    assert config["weights"].endswith("model_final_3c8ec9.pkl")
+    assert "coco/instance/maskformer2_R50_bs16_50ep" in config["weights"]
 
 
 def test_trainer_class_builds_coco_evaluator() -> None:

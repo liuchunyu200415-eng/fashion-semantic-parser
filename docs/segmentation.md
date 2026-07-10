@@ -126,6 +126,23 @@ python scripts/train_segmentation_baseline.py \
   --max-iter 20
 ```
 
+The project Mask2Former config loads the official COCO instance segmentation
+R50 50ep pretrained checkpoint by default:
+
+```text
+https://dl.fbaipublicfiles.com/maskformer/mask2former/coco/instance/maskformer2_R50_bs16_50ep/model_final_3c8ec9.pkl
+```
+
+This checkpoint is required for useful short fine-tuning runs. If the training
+log says:
+
+```text
+[DetectionCheckpointer] Loading from  ...
+```
+
+then no pretrained weights were loaded and a short run is expected to produce
+near-zero AP.
+
 The Mask2Former config file is:
 
 ```text
@@ -139,6 +156,18 @@ The training path registers the converted COCO files and trains against all
 eight PRD categories. DeepFashion2 currently only provides high-quality
 examples for top, pants, skirt, outerwear, and dress, so shoes, bags, and
 accessories should be treated as data gaps until additional datasets are added.
+
+For a fast evaluation check, keep the full training file but limit validation:
+
+```bash
+python scripts/convert_deepfashion2_to_coco.py --split validation --limit 500
+python scripts/train_segmentation_baseline.py \
+  --config configs/segmentation_mask2former.yaml \
+  --max-iter 500
+```
+
+Full validation currently contains tens of thousands of images and can take
+more than an hour, so use it only for formal reporting.
 
 ## Predict One Image
 

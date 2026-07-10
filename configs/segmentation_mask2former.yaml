@@ -12,7 +12,7 @@ image_root: .
 output_dir: outputs/segmentation/mask2former_r50
 config_source: local
 config_file: external/Mask2Former/configs/coco/instance-segmentation/maskformer2_R50_bs16_50ep.yaml
-weights: null
+weights: https://dl.fbaipublicfiles.com/maskformer/mask2former/coco/instance/maskformer2_R50_bs16_50ep/model_final_3c8ec9.pkl
 num_classes: 8
 ims_per_batch: 2
 base_lr: 0.0001
@@ -20,4 +20,3 @@ max_iter: 3000
 num_workers: 2
 score_threshold: 0.5
 device: cuda
-
