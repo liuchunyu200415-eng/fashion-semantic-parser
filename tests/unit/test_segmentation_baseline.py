@@ -39,6 +39,14 @@ class _FakeInstances:
         ]
 
 
+class _FakeZeroBoxInstances(_FakeInstances):
+    """Detectron2-like instances with an invalid model box."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.pred_boxes = _FakeBoxes([[0.0, 0.0, 0.0, 0.0]])
+
+
 class _FakeDefaultTrainer:
     """Minimal trainer base for testing dynamic trainer subclasses."""
 
@@ -99,6 +107,7 @@ def test_trainer_class_builds_coco_evaluator() -> None:
         {
             "COCOEvaluator": _FakeCOCOEvaluator,
             "DefaultTrainer": _FakeDefaultTrainer,
+            "BitMasks": None,
         }
     )
 
@@ -130,3 +139,17 @@ def test_convert_detectron2_instances_to_prediction_schema() -> None:
     assert instance.box.y_max == 220.0
     assert len(instance.mask) == 1
     assert len(instance.mask[0]) >= 6
+
+
+def test_convert_detectron2_instances_derives_invalid_box_from_mask() -> None:
+    """Mask-first models should still return usable PRD bounding boxes."""
+    prediction = convert_detectron2_instances(
+        instances=_FakeZeroBoxInstances(),
+        image_path="data/raw/example.jpg",
+    )
+
+    instance = prediction.instances[0]
+    assert instance.box.x_min == 1.0
+    assert instance.box.y_min == 1.0
+    assert instance.box.x_max == 3.0
+    assert instance.box.y_max == 3.0

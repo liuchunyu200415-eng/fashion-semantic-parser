@@ -192,7 +192,7 @@ class Detectron2SegmentationBaseline:
     def _trainer_class(self, detectron2: dict[str, Any]) -> type:
         """Return the trainer class needed by the configured model family."""
         default_trainer = detectron2["DefaultTrainer"]
-        coco_evaluator = detectron2["COCOEvaluator"]
+        coco_evaluator = _mask_box_coco_evaluator_class(detectron2)
 
         class SegmentationTrainer(default_trainer):  # type: ignore[misc, valid-type]
             """DefaultTrainer with COCO instance segmentation evaluation."""
@@ -233,10 +233,11 @@ def convert_detectron2_instances(
     image_path: Path,
 ) -> SegmentationPrediction:
     """Convert Detectron2 Instances to project prediction schema."""
-    boxes = _tensor_to_list(instances.pred_boxes.tensor)
     scores = _tensor_to_list(instances.scores)
     classes = _tensor_to_list(instances.pred_classes)
-    masks = _masks_to_polygons(instances.pred_masks)
+    mask_list = _tensor_to_list(instances.pred_masks)
+    boxes = _boxes_with_mask_fallback(instances, mask_list)
+    masks = _masks_to_polygons(mask_list)
     predictions: list[SegmentationInstance] = []
 
     for index, class_index in enumerate(classes):
@@ -272,6 +273,7 @@ def _load_detectron2_modules() -> dict[str, Any]:
         from detectron2.data.datasets import register_coco_instances
         from detectron2.engine import DefaultPredictor, DefaultTrainer
         from detectron2.evaluation import COCOEvaluator
+        from detectron2.structures import BitMasks
     except ImportError as error:
         raise ModelNotReadyError(
             "Detectron2 is required for PRD 3.1.1 baseline training and "
@@ -284,6 +286,7 @@ def _load_detectron2_modules() -> dict[str, Any]:
         "DefaultPredictor": DefaultPredictor,
         "DefaultTrainer": DefaultTrainer,
         "build_detection_train_loader": build_detection_train_loader,
+        "BitMasks": BitMasks,
         "get_cfg": get_cfg,
         "model_zoo": model_zoo,
         "register_coco_instances": register_coco_instances,
@@ -319,6 +322,93 @@ def _tensor_to_list(value: Any) -> list[Any]:
     if hasattr(value, "tolist"):
         return value.tolist()
     return list(value)
+
+
+def _boxes_with_mask_fallback(
+    instances: Any, mask_list: list[Any]
+) -> list[list[float]]:
+    """Use model boxes when valid, otherwise derive boxes from predicted masks."""
+    boxes = _tensor_to_list(instances.pred_boxes.tensor)
+    fallback_boxes = [_mask_to_box(mask) for mask in mask_list]
+
+    fixed_boxes: list[list[float]] = []
+    for index, fallback_box in enumerate(fallback_boxes):
+        if index < len(boxes) and _is_valid_box(boxes[index]):
+            fixed_boxes.append([float(value) for value in boxes[index]])
+            continue
+        fixed_boxes.append(fallback_box)
+    return fixed_boxes
+
+
+def _is_valid_box(box: Any) -> bool:
+    """Return whether a box has positive width and height."""
+    if len(box) < 4:
+        return False
+    x_min, y_min, x_max, y_max = box[:4]
+    return float(x_max) > float(x_min) and float(y_max) > float(y_min)
+
+
+def _mask_to_box(mask: Any) -> list[float]:
+    """Compute an xyxy pixel-boundary box from a binary mask."""
+    import numpy as np
+
+    y_indices, x_indices = np.where(np.asarray(mask, dtype=bool))
+    if len(x_indices) == 0 or len(y_indices) == 0:
+        return [0.0, 0.0, 0.0, 0.0]
+    return [
+        float(x_indices.min()),
+        float(y_indices.min()),
+        float(x_indices.max() + 1),
+        float(y_indices.max() + 1),
+    ]
+
+
+def _mask_box_coco_evaluator_class(detectron2: dict[str, Any]) -> type:
+    """Return a COCOEvaluator that derives invalid prediction boxes from masks."""
+    coco_evaluator = detectron2["COCOEvaluator"]
+    bit_masks_class = detectron2.get("BitMasks")
+
+    class MaskBoxCOCOEvaluator(coco_evaluator):  # type: ignore[misc, valid-type]
+        """COCO evaluator with mask-derived boxes for mask-first models."""
+
+        def process(self, inputs: Any, outputs: Any) -> None:
+            """Replace invalid predicted boxes before COCO metric serialization."""
+            for output in outputs:
+                instances = output.get("instances")
+                if instances is None or not instances.has("pred_masks"):
+                    continue
+                if not instances.has("pred_boxes") or _instances_have_invalid_boxes(
+                    instances
+                ):
+                    instances.pred_boxes = _detectron2_boxes_from_masks(
+                        instances.pred_masks,
+                        bit_masks_class,
+                    )
+            super().process(inputs, outputs)
+
+    return MaskBoxCOCOEvaluator
+
+
+def _instances_have_invalid_boxes(instances: Any) -> bool:
+    """Return whether any Detectron2 instance box has non-positive area."""
+    boxes = instances.pred_boxes.tensor
+    if hasattr(boxes, "numel") and boxes.numel() == 0:
+        return False
+    invalid = (boxes[:, 2] <= boxes[:, 0]) | (boxes[:, 3] <= boxes[:, 1])
+    if hasattr(invalid, "any"):
+        invalid = invalid.any()
+    if hasattr(invalid, "item"):
+        return bool(invalid.item())
+    return bool(invalid)
+
+
+def _detectron2_boxes_from_masks(masks: Any, bit_masks_class: Any) -> Any:
+    """Build Detectron2 Boxes from tensor masks or BitMasks."""
+    if hasattr(masks, "get_bounding_boxes"):
+        return masks.get_bounding_boxes()
+    if bit_masks_class is None:
+        raise ModelNotReadyError("Detectron2 BitMasks is required for mask box eval.")
+    return bit_masks_class(masks).get_bounding_boxes()
 
 
 def _masks_to_polygons(masks: Any) -> list[list[list[float]]]:

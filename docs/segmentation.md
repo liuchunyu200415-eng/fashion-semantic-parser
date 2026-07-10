@@ -152,6 +152,12 @@ configs/segmentation_mask2former.yaml
 Mask2Former should become the main 3.1.1 model after the baseline train loop is
 verified. Mask R-CNN remains a debugging baseline.
 
+Mask2Former is a mask-first architecture, so the project derives invalid or
+empty predicted boxes from the predicted masks before returning the PRD output
+schema and before COCO validation serializes predictions. This keeps the
+required `mask + bounding box + category label` output consistent even when the
+upstream model head does not emit meaningful boxes directly.
+
 The training path registers the converted COCO files and trains against all
 eight PRD categories. DeepFashion2 currently only provides high-quality
 examples for top, pants, skirt, outerwear, and dress, so shoes, bags, and
