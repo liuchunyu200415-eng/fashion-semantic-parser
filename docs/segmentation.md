@@ -218,3 +218,19 @@ python scripts/visualize_segmentation_prediction.py \
 
 The visualization draws translucent predicted masks, mask-derived boxes, class
 labels, and confidence scores.
+
+## Evaluate Existing Weights
+
+To compare mask quality without retraining, evaluate a saved checkpoint at
+different score thresholds:
+
+```bash
+python scripts/evaluate_segmentation_baseline.py \
+  --config configs/segmentation_mask2former.yaml \
+  --weights outputs/segmentation/mask2former_r50/model_final.pth \
+  --score-threshold 0.1
+```
+
+For PRD 3.1.1 diagnosis, prioritize `segm` metrics and visible mask overlays.
+Bounding boxes are derived from the predicted mask region, so they are a
+secondary output once mask quality is acceptable.

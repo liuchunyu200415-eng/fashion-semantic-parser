@@ -111,6 +111,17 @@ class Detectron2SegmentationBaseline:
         trainer.resume_or_load(resume=False)
         trainer.train()
 
+    def evaluate(self) -> Any:
+        """Evaluate the configured segmentation model without further training."""
+        detectron2 = _load_detectron2_modules()
+        self.register_datasets()
+        cfg = self.build_config()
+        Path(cfg.OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+        trainer_class = self._trainer_class(detectron2)
+        trainer = trainer_class(cfg)
+        trainer.resume_or_load(resume=False)
+        return trainer.test(cfg, trainer.model)
+
     def predict_image(self, image_path: Path) -> SegmentationPrediction:
         """Run instance segmentation on one RGB product image."""
         detectron2 = _load_detectron2_modules()
