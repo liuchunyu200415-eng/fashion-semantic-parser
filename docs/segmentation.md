@@ -200,3 +200,21 @@ instances[].mask
 
 This matches the PRD 3.1.1 output contract: instance mask, bounding box, and
 category label.
+
+## Visualize One Prediction
+
+To inspect visible Mask2Former results for reporting or debugging, save a
+mask-overlay image:
+
+```bash
+python scripts/visualize_segmentation_prediction.py \
+  data/raw/example.jpg \
+  --config configs/segmentation_mask2former.yaml \
+  --weights outputs/segmentation/mask2former_r50/model_final.pth \
+  --score-threshold 0.1 \
+  --output outputs/segmentation/visualizations/example.png \
+  --json-output outputs/segmentation/visualizations/example.json
+```
+
+The visualization draws translucent predicted masks, mask-derived boxes, class
+labels, and confidence scores.
