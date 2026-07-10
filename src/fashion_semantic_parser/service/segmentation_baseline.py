@@ -288,11 +288,12 @@ def filter_prediction_by_subject_roi(
     subject_roi: SegmentationSubjectROI,
     min_box_overlap: float = 0.05,
 ) -> SegmentationPrediction:
-    """Keep predicted instances that overlap the subject/person ROI."""
+    """Keep predicted instances centered inside the subject/person ROI."""
     filtered_instances = [
         instance
         for instance in prediction.instances
-        if _box_overlap_ratio(instance.box, subject_roi) >= min_box_overlap
+        if _box_center_in_roi(instance.box, subject_roi)
+        and _box_overlap_ratio(instance.box, subject_roi) >= min_box_overlap
     ]
     return SegmentationPrediction(
         image_path=prediction.image_path,
@@ -375,6 +376,16 @@ def _box_overlap_ratio(
     if box_area <= 0.0:
         return 0.0
     return (intersection_width * intersection_height) / box_area
+
+
+def _box_center_in_roi(
+    box: SegmentationBoundingBox,
+    roi: SegmentationSubjectROI,
+) -> bool:
+    """Return whether a prediction box center falls inside the subject ROI."""
+    center_x = (box.x_min + box.x_max) / 2.0
+    center_y = (box.y_min + box.y_max) / 2.0
+    return roi.x_min <= center_x <= roi.x_max and roi.y_min <= center_y <= roi.y_max
 
 
 def _boxes_with_mask_fallback(

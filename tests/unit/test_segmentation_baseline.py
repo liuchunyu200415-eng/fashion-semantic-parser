@@ -223,3 +223,24 @@ def test_filter_prediction_by_subject_roi_removes_background_instances() -> None
 
     assert len(filtered.instances) == 1
     assert filtered.instances[0].category_label == "dress"
+
+
+def test_filter_prediction_by_subject_roi_removes_off_center_large_instances() -> None:
+    """Large background predictions should not survive by tiny ROI overlap alone."""
+    prediction = convert_detectron2_instances(
+        instances=_FakeTwoScoreInstances(),
+        image_path="data/raw/example.jpg",
+        score_threshold=0.0,
+    )
+
+    filtered = filter_prediction_by_subject_roi(
+        prediction,
+        SegmentationSubjectROI(
+            x_min=3.0,
+            y_min=3.0,
+            x_max=20.0,
+            y_max=20.0,
+        ),
+    )
+
+    assert filtered.instances == []
