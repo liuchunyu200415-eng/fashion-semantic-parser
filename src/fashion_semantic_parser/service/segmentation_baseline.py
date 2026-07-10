@@ -136,6 +136,7 @@ class Detectron2SegmentationBaseline:
         return convert_detectron2_instances(
             instances=instances,
             image_path=image_path,
+            score_threshold=self.settings.score_threshold,
         )
 
     def _resolve_weights(self, model_zoo: Any) -> str:
@@ -203,7 +204,10 @@ class Detectron2SegmentationBaseline:
     def _trainer_class(self, detectron2: dict[str, Any]) -> type:
         """Return the trainer class needed by the configured model family."""
         default_trainer = detectron2["DefaultTrainer"]
-        coco_evaluator = _mask_box_coco_evaluator_class(detectron2)
+        coco_evaluator = _mask_box_coco_evaluator_class(
+            detectron2,
+            score_threshold=self.settings.score_threshold,
+        )
 
         class SegmentationTrainer(default_trainer):  # type: ignore[misc, valid-type]
             """DefaultTrainer with COCO instance segmentation evaluation."""
@@ -242,6 +246,7 @@ class Detectron2SegmentationBaseline:
 def convert_detectron2_instances(
     instances: Any,
     image_path: Path,
+    score_threshold: float = 0.0,
 ) -> SegmentationPrediction:
     """Convert Detectron2 Instances to project prediction schema."""
     scores = _tensor_to_list(instances.scores)
@@ -252,6 +257,8 @@ def convert_detectron2_instances(
     predictions: list[SegmentationInstance] = []
 
     for index, class_index in enumerate(classes):
+        if float(scores[index]) < score_threshold:
+            continue
         category = PRD_SEGMENTATION_CATEGORIES[int(class_index)]
         x_min, y_min, x_max, y_max = boxes[index]
         predictions.append(
@@ -374,8 +381,11 @@ def _mask_to_box(mask: Any) -> list[float]:
     ]
 
 
-def _mask_box_coco_evaluator_class(detectron2: dict[str, Any]) -> type:
-    """Return a COCOEvaluator that derives invalid prediction boxes from masks."""
+def _mask_box_coco_evaluator_class(
+    detectron2: dict[str, Any],
+    score_threshold: float,
+) -> type:
+    """Return a COCOEvaluator that filters scores and derives boxes from masks."""
     coco_evaluator = detectron2["COCOEvaluator"]
     bit_masks_class = detectron2.get("BitMasks")
 
@@ -388,6 +398,10 @@ def _mask_box_coco_evaluator_class(detectron2: dict[str, Any]) -> type:
                 instances = output.get("instances")
                 if instances is None or not instances.has("pred_masks"):
                     continue
+                instances = _filter_detectron2_instances_by_score(
+                    instances,
+                    score_threshold,
+                )
                 if not instances.has("pred_boxes") or _instances_have_invalid_boxes(
                     instances
                 ):
@@ -395,9 +409,19 @@ def _mask_box_coco_evaluator_class(detectron2: dict[str, Any]) -> type:
                         instances.pred_masks,
                         bit_masks_class,
                     )
+                output["instances"] = instances
             super().process(inputs, outputs)
 
     return MaskBoxCOCOEvaluator
+
+
+def _filter_detectron2_instances_by_score(
+    instances: Any, score_threshold: float
+) -> Any:
+    """Filter Detectron2 Instances by score for Mask2Former outputs."""
+    if score_threshold <= 0.0 or not instances.has("scores"):
+        return instances
+    return instances[instances.scores >= score_threshold]
 
 
 def _instances_have_invalid_boxes(instances: Any) -> bool:

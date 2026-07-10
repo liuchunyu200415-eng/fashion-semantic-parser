@@ -47,6 +47,39 @@ class _FakeZeroBoxInstances(_FakeInstances):
         self.pred_boxes = _FakeBoxes([[0.0, 0.0, 0.0, 0.0]])
 
 
+class _FakeTwoScoreInstances(_FakeInstances):
+    """Detectron2-like instances with one low-score and one high-score item."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.pred_boxes = _FakeBoxes(
+            [
+                [0.0, 0.0, 4.0, 4.0],
+                [10.0, 20.0, 110.0, 220.0],
+            ]
+        )
+        self.scores = [0.05, 0.91]
+        self.pred_classes = [0, 4]
+        self.pred_masks = [
+            np.array(
+                [
+                    [True, True, False, False],
+                    [True, True, False, False],
+                    [False, False, False, False],
+                    [False, False, False, False],
+                ]
+            ),
+            np.array(
+                [
+                    [False, False, False, False],
+                    [False, True, True, False],
+                    [False, True, True, False],
+                    [False, False, False, False],
+                ]
+            ),
+        ]
+
+
 class _FakeDefaultTrainer:
     """Minimal trainer base for testing dynamic trainer subclasses."""
 
@@ -153,3 +186,16 @@ def test_convert_detectron2_instances_derives_invalid_box_from_mask() -> None:
     assert instance.box.y_min == 1.0
     assert instance.box.x_max == 3.0
     assert instance.box.y_max == 3.0
+
+
+def test_convert_detectron2_instances_filters_low_scores() -> None:
+    """Prediction conversion should honor explicit score thresholds."""
+    prediction = convert_detectron2_instances(
+        instances=_FakeTwoScoreInstances(),
+        image_path="data/raw/example.jpg",
+        score_threshold=0.1,
+    )
+
+    assert len(prediction.instances) == 1
+    assert prediction.instances[0].category_label == "dress"
+    assert prediction.instances[0].confidence == 0.91
