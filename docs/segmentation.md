@@ -163,17 +163,64 @@ eight PRD categories. DeepFashion2 currently only provides high-quality
 examples for top, pants, skirt, outerwear, and dress, so shoes, bags, and
 accessories should be treated as data gaps until additional datasets are added.
 
-For a fast evaluation check, keep the full training file but limit validation:
+For a fast experiment, keep the full training file but limit validation:
 
 ```bash
 python scripts/convert_deepfashion2_to_coco.py --split validation --limit 500
 python scripts/train_segmentation_baseline.py \
   --config configs/segmentation_mask2former.yaml \
   --max-iter 500
+
+python scripts/evaluate_segmentation_baseline.py \
+  --config configs/segmentation_mask2former.yaml \
+  --weights outputs/segmentation/mask2former_r50/model_final.pth \
+  --score-threshold 0.0
 ```
 
 Full validation currently contains tens of thousands of images and can take
 more than an hour, so use it only for formal reporting.
+
+## Staged Mask2Former Training
+
+Before a formal run, regenerate the full training COCO file. The smoke-test
+command with `--limit 10` writes to the same default path and must not remain as
+the trainer input:
+
+```bash
+python scripts/convert_deepfashion2_to_coco.py --split train
+python scripts/convert_deepfashion2_to_coco.py --split validation --limit 500
+python scripts/check_segmentation_env.py
+```
+
+Check the `datasets.train.image_count` field before training. A full
+DeepFashion2 training conversion should contain far more than 10 images. The
+500-image validation subset keeps iteration experiments practical; regenerate
+the full validation file only for formal final metrics.
+
+The target config now defines a 20,000-iteration first training stage and saves
+a checkpoint every 1,000 iterations. It skips the slow final validation so
+training and evaluation can be run independently:
+
+```bash
+python scripts/train_segmentation_baseline.py \
+  --config configs/segmentation_mask2former.yaml
+```
+
+To continue an interrupted run in the same output directory, preserve
+`last_checkpoint` and pass `--resume`. `max_iter` is the final target iteration,
+not the number of additional iterations:
+
+```bash
+python scripts/train_segmentation_baseline.py \
+  --config configs/segmentation_mask2former.yaml \
+  --resume \
+  --max-iter 20000
+```
+
+Do not resume a checkpoint that was trained from a different or 10-image COCO
+file. Start a clean output directory in that case. After the stage finishes,
+run `evaluate_segmentation_baseline.py` against `model_final.pth`, then decide
+whether to resume to 50,000 iterations from the metric trend and visual masks.
 
 ## Predict One Image
 
@@ -245,9 +292,12 @@ different score thresholds:
 python scripts/evaluate_segmentation_baseline.py \
   --config configs/segmentation_mask2former.yaml \
   --weights outputs/segmentation/mask2former_r50/model_final.pth \
-  --score-threshold 0.1
+  --score-threshold 0.0
 ```
 
-For PRD 3.1.1 diagnosis, prioritize `segm` metrics and visible mask overlays.
+Use a threshold of `0.0` for formal COCO AP because AP itself ranks predictions
+by confidence. Higher thresholds are useful for visualization and deployment,
+but can hide true positives and understate model quality during evaluation. For
+PRD 3.1.1 diagnosis, prioritize `segm` metrics and visible mask overlays.
 Bounding boxes are derived from the predicted mask region, so they are a
 secondary output once mask quality is acceptable.

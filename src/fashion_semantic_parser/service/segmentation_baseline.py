@@ -38,9 +38,13 @@ class SegmentationBaselineSettings(BaseModel):
     ims_per_batch: int = Field(default=2, ge=1)
     base_lr: float = Field(default=0.00025, gt=0.0)
     max_iter: int = Field(default=3000, ge=1)
+    checkpoint_period: int = Field(default=1000, ge=1)
+    eval_period: int = Field(default=0, ge=0)
     num_workers: int = Field(default=2, ge=0)
     score_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     device: str = "cuda"
+    resume: bool = False
+    evaluate_after_training: bool = True
 
 
 class Detectron2SegmentationBaseline:
@@ -73,6 +77,8 @@ class Detectron2SegmentationBaseline:
         cfg.SOLVER.IMS_PER_BATCH = self.settings.ims_per_batch
         cfg.SOLVER.BASE_LR = self.settings.base_lr
         cfg.SOLVER.MAX_ITER = self.settings.max_iter
+        cfg.SOLVER.CHECKPOINT_PERIOD = self.settings.checkpoint_period
+        cfg.TEST.EVAL_PERIOD = self.settings.eval_period
         self._apply_model_head_settings(cfg)
         self._apply_trainer_compatibility_settings(cfg)
         cfg.MODEL.DEVICE = self.settings.device
@@ -106,10 +112,12 @@ class Detectron2SegmentationBaseline:
         detectron2 = _load_detectron2_modules()
         self.register_datasets()
         cfg = self.build_config()
+        if not self.settings.evaluate_after_training:
+            cfg.DATASETS.TEST = ()
         Path(cfg.OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
         trainer_class = self._trainer_class(detectron2)
         trainer = trainer_class(cfg)
-        trainer.resume_or_load(resume=False)
+        trainer.resume_or_load(resume=self.settings.resume)
         trainer.train()
 
     def evaluate(self) -> Any:

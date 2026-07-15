@@ -19,14 +19,16 @@ def main() -> None:
     """Print a JSON report for segmentation training dependencies."""
     add_src_to_python_path()
 
+    dataset_status = _dataset_status()
     report = {
         "python": sys.version.split()[0],
         "project": _project_status(),
+        "datasets": dataset_status,
         "torch": _torch_status(),
         "opencv": _module_status("cv2"),
         "detectron2": _module_status("detectron2"),
         "mask2former": _module_status("mask2former"),
-        "recommendations": _recommendations(),
+        "recommendations": _recommendations(dataset_status),
     }
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
@@ -43,6 +45,46 @@ def _project_status() -> dict[str, Any]:
         "mask2former_repo": "external/Mask2Former",
     }
     return {name: resolve_project_path(path).exists() for name, path in paths.items()}
+
+
+def _dataset_status() -> dict[str, Any]:
+    """Return counts from the exact COCO files consumed by the trainer."""
+    from fashion_semantic_parser.common.paths import resolve_project_path
+
+    paths = {
+        "train": "data/processed/autodl/segmentation/deepfashion2_train.json",
+        "validation": (
+            "data/processed/autodl/segmentation/deepfashion2_validation.json"
+        ),
+    }
+    return {
+        split: _coco_file_status(resolve_project_path(path))
+        for split, path in paths.items()
+    }
+
+
+def _coco_file_status(path: Path) -> dict[str, Any]:
+    """Read image, annotation, and category counts from one COCO JSON file."""
+    if not path.exists():
+        return {"exists": False}
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return {"exists": True, "valid": False, "error": str(error)}
+
+    images = data.get("images", [])
+    annotations = data.get("annotations", [])
+    categories = data.get("categories", [])
+    return {
+        "exists": True,
+        "valid": True,
+        "image_count": len(images) if isinstance(images, list) else None,
+        "annotation_count": (
+            len(annotations) if isinstance(annotations, list) else None
+        ),
+        "category_count": len(categories) if isinstance(categories, list) else None,
+    }
 
 
 def _torch_status() -> dict[str, Any]:
@@ -75,7 +117,7 @@ def _module_status(module_name: str) -> dict[str, Any]:
     }
 
 
-def _recommendations() -> list[str]:
+def _recommendations(dataset_status: dict[str, Any]) -> list[str]:
     """Return concise next-step guidance."""
     recommendations = []
     torch_status = _torch_status()
@@ -89,6 +131,17 @@ def _recommendations() -> list[str]:
     if not _module_status("mask2former").get("installed"):
         recommendations.append(
             "Clone Mask2Former under external/Mask2Former and add it to PYTHONPATH."
+        )
+
+    train_image_count = dataset_status.get("train", {}).get("image_count")
+    if isinstance(train_image_count, int) and train_image_count <= 10:
+        recommendations.append(
+            "Training COCO has 10 or fewer images. Regenerate it without --limit."
+        )
+    validation_image_count = dataset_status.get("validation", {}).get("image_count")
+    if isinstance(validation_image_count, int) and validation_image_count <= 10:
+        recommendations.append(
+            "Validation COCO has 10 or fewer images; use 500 for staged evaluation."
         )
     return recommendations
 

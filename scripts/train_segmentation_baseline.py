@@ -31,8 +31,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--weights", default=None)
     parser.add_argument("--max-iter", type=int, default=None)
+    parser.add_argument("--checkpoint-period", type=int, default=None)
+    parser.add_argument("--eval-period", type=int, default=None)
     parser.add_argument("--device", default=None)
     parser.add_argument("--score-threshold", type=float, default=None)
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        default=None,
+        help="Resume optimizer, scheduler, and iteration state from last_checkpoint.",
+    )
+    parser.add_argument(
+        "--skip-final-eval",
+        action="store_true",
+        help=(
+            "Skip validation after training; evaluate the saved checkpoint "
+            "separately."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -54,12 +70,17 @@ def main() -> None:
         "output_dir": args.output_dir,
         "weights": args.weights,
         "max_iter": args.max_iter,
+        "checkpoint_period": args.checkpoint_period,
+        "eval_period": args.eval_period,
         "device": args.device,
         "score_threshold": args.score_threshold,
+        "resume": args.resume,
     }
     raw_config.update(
         {key: value for key, value in overrides.items() if value is not None}
     )
+    if args.skip_final_eval:
+        raw_config["evaluate_after_training"] = False
     settings = SegmentationBaselineSettings.model_validate(raw_config)
     Detectron2SegmentationBaseline(settings).train()
 

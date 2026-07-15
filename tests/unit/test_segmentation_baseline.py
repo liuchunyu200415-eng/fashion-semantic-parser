@@ -103,6 +103,10 @@ def test_segmentation_baseline_settings_defaults() -> None:
     assert settings.val_json.endswith("deepfashion2_validation.json")
     assert settings.model_family == "mask_rcnn"
     assert settings.device == "cuda"
+    assert settings.checkpoint_period == 1000
+    assert settings.eval_period == 0
+    assert settings.resume is False
+    assert settings.evaluate_after_training is True
 
 
 def test_mask2former_settings_use_local_project_config() -> None:
@@ -133,6 +137,10 @@ def test_mask2former_project_config_uses_pretrained_weights() -> None:
     assert config["model_family"] == "mask2former"
     assert config["weights"].endswith("model_final_3c8ec9.pkl")
     assert "coco/instance/maskformer2_R50_bs16_50ep" in config["weights"]
+    assert config["max_iter"] == 20000
+    assert config["checkpoint_period"] == 1000
+    assert config["resume"] is False
+    assert config["evaluate_after_training"] is False
 
 
 def test_trainer_class_builds_coco_evaluator() -> None:
