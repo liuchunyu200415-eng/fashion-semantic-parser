@@ -407,3 +407,8 @@ postprocessing. `pipeline_ms` additionally includes transfer to CPU, score
 filtering, mask-to-polygon conversion, mask-derived boxes, and project response
 construction. Report median and p95; compare `pipeline_ms.p95` with the PRD
 single-image latency target for the strict end-to-end interpretation.
+
+The output path applies the confidence threshold to Detectron2 instances before
+copying masks to CPU. Retained masks stay as dense NumPy arrays during OpenCV
+contour extraction; converting every pixel of all 100 Mask2Former queries into
+nested Python lists is intentionally avoided.

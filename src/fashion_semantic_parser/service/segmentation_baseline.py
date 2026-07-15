@@ -147,7 +147,10 @@ class Detectron2SegmentationBaseline:
             raise ValueError(f"Unable to read image: {image_path}")
 
         outputs = predictor(image)
-        instances = outputs["instances"].to("cpu")
+        instances = _filter_detectron2_instances_by_score(
+            outputs["instances"],
+            self.settings.score_threshold,
+        ).to("cpu")
         return convert_detectron2_instances(
             instances=instances,
             image_path=image_path,
@@ -178,8 +181,12 @@ class Detectron2SegmentationBaseline:
             image_path, image = loaded_images[index % len(loaded_images)]
             outputs = predictor(image)
             _synchronize_torch_device(torch, self.settings.device)
+            instances = _filter_detectron2_instances_by_score(
+                outputs["instances"],
+                self.settings.score_threshold,
+            ).to("cpu")
             convert_detectron2_instances(
-                instances=outputs["instances"].to("cpu"),
+                instances=instances,
                 image_path=image_path,
                 score_threshold=self.settings.score_threshold,
             )
@@ -195,8 +202,12 @@ class Detectron2SegmentationBaseline:
             outputs = predictor(image)
             _synchronize_torch_device(torch, self.settings.device)
             predictor_end_time = time.perf_counter()
+            instances = _filter_detectron2_instances_by_score(
+                outputs["instances"],
+                self.settings.score_threshold,
+            ).to("cpu")
             convert_detectron2_instances(
-                instances=outputs["instances"].to("cpu"),
+                instances=instances,
                 image_path=image_path,
                 score_threshold=self.settings.score_threshold,
             )
@@ -335,9 +346,10 @@ def convert_detectron2_instances(
     score_threshold: float = 0.0,
 ) -> SegmentationPrediction:
     """Convert Detectron2 Instances to project prediction schema."""
+    instances = _filter_detectron2_instances_by_score(instances, score_threshold)
     scores = _tensor_to_list(instances.scores)
     classes = _tensor_to_list(instances.pred_classes)
-    mask_list = _tensor_to_list(instances.pred_masks)
+    mask_list = _masks_to_arrays(instances.pred_masks)
     boxes = _boxes_with_mask_fallback(instances, mask_list)
     masks = _masks_to_polygons(mask_list)
     predictions: list[SegmentationInstance] = []
@@ -743,7 +755,8 @@ def _filter_detectron2_instances_by_score(
     instances: Any, score_threshold: float
 ) -> Any:
     """Filter Detectron2 Instances by score for Mask2Former outputs."""
-    if score_threshold <= 0.0 or not instances.has("scores"):
+    has_field = getattr(instances, "has", None)
+    if score_threshold <= 0.0 or not callable(has_field) or not has_field("scores"):
         return instances
     return instances[instances.scores >= score_threshold]
 
@@ -789,6 +802,18 @@ def _masks_to_polygons(masks: Any) -> list[list[list[float]]]:
             polygons.append(polygon)
         polygons_by_mask.append(polygons)
     return polygons_by_mask
+
+
+def _masks_to_arrays(masks: Any) -> list[Any]:
+    """Keep mask pixels in dense arrays instead of nested Python lists."""
+    import numpy as np
+
+    values = masks.numpy() if hasattr(masks, "numpy") else np.asarray(masks)
+    if values.ndim == 2:
+        values = values[np.newaxis, ...]
+    if values.ndim != 3:
+        return []
+    return [np.asarray(mask, dtype=bool) for mask in values]
 
 
 def _mask_to_uint8(mask: Any) -> Any:
