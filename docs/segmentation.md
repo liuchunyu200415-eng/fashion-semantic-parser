@@ -322,3 +322,8 @@ but can hide true positives and understate model quality during evaluation. For
 PRD 3.1.1 diagnosis, prioritize `segm` metrics and visible mask overlays.
 Bounding boxes are derived from the predicted mask region, so they are a
 secondary output once mask quality is acceptable.
+
+The evaluator also reports `AP85` and `AP90`, including per-category values.
+For `segm`, these metrics use predicted-mask IoU and directly show precision at
+the PRD-relevant IoU 0.85 boundary. They are stricter than standard `AP75` and
+should be used alongside the overall COCO AP and visual mask inspection.

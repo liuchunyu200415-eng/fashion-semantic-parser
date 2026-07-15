@@ -580,7 +580,61 @@ def _mask_box_coco_evaluator_class(
                 output["instances"] = instances
             super().process(inputs, outputs)
 
+        def _derive_coco_results(
+            self,
+            coco_eval: Any,
+            iou_type: str,
+            class_names: list[str] | None = None,
+        ) -> dict[str, float]:
+            """Add PRD-focused AP at mask IoU thresholds 0.85 and 0.90."""
+            results = super()._derive_coco_results(
+                coco_eval,
+                iou_type,
+                class_names,
+            )
+            if coco_eval is None:
+                return results
+
+            for threshold in (0.85, 0.90):
+                metric_name = f"AP{int(threshold * 100)}"
+                results[metric_name] = _coco_ap_at_iou(coco_eval, threshold)
+                if class_names is not None:
+                    for category_index, category_name in enumerate(class_names):
+                        results[f"{metric_name}-{category_name}"] = _coco_ap_at_iou(
+                            coco_eval,
+                            threshold,
+                            category_index=category_index,
+                        )
+            return results
+
     return MaskBoxCOCOEvaluator
+
+
+def _coco_ap_at_iou(
+    coco_eval: Any,
+    iou_threshold: float,
+    category_index: int | None = None,
+) -> float:
+    """Return COCO average precision at one exact IoU threshold."""
+    import numpy as np
+
+    iou_thresholds = np.asarray(coco_eval.params.iouThrs, dtype=float)
+    threshold_indices = np.flatnonzero(
+        np.isclose(iou_thresholds, iou_threshold, atol=1e-6)
+    )
+    precision = coco_eval.eval.get("precision")
+    if len(threshold_indices) == 0 or precision is None:
+        return float("nan")
+
+    values = np.asarray(precision)[threshold_indices[0], :, :, 0, -1]
+    if category_index is not None:
+        if category_index >= values.shape[1]:
+            return float("nan")
+        values = values[:, category_index]
+    valid_values = values[values > -1]
+    if valid_values.size == 0:
+        return float("nan")
+    return float(np.mean(valid_values) * 100.0)
 
 
 def _filter_detectron2_instances_by_score(

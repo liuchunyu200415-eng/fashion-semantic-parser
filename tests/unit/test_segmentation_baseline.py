@@ -11,6 +11,7 @@ import yaml
 from fashion_semantic_parser.service.segmentation_baseline import (
     Detectron2SegmentationBaseline,
     SegmentationBaselineSettings,
+    _coco_ap_at_iou,
     convert_detectron2_instances,
     filter_prediction_by_subject_roi,
 )
@@ -94,6 +95,17 @@ class _FakeCOCOEvaluator:
     def __init__(self, dataset_name: str, output_dir: str) -> None:
         self.dataset_name = dataset_name
         self.output_dir = output_dir
+
+
+class _FakeCOCOEvalResult:
+    """Small pycocotools result stand-in for exact-IoU AP tests."""
+
+    def __init__(self) -> None:
+        precision = np.full((2, 3, 2, 1, 1), -1.0)
+        precision[1, :, 0, 0, 0] = [0.8, 0.6, 0.4]
+        precision[1, :, 1, 0, 0] = [0.3, 0.2, 0.1]
+        self.params = SimpleNamespace(iouThrs=np.array([0.5, 0.85]))
+        self.eval = {"precision": precision}
 
 
 def test_segmentation_baseline_settings_defaults() -> None:
@@ -201,6 +213,16 @@ def test_trainer_class_builds_coco_evaluator() -> None:
 
     assert evaluator.dataset_name == "validation_dataset"
     assert evaluator.output_dir == "outputs/segmentation/test/inference"
+
+
+def test_coco_ap_at_exact_iou_threshold() -> None:
+    """PRD evaluation should expose aggregate and per-category AP at IoU 0.85."""
+    coco_eval = _FakeCOCOEvalResult()
+
+    assert np.isclose(_coco_ap_at_iou(coco_eval, 0.85), 40.0)
+    assert np.isclose(_coco_ap_at_iou(coco_eval, 0.85, category_index=0), 60.0)
+    assert np.isclose(_coco_ap_at_iou(coco_eval, 0.85, category_index=1), 20.0)
+    assert np.isnan(_coco_ap_at_iou(coco_eval, 0.90))
 
 
 def test_convert_detectron2_instances_to_prediction_schema() -> None:
