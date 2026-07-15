@@ -48,6 +48,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--precision", choices=["fp32", "fp16"], default="fp32")
     parser.add_argument("--device", default=None)
     parser.add_argument("--score-threshold", type=float, default=None)
+    parser.add_argument("--min-size-test", type=int, default=None)
+    parser.add_argument("--max-size-test", type=int, default=None)
     parser.add_argument(
         "--output",
         default=None,
@@ -73,6 +75,8 @@ def main() -> None:
         "weights": args.weights,
         "device": args.device,
         "score_threshold": args.score_threshold,
+        "min_size_test": args.min_size_test,
+        "max_size_test": args.max_size_test,
     }
     raw_config.update(
         {key: value for key, value in overrides.items() if value is not None}

@@ -417,3 +417,31 @@ Use `--precision fp16` to benchmark CUDA autocast on GPUs with Tensor Cores.
 FP32 remains the default, and the output report records the selected precision
 so latency artifacts remain comparable. Run the same image sample, warmup count,
 measurement count, score threshold, and weights when comparing FP32 with FP16.
+
+If precision alone does not meet the latency target, benchmark a lower inference
+resolution without retraining the model. `--min-size-test` sets the resized short
+edge and `--max-size-test` caps the long edge. The report records both effective
+values under `input_size`; omitting them preserves the values inherited from the
+Mask2Former config.
+
+Start with `640/1067` and run a short smoke test before the formal benchmark:
+
+```bash
+python scripts/benchmark_segmentation_latency.py \
+  --config configs/segmentation_mask2former.yaml \
+  --weights outputs/segmentation/mask2former_r50_official_stage2/model_official_0004999.pth \
+  --val-json data/processed/autodl/segmentation/deepfashion2_validation_full.json \
+  --image-limit 5 \
+  --warmup-runs 5 \
+  --runs 20 \
+  --precision fp16 \
+  --min-size-test 640 \
+  --max-size-test 1067 \
+  --score-threshold 0.8 \
+  --output outputs/segmentation/eval_official_05000_full/latency_640_fp16_smoke.json
+```
+
+Reducing resolution changes the model input and can reduce mask-boundary quality.
+After selecting a latency candidate, run `evaluate_segmentation_baseline.py` with
+the same `--min-size-test` and `--max-size-test` values on the full validation set
+before treating it as the deployment configuration.

@@ -12,6 +12,7 @@ from fashion_semantic_parser.service.segmentation_baseline import (
     Detectron2SegmentationBaseline,
     SegmentationBaselineSettings,
     _latency_summary,
+    _json_safe_config_value,
     _masks_to_arrays,
     _run_predictor_with_precision,
     _selection_for_instance_field,
@@ -239,6 +240,8 @@ def test_segmentation_baseline_settings_defaults() -> None:
     assert settings.device == "cuda"
     assert settings.checkpoint_period == 1000
     assert settings.eval_period == 0
+    assert settings.min_size_test is None
+    assert settings.max_size_test is None
     assert settings.resume is False
     assert settings.evaluate_after_training is True
 
@@ -261,6 +264,33 @@ def test_mask2former_settings_use_local_project_config() -> None:
     assert settings.config_file is not None
     assert settings.config_file.endswith("maskformer2_R50_bs16_50ep.yaml")
     assert settings.output_dir.endswith("mask2former_r50")
+
+
+def test_inference_size_overrides_only_selected_config_values() -> None:
+    """Explicit test sizes should replace defaults used by the predictor."""
+    baseline = Detectron2SegmentationBaseline(
+        SegmentationBaselineSettings(min_size_test=640, max_size_test=1067)
+    )
+    cfg = SimpleNamespace(INPUT=SimpleNamespace(MIN_SIZE_TEST=800, MAX_SIZE_TEST=1333))
+
+    baseline._apply_inference_size_settings(cfg)
+
+    assert cfg.INPUT.MIN_SIZE_TEST == 640
+    assert cfg.INPUT.MAX_SIZE_TEST == 1067
+
+
+def test_inference_size_defaults_preserve_model_config() -> None:
+    """Absent overrides should keep the model family's configured test size."""
+    baseline = Detectron2SegmentationBaseline(SegmentationBaselineSettings())
+    cfg = SimpleNamespace(
+        INPUT=SimpleNamespace(MIN_SIZE_TEST=(640, 800), MAX_SIZE_TEST=1333)
+    )
+
+    baseline._apply_inference_size_settings(cfg)
+
+    assert cfg.INPUT.MIN_SIZE_TEST == (640, 800)
+    assert cfg.INPUT.MAX_SIZE_TEST == 1333
+    assert _json_safe_config_value(cfg.INPUT.MIN_SIZE_TEST) == [640, 800]
 
 
 def test_mask2former_project_config_uses_pretrained_weights() -> None:

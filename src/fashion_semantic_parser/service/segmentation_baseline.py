@@ -48,6 +48,8 @@ class SegmentationBaselineSettings(BaseModel):
     eval_period: int = Field(default=0, ge=0)
     num_workers: int = Field(default=2, ge=0)
     score_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    min_size_test: int | None = Field(default=None, ge=1)
+    max_size_test: int | None = Field(default=None, ge=1)
     device: str = "cuda"
     resume: bool = False
     evaluate_after_training: bool = True
@@ -85,6 +87,7 @@ class Detectron2SegmentationBaseline:
         cfg.SOLVER.MAX_ITER = self.settings.max_iter
         cfg.SOLVER.CHECKPOINT_PERIOD = self.settings.checkpoint_period
         cfg.TEST.EVAL_PERIOD = self.settings.eval_period
+        self._apply_inference_size_settings(cfg)
         self._apply_model_head_settings(cfg)
         self._apply_trainer_compatibility_settings(cfg)
         cfg.MODEL.DEVICE = self.settings.device
@@ -237,6 +240,10 @@ class Detectron2SegmentationBaseline:
             "measured_runs": measured_runs,
             "score_threshold": self.settings.score_threshold,
             "precision": precision,
+            "input_size": {
+                "min_size_test": _json_safe_config_value(cfg.INPUT.MIN_SIZE_TEST),
+                "max_size_test": _json_safe_config_value(cfg.INPUT.MAX_SIZE_TEST),
+            },
             "excluded_from_timing": ["model_load", "weight_load", "image_decode"],
             "predictor_ms": _latency_summary(predictor_latencies_ms),
             "pipeline_ms": _latency_summary(pipeline_latencies_ms),
@@ -290,6 +297,13 @@ class Detectron2SegmentationBaseline:
                 cfg.MODEL.MASK_FORMER.TEST.OBJECT_MASK_THRESHOLD = (
                     self.settings.score_threshold
                 )
+
+    def _apply_inference_size_settings(self, cfg: Any) -> None:
+        """Override test-time resize limits without changing training transforms."""
+        if self.settings.min_size_test is not None:
+            cfg.INPUT.MIN_SIZE_TEST = self.settings.min_size_test
+        if self.settings.max_size_test is not None:
+            cfg.INPUT.MAX_SIZE_TEST = self.settings.max_size_test
 
     def _apply_trainer_compatibility_settings(self, cfg: Any) -> None:
         """Adapt target-model configs to the generic Detectron2 trainer."""
@@ -518,6 +532,15 @@ def _run_predictor_with_precision(
         raise ValueError("FP16 segmentation benchmarking requires a CUDA device.")
     with torch.autocast(device_type="cuda", dtype=torch.float16):
         return predictor(image)
+
+
+def _json_safe_config_value(value: Any) -> Any:
+    """Convert tuple-like config values into stable JSON report values."""
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
 
 
 def _latency_summary(latencies_ms: list[float]) -> dict[str, float]:
