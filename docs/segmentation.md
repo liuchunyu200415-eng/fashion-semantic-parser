@@ -327,3 +327,83 @@ The evaluator also reports `AP85` and `AP90`, including per-category values.
 For `segm`, these metrics use predicted-mask IoU and directly show precision at
 the PRD-relevant IoU 0.85 boundary. They are stricter than standard `AP75` and
 should be used alongside the overall COCO AP and visual mask inspection.
+
+`AP85` is not the mean mask IoU. The `segm` result now also reports direct mask
+IoU statistics. Predictions and ground truth are matched one-to-one within the
+same image and category, in descending IoU order. A pair must have IoU at least
+`0.50` to count as a valid match. All values below are percentages on a `0-100`
+scale:
+
+```text
+MatchedMeanIoU       mean IoU of valid matched pairs
+MatchedMedianIoU     median IoU of valid matched pairs
+AllGTMeanIoU         mean IoU with every unmatched ground-truth item counted as 0
+Precision50          valid matches / retained predictions
+Recall50             valid matches / ground-truth instances
+MatchedIoU85Rate     fraction of matched pairs whose IoU is at least 0.85
+AllGTIoU85Rate       fraction of all ground-truth items matched at IoU at least 0.85
+```
+
+Per-category forms such as `MatchedMeanIoU-top` and `AllGTIoU85Rate-dress` are
+included. Aggregate values only include categories that have ground-truth
+coverage, so the current unlabelled shoes, bag, and accessory classes do not
+become false positives in the five-class DeepFashion2 report. Use
+`MatchedMeanIoU` to describe mask-boundary quality, and always report `Recall50`
+or `AllGTIoU85Rate` beside it so missed garments are visible. Run COCO AP at
+score threshold `0.0`; run a second direct-IoU report at the selected deployment
+threshold, initially `0.1` while that threshold is tuned:
+
+```bash
+python scripts/evaluate_segmentation_baseline.py \
+  --config configs/segmentation_mask2former.yaml \
+  --weights outputs/segmentation/mask2former_r50_official_stage2/model_official_0004999.pth \
+  --score-threshold 0.1
+```
+
+If full inference has already completed at score threshold `0.0`, reuse the COCO
+prediction file instead of running the GPU model again. First locate the file:
+
+```bash
+find outputs/segmentation \
+  -path "*/inference/coco_instances_results.json" \
+  -print
+```
+
+Then calculate direct IoU at the deployment threshold entirely offline:
+
+```bash
+python scripts/evaluate_segmentation_predictions.py \
+  --val-json data/processed/autodl/segmentation/deepfashion2_validation.json \
+  --predictions outputs/segmentation/mask2former_r50_official_stage2/inference/coco_instances_results.json \
+  --score-threshold 0.1 \
+  --output outputs/segmentation/mask2former_r50_official_stage2/direct_mask_iou.json
+```
+
+This path loads neither Mask2Former weights nor images and does not require a
+GPU. It filters the saved predictions by confidence and rebuilds only the COCO
+mask-IoU matrix and one-to-one match statistics.
+
+## Benchmark Single-Image Latency
+
+Measure the PRD latency target with a loaded model and a deterministic sample of
+validation images:
+
+```bash
+python scripts/benchmark_segmentation_latency.py \
+  --config configs/segmentation_mask2former.yaml \
+  --weights outputs/segmentation/mask2former_r50_official_stage2/model_official_0004999.pth \
+  --val-json data/processed/autodl/segmentation/deepfashion2_validation.json \
+  --image-limit 20 \
+  --warmup-runs 10 \
+  --runs 100 \
+  --score-threshold 0.1 \
+  --output outputs/segmentation/mask2former_r50_official_stage2/latency.json
+```
+
+The benchmark loads weights once, decodes source images before timing, warms up
+CUDA, and synchronizes the GPU around each sample. `predictor_ms` includes
+Detectron2 preprocessing, Mask2Former inference, and Detectron2 model
+postprocessing. `pipeline_ms` additionally includes transfer to CPU, score
+filtering, mask-to-polygon conversion, mask-derived boxes, and project response
+construction. Report median and p95; compare `pipeline_ms.p95` with the PRD
+single-image latency target for the strict end-to-end interpretation.

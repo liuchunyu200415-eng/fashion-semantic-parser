@@ -11,9 +11,15 @@ import yaml
 from fashion_semantic_parser.service.segmentation_baseline import (
     Detectron2SegmentationBaseline,
     SegmentationBaselineSettings,
-    _coco_ap_at_iou,
+    _latency_summary,
     convert_detectron2_instances,
     filter_prediction_by_subject_roi,
+)
+from fashion_semantic_parser.service.segmentation_metrics import (
+    _coco_ap_at_iou,
+    _coco_matched_mask_iou_metrics,
+    _greedy_match_ious,
+    _summarize_mask_iou_matches,
 )
 from fashion_semantic_parser.models.segmentation import SegmentationSubjectROI
 
@@ -106,6 +112,35 @@ class _FakeCOCOEvalResult:
         precision[1, :, 1, 0, 0] = [0.3, 0.2, 0.1]
         self.params = SimpleNamespace(iouThrs=np.array([0.5, 0.85]))
         self.eval = {"precision": precision}
+
+
+class _FakeCOCOMaskIoUResult:
+    """Small pycocotools result stand-in for direct mask IoU metrics."""
+
+    def __init__(self) -> None:
+        self.params = SimpleNamespace(
+            catIds=[1, 2],
+            imgIds=[10],
+            maxDets=[1, 10, 100],
+        )
+        self._gts = {
+            (10, 1): [{"id": 1}, {"id": 2}, {"id": 3}],
+            (10, 2): [],
+        }
+        self._dts = {
+            (10, 1): [{"id": 11}, {"id": 12}, {"id": 13}],
+            (10, 2): [{"id": 21}],
+        }
+        self.ious = {
+            (10, 1): np.array(
+                [
+                    [0.90, 0.10, 0.05],
+                    [0.80, 0.70, 0.20],
+                    [0.10, 0.20, 0.30],
+                ]
+            ),
+            (10, 2): [],
+        }
 
 
 def test_segmentation_baseline_settings_defaults() -> None:
@@ -223,6 +258,64 @@ def test_coco_ap_at_exact_iou_threshold() -> None:
     assert np.isclose(_coco_ap_at_iou(coco_eval, 0.85, category_index=0), 60.0)
     assert np.isclose(_coco_ap_at_iou(coco_eval, 0.85, category_index=1), 20.0)
     assert np.isnan(_coco_ap_at_iou(coco_eval, 0.90))
+
+
+def test_greedy_mask_iou_matching_is_one_to_one() -> None:
+    """Direct mask IoU evaluation should not reuse predictions or ground truth."""
+    matched_ious = _greedy_match_ious(
+        np.array(
+            [
+                [0.90, 0.10],
+                [0.80, 0.70],
+            ]
+        )
+    )
+
+    assert matched_ious == [0.90, 0.70]
+
+
+def test_mask_iou_summary_counts_unmatched_ground_truth_as_zero() -> None:
+    """All-GT IoU should expose misses that matched-only mean IoU hides."""
+    summary = _summarize_mask_iou_matches(
+        matched_ious=[0.90, 0.70],
+        ground_truth_count=3,
+        prediction_count=4,
+    )
+
+    assert np.isclose(summary["MatchedMeanIoU"], 80.0)
+    assert np.isclose(summary["AllGTMeanIoU"], 160.0 / 3.0)
+    assert np.isclose(summary["Precision50"], 50.0)
+    assert np.isclose(summary["Recall50"], 200.0 / 3.0)
+    assert np.isclose(summary["MatchedIoU85Rate"], 50.0)
+    assert np.isclose(summary["AllGTIoU85Rate"], 100.0 / 3.0)
+
+
+def test_coco_matched_mask_iou_metrics_include_per_category_results() -> None:
+    """COCO mask evaluation should report direct aggregate and class IoU."""
+    results = _coco_matched_mask_iou_metrics(
+        _FakeCOCOMaskIoUResult(),
+        class_names=["top", "pants"],
+    )
+
+    assert results["MatchedCount"] == 2.0
+    assert results["GroundTruthCount"] == 3.0
+    assert results["PredictionCount"] == 3.0
+    assert np.isclose(results["MatchedMeanIoU"], 80.0)
+    assert np.isclose(results["AllGTMeanIoU"], 160.0 / 3.0)
+    assert np.isclose(results["Recall50-top"], 200.0 / 3.0)
+    assert np.isnan(results["MatchedMeanIoU-pants"])
+
+
+def test_latency_summary_reports_median_tail_and_throughput() -> None:
+    """Latency reports should expose both typical and p95 runtime."""
+    summary = _latency_summary([10.0, 20.0, 30.0, 40.0])
+
+    assert summary["mean"] == 25.0
+    assert summary["median"] == 25.0
+    assert np.isclose(summary["p95"], 38.5)
+    assert summary["min"] == 10.0
+    assert summary["max"] == 40.0
+    assert summary["fps_from_mean"] == 40.0
 
 
 def test_convert_detectron2_instances_to_prediction_schema() -> None:

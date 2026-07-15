@@ -22,6 +22,10 @@ from fashion_semantic_parser.models.segmentation import (
     SegmentationPrediction,
     SegmentationSubjectROI,
 )
+from fashion_semantic_parser.service.segmentation_metrics import (
+    _coco_ap_at_iou,
+    _coco_matched_mask_iou_metrics,
+)
 
 
 class SegmentationBaselineSettings(BaseModel):
@@ -149,6 +153,69 @@ class Detectron2SegmentationBaseline:
             image_path=image_path,
             score_threshold=self.settings.score_threshold,
         )
+
+    def benchmark_latency(
+        self,
+        image_paths: list[Path],
+        warmup_runs: int = 10,
+        measured_runs: int = 100,
+    ) -> dict[str, Any]:
+        """Benchmark a loaded predictor without model-load or image-read time."""
+        if not image_paths:
+            raise ValueError("At least one image is required for latency benchmarking.")
+        if warmup_runs < 0:
+            raise ValueError("warmup_runs must be greater than or equal to zero.")
+        if measured_runs < 1:
+            raise ValueError("measured_runs must be at least one.")
+
+        detectron2 = _load_detectron2_modules()
+        torch = _load_torch_module()
+        cfg = self.build_config()
+        predictor = detectron2["DefaultPredictor"](cfg)
+        loaded_images = _load_benchmark_images(image_paths)
+
+        for index in range(warmup_runs):
+            image_path, image = loaded_images[index % len(loaded_images)]
+            outputs = predictor(image)
+            _synchronize_torch_device(torch, self.settings.device)
+            convert_detectron2_instances(
+                instances=outputs["instances"].to("cpu"),
+                image_path=image_path,
+                score_threshold=self.settings.score_threshold,
+            )
+
+        import time
+
+        predictor_latencies_ms: list[float] = []
+        pipeline_latencies_ms: list[float] = []
+        for index in range(measured_runs):
+            image_path, image = loaded_images[index % len(loaded_images)]
+            _synchronize_torch_device(torch, self.settings.device)
+            start_time = time.perf_counter()
+            outputs = predictor(image)
+            _synchronize_torch_device(torch, self.settings.device)
+            predictor_end_time = time.perf_counter()
+            convert_detectron2_instances(
+                instances=outputs["instances"].to("cpu"),
+                image_path=image_path,
+                score_threshold=self.settings.score_threshold,
+            )
+            pipeline_end_time = time.perf_counter()
+            predictor_latencies_ms.append((predictor_end_time - start_time) * 1000.0)
+            pipeline_latencies_ms.append((pipeline_end_time - start_time) * 1000.0)
+
+        return {
+            "device": self.settings.device,
+            "torch_version": str(torch.__version__),
+            "gpu_name": _torch_device_name(torch, self.settings.device),
+            "source_image_count": len(loaded_images),
+            "warmup_runs": warmup_runs,
+            "measured_runs": measured_runs,
+            "score_threshold": self.settings.score_threshold,
+            "excluded_from_timing": ["model_load", "weight_load", "image_decode"],
+            "predictor_ms": _latency_summary(predictor_latencies_ms),
+            "pipeline_ms": _latency_summary(pipeline_latencies_ms),
+        }
 
     def _resolve_weights(self, model_zoo: Any) -> str:
         """Resolve custom, local-config, or model-zoo weights."""
@@ -376,6 +443,59 @@ def _load_mask2former_modules() -> dict[str, Any]:
     }
 
 
+def _load_torch_module() -> Any:
+    """Import PyTorch lazily for GPU synchronization and device metadata."""
+    try:
+        import torch
+    except ImportError as error:
+        raise ModelNotReadyError(
+            "PyTorch is required for segmentation latency benchmarking."
+        ) from error
+    return torch
+
+
+def _load_benchmark_images(image_paths: list[Path]) -> list[tuple[Path, Any]]:
+    """Read benchmark images once so disk decode is outside measured latency."""
+    loaded_images = []
+    for image_path in image_paths:
+        image = cv2.imread(str(image_path))
+        if image is None:
+            raise ValueError(f"Unable to read benchmark image: {image_path}")
+        loaded_images.append((image_path, image))
+    return loaded_images
+
+
+def _synchronize_torch_device(torch: Any, device: str) -> None:
+    """Synchronize CUDA timing while remaining a no-op for CPU benchmarks."""
+    if device.startswith("cuda") and torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+
+def _torch_device_name(torch: Any, device: str) -> str | None:
+    """Return the active CUDA device name when available."""
+    if not device.startswith("cuda") or not torch.cuda.is_available():
+        return None
+    return str(torch.cuda.get_device_name(torch.cuda.current_device()))
+
+
+def _latency_summary(latencies_ms: list[float]) -> dict[str, float]:
+    """Summarize measured milliseconds with central and tail latency."""
+    import numpy as np
+
+    if not latencies_ms:
+        raise ValueError("At least one latency sample is required.")
+    values = np.asarray(latencies_ms, dtype=float)
+    mean_ms = float(np.mean(values))
+    return {
+        "mean": mean_ms,
+        "median": float(np.median(values)),
+        "p95": float(np.percentile(values, 95)),
+        "min": float(np.min(values)),
+        "max": float(np.max(values)),
+        "fps_from_mean": float(1000.0 / mean_ms),
+    }
+
+
 def _build_mask2former_optimizer(
     cfg: Any,
     model: Any,
@@ -586,11 +706,13 @@ def _mask_box_coco_evaluator_class(
             iou_type: str,
             class_names: list[str] | None = None,
         ) -> dict[str, float]:
-            """Add PRD-focused AP at mask IoU thresholds 0.85 and 0.90."""
-            results = super()._derive_coco_results(
-                coco_eval,
-                iou_type,
-                class_names,
+            """Add strict AP and direct mask-IoU metrics for PRD evaluation."""
+            results: dict[str, float] = dict(
+                super()._derive_coco_results(
+                    coco_eval,
+                    iou_type,
+                    class_names,
+                )
             )
             if coco_eval is None:
                 return results
@@ -605,36 +727,16 @@ def _mask_box_coco_evaluator_class(
                             threshold,
                             category_index=category_index,
                         )
+            if iou_type == "segm":
+                results.update(
+                    _coco_matched_mask_iou_metrics(
+                        coco_eval,
+                        class_names=class_names,
+                    )
+                )
             return results
 
     return MaskBoxCOCOEvaluator
-
-
-def _coco_ap_at_iou(
-    coco_eval: Any,
-    iou_threshold: float,
-    category_index: int | None = None,
-) -> float:
-    """Return COCO average precision at one exact IoU threshold."""
-    import numpy as np
-
-    iou_thresholds = np.asarray(coco_eval.params.iouThrs, dtype=float)
-    threshold_indices = np.flatnonzero(
-        np.isclose(iou_thresholds, iou_threshold, atol=1e-6)
-    )
-    precision = coco_eval.eval.get("precision")
-    if len(threshold_indices) == 0 or precision is None:
-        return float("nan")
-
-    values = np.asarray(precision)[threshold_indices[0], :, :, 0, -1]
-    if category_index is not None:
-        if category_index >= values.shape[1]:
-            return float("nan")
-        values = values[:, category_index]
-    valid_values = values[values > -1]
-    if valid_values.size == 0:
-        return float("nan")
-    return float(np.mean(valid_values) * 100.0)
 
 
 def _filter_detectron2_instances_by_score(
