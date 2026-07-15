@@ -1,5 +1,7 @@
 """Detectron2-based segmentation models for PRD 3.1.1."""
 
+import copy
+import itertools
 from pathlib import Path
 from typing import Any, Literal
 
@@ -203,12 +205,6 @@ class Detectron2SegmentationBaseline:
             return
         cfg.MODEL.MASK_ON = True
         cfg.INPUT.MASK_FORMAT = "bitmask"
-        clip_gradients = cfg.SOLVER.CLIP_GRADIENTS
-        if (
-            getattr(clip_gradients, "ENABLED", False)
-            and getattr(clip_gradients, "CLIP_TYPE", "") == "full_model"
-        ):
-            clip_gradients.CLIP_TYPE = "norm"
 
     def _trainer_class(self, detectron2: dict[str, Any]) -> type:
         """Return the trainer class needed by the configured model family."""
@@ -248,6 +244,20 @@ class Detectron2SegmentationBaseline:
                 """Build a loader that provides tensor masks expected by Mask2Former."""
                 mapper = mapper_class(cfg, True)
                 return build_detection_train_loader(cfg, mapper=mapper)
+
+            @classmethod
+            def build_optimizer(cls, cfg: Any, model: Any) -> Any:
+                """Build Mask2Former's parameter-grouped optimizer."""
+                return _build_mask2former_optimizer(
+                    cfg,
+                    model,
+                    mask2former["maybe_add_gradient_clipping"],
+                )
+
+            @classmethod
+            def build_lr_scheduler(cls, cfg: Any, optimizer: Any) -> Any:
+                """Use the DeepLab scheduler expected by Mask2Former configs."""
+                return mask2former["build_lr_scheduler"](cfg, optimizer)
 
         return Mask2FormerTrainer
 
@@ -341,7 +351,11 @@ def _load_detectron2_modules() -> dict[str, Any]:
 def _load_mask2former_modules() -> dict[str, Any]:
     """Import Mask2Former project config lazily for the PRD target model."""
     try:
-        from detectron2.projects.deeplab import add_deeplab_config
+        from detectron2.projects.deeplab import (
+            add_deeplab_config,
+            build_lr_scheduler,
+        )
+        from detectron2.solver.build import maybe_add_gradient_clipping
         from mask2former import add_maskformer2_config
         from mask2former.data.dataset_mappers.coco_instance_new_baseline_dataset_mapper import (  # noqa: E501
             COCOInstanceNewBaselineDatasetMapper,
@@ -357,7 +371,107 @@ def _load_mask2former_modules() -> dict[str, Any]:
         "COCOInstanceNewBaselineDatasetMapper": COCOInstanceNewBaselineDatasetMapper,
         "add_deeplab_config": add_deeplab_config,
         "add_maskformer2_config": add_maskformer2_config,
+        "build_lr_scheduler": build_lr_scheduler,
+        "maybe_add_gradient_clipping": maybe_add_gradient_clipping,
     }
+
+
+def _build_mask2former_optimizer(
+    cfg: Any,
+    model: Any,
+    maybe_add_gradient_clipping: Any,
+) -> Any:
+    """Build the optimizer used by Mask2Former's official trainer."""
+    try:
+        import torch
+    except ImportError as error:
+        raise ModelNotReadyError(
+            "PyTorch is required to build the Mask2Former optimizer."
+        ) from error
+
+    defaults = {
+        "lr": cfg.SOLVER.BASE_LR,
+        "weight_decay": cfg.SOLVER.WEIGHT_DECAY,
+    }
+    norm_module_types = (
+        torch.nn.BatchNorm1d,
+        torch.nn.BatchNorm2d,
+        torch.nn.BatchNorm3d,
+        torch.nn.SyncBatchNorm,
+        torch.nn.GroupNorm,
+        torch.nn.InstanceNorm1d,
+        torch.nn.InstanceNorm2d,
+        torch.nn.InstanceNorm3d,
+        torch.nn.LayerNorm,
+        torch.nn.LocalResponseNorm,
+    )
+    params = []
+    memo = set()
+
+    for module_name, module in model.named_modules():
+        for parameter_name, value in module.named_parameters(recurse=False):
+            if not value.requires_grad or value in memo:
+                continue
+            memo.add(value)
+            hyperparameters = copy.copy(defaults)
+            if "backbone" in module_name:
+                hyperparameters["lr"] *= cfg.SOLVER.BACKBONE_MULTIPLIER
+            if parameter_name in {
+                "relative_position_bias_table",
+                "absolute_pos_embed",
+            }:
+                hyperparameters["weight_decay"] = 0.0
+            if isinstance(module, norm_module_types):
+                hyperparameters["weight_decay"] = cfg.SOLVER.WEIGHT_DECAY_NORM
+            if isinstance(module, torch.nn.Embedding):
+                hyperparameters["weight_decay"] = cfg.SOLVER.WEIGHT_DECAY_EMBED
+            params.append({"params": [value], **hyperparameters})
+
+    optimizer_type = cfg.SOLVER.OPTIMIZER
+    optimizer_class = _mask2former_optimizer_class(cfg, torch)
+    if optimizer_type == "SGD":
+        optimizer = optimizer_class(
+            params,
+            cfg.SOLVER.BASE_LR,
+            momentum=cfg.SOLVER.MOMENTUM,
+        )
+    elif optimizer_type == "ADAMW":
+        optimizer = optimizer_class(params, cfg.SOLVER.BASE_LR)
+    else:
+        raise NotImplementedError(
+            f"Unsupported Mask2Former optimizer: {optimizer_type}"
+        )
+
+    if cfg.SOLVER.CLIP_GRADIENTS.CLIP_TYPE != "full_model":
+        optimizer = maybe_add_gradient_clipping(cfg, optimizer)
+    return optimizer
+
+
+def _mask2former_optimizer_class(cfg: Any, torch: Any) -> type:
+    """Return SGD or AdamW with Mask2Former full-model gradient clipping."""
+    optimizer_type = cfg.SOLVER.OPTIMIZER
+    optimizer_class = torch.optim.SGD if optimizer_type == "SGD" else torch.optim.AdamW
+    clip_config = cfg.SOLVER.CLIP_GRADIENTS
+    if not (
+        clip_config.ENABLED
+        and clip_config.CLIP_TYPE == "full_model"
+        and clip_config.CLIP_VALUE > 0.0
+    ):
+        return optimizer_class
+
+    clip_value = clip_config.CLIP_VALUE
+
+    class FullModelGradientClippingOptimizer(optimizer_class):  # type: ignore[misc]
+        """Apply one global norm clip before each optimizer step."""
+
+        def step(self, closure: Any = None) -> Any:
+            all_params = itertools.chain(
+                *(group["params"] for group in self.param_groups)
+            )
+            torch.nn.utils.clip_grad_norm_(all_params, clip_value)
+            return super().step(closure=closure)
+
+    return FullModelGradientClippingOptimizer
 
 
 def _tensor_to_list(value: Any) -> list[Any]:

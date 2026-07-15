@@ -2,7 +2,9 @@
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
+import fashion_semantic_parser.service.segmentation_baseline as segmentation_module
 import numpy as np
 import yaml
 
@@ -138,9 +140,47 @@ def test_mask2former_project_config_uses_pretrained_weights() -> None:
     assert config["weights"].endswith("model_final_3c8ec9.pkl")
     assert "coco/instance/maskformer2_R50_bs16_50ep" in config["weights"]
     assert config["max_iter"] == 20000
+    assert config["ims_per_batch"] == 4
+    assert config["base_lr"] == 0.000025
     assert config["checkpoint_period"] == 1000
     assert config["resume"] is False
     assert config["evaluate_after_training"] is False
+
+
+def test_mask2former_trainer_uses_target_optimizer_and_scheduler(
+    monkeypatch: Any,
+) -> None:
+    """Mask2Former must not fall back to Detectron2's default SGD trainer."""
+    expected_optimizer = object()
+    expected_scheduler = object()
+    monkeypatch.setattr(
+        segmentation_module,
+        "_build_mask2former_optimizer",
+        lambda cfg, model, clipper: expected_optimizer,
+    )
+    monkeypatch.setattr(
+        segmentation_module,
+        "_load_mask2former_modules",
+        lambda: {
+            "COCOInstanceNewBaselineDatasetMapper": object,
+            "build_lr_scheduler": lambda cfg, optimizer: expected_scheduler,
+            "maybe_add_gradient_clipping": object(),
+        },
+    )
+    baseline = Detectron2SegmentationBaseline(
+        SegmentationBaselineSettings(model_family="mask2former")
+    )
+    trainer_class = baseline._trainer_class(
+        {
+            "COCOEvaluator": _FakeCOCOEvaluator,
+            "DefaultTrainer": _FakeDefaultTrainer,
+            "BitMasks": None,
+            "build_detection_train_loader": object(),
+        }
+    )
+
+    assert trainer_class.build_optimizer(object(), object()) is expected_optimizer
+    assert trainer_class.build_lr_scheduler(object(), object()) is expected_scheduler
 
 
 def test_trainer_class_builds_coco_evaluator() -> None:

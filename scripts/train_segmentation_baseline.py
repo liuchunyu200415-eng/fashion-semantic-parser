@@ -30,6 +30,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val-json", default=None)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--weights", default=None)
+    parser.add_argument("--ims-per-batch", type=int, default=None)
+    parser.add_argument("--base-lr", type=float, default=None)
     parser.add_argument("--max-iter", type=int, default=None)
     parser.add_argument("--checkpoint-period", type=int, default=None)
     parser.add_argument("--eval-period", type=int, default=None)
@@ -69,6 +71,8 @@ def main() -> None:
         "val_json": args.val_json,
         "output_dir": args.output_dir,
         "weights": args.weights,
+        "ims_per_batch": args.ims_per_batch,
+        "base_lr": args.base_lr,
         "max_iter": args.max_iter,
         "checkpoint_period": args.checkpoint_period,
         "eval_period": args.eval_period,

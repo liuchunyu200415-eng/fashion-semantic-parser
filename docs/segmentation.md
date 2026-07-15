@@ -222,6 +222,27 @@ file. Start a clean output directory in that case. After the stage finishes,
 run `evaluate_segmentation_baseline.py` against `model_final.pth`, then decide
 whether to resume to 50,000 iterations from the metric trend and visual masks.
 
+The Mask2Former trainer uses the optimizer path from the official project:
+AdamW parameter groups, a `0.1` backbone learning-rate multiplier, special
+weight decay for normalization and embedding parameters, DeepLab learning-rate
+scheduling, and full-model gradient clipping. Detectron2's generic default
+trainer uses SGD in version 0.6 and must not be used for this model family.
+
+The single-GPU target config starts with batch size 4 and learning rate
+`2.5e-5`. Before a long run on a new GPU, use a 1,000-iteration stability stage:
+
+```bash
+python scripts/train_segmentation_baseline.py \
+  --config configs/segmentation_mask2former.yaml \
+  --output-dir outputs/segmentation/mask2former_r50_official_stage2 \
+  --max-iter 1000
+```
+
+If memory and mask losses are stable, resume the same directory with a larger
+final `--max-iter`. Do not resume checkpoints produced by the former generic
+Detectron2 optimizer because their optimizer and scheduler states are not
+compatible with the corrected Mask2Former trainer.
+
 ## Predict One Image
 
 After training, run single-image inference with the trained weights:
