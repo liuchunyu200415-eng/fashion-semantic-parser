@@ -758,7 +758,28 @@ def _filter_detectron2_instances_by_score(
     has_field = getattr(instances, "has", None)
     if score_threshold <= 0.0 or not callable(has_field) or not has_field("scores"):
         return instances
-    return instances[instances.scores >= score_threshold]
+    selection = instances.scores >= score_threshold
+    get_fields = getattr(instances, "get_fields", None)
+    set_field = getattr(instances, "set", None)
+    if not callable(get_fields) or not callable(set_field):
+        return instances[selection]
+
+    filtered = instances.__class__(instances.image_size)
+    for field_name, field_value in get_fields().items():
+        field_selection = _selection_for_instance_field(selection, field_value)
+        filtered.set(field_name, field_value[field_selection])
+    return filtered
+
+
+def _selection_for_instance_field(selection: Any, field_value: Any) -> Any:
+    """Move a Detectron2 instance selection to each field's own device."""
+    device = getattr(field_value, "device", None)
+    if device is None:
+        tensor = getattr(field_value, "tensor", None)
+        device = getattr(tensor, "device", None)
+    if device is not None and hasattr(selection, "to"):
+        return selection.to(device=device)
+    return selection
 
 
 def _instances_have_invalid_boxes(instances: Any) -> bool:

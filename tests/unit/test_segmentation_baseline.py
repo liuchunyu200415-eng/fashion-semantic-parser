@@ -13,6 +13,7 @@ from fashion_semantic_parser.service.segmentation_baseline import (
     SegmentationBaselineSettings,
     _latency_summary,
     _masks_to_arrays,
+    _selection_for_instance_field,
     convert_detectron2_instances,
     filter_prediction_by_subject_roi,
 )
@@ -123,6 +124,17 @@ class _NumpyOnlyMaskBatch:
     def tolist(self) -> Any:
         """Fail if production code converts every pixel to Python objects."""
         raise AssertionError("mask batch should remain a dense array")
+
+
+class _FakeDeviceSelection:
+    """Tensor-like selection that records device moves."""
+
+    def __init__(self, device: str = "cuda") -> None:
+        self.device = device
+
+    def to(self, *, device: str) -> Any:
+        """Return a selection placed on the requested fake device."""
+        return _FakeDeviceSelection(device=device)
 
 
 class _FakeDefaultTrainer:
@@ -409,6 +421,23 @@ def test_mask_conversion_keeps_pixels_in_dense_arrays() -> None:
     assert len(masks) == 1
     assert isinstance(masks[0], np.ndarray)
     assert masks[0].dtype == np.bool_
+
+
+def test_instance_selection_uses_each_field_device() -> None:
+    """Mixed CPU/GPU Detectron2 fields need device-local boolean indices."""
+    selection = _FakeDeviceSelection(device="cuda")
+
+    tensor_selection = _selection_for_instance_field(
+        selection,
+        SimpleNamespace(device="cuda"),
+    )
+    boxes_selection = _selection_for_instance_field(
+        selection,
+        SimpleNamespace(tensor=SimpleNamespace(device="cpu")),
+    )
+
+    assert tensor_selection.device == "cuda"
+    assert boxes_selection.device == "cpu"
 
 
 def test_filter_prediction_by_subject_roi_removes_background_instances() -> None:
