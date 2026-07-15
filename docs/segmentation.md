@@ -412,3 +412,8 @@ The output path applies the confidence threshold to Detectron2 instances before
 copying masks to CPU. Retained masks stay as dense NumPy arrays during OpenCV
 contour extraction; converting every pixel of all 100 Mask2Former queries into
 nested Python lists is intentionally avoided.
+
+Use `--precision fp16` to benchmark CUDA autocast on GPUs with Tensor Cores.
+FP32 remains the default, and the output report records the selected precision
+so latency artifacts remain comparable. Run the same image sample, warmup count,
+measurement count, score threshold, and weights when comparing FP32 with FP16.

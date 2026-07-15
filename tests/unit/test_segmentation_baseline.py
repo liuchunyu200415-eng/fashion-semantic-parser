@@ -13,6 +13,7 @@ from fashion_semantic_parser.service.segmentation_baseline import (
     SegmentationBaselineSettings,
     _latency_summary,
     _masks_to_arrays,
+    _run_predictor_with_precision,
     _selection_for_instance_field,
     convert_detectron2_instances,
     filter_prediction_by_subject_roi,
@@ -135,6 +136,44 @@ class _FakeDeviceSelection:
     def to(self, *, device: str) -> Any:
         """Return a selection placed on the requested fake device."""
         return _FakeDeviceSelection(device=device)
+
+
+class _FakeAutocast:
+    """Context manager recording an FP16 autocast scope."""
+
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    def __enter__(self) -> None:
+        self.events.append("enter_fp16")
+
+    def __exit__(self, *args: Any) -> None:
+        self.events.append("exit_fp16")
+
+
+class _FakeCuda:
+    """Available CUDA stand-in for precision tests."""
+
+    @staticmethod
+    def is_available() -> bool:
+        """Report CUDA availability."""
+        return True
+
+
+class _FakeTorch:
+    """Minimal torch stand-in exposing CUDA autocast."""
+
+    float16 = "float16"
+    cuda = _FakeCuda()
+
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    def autocast(self, *, device_type: str, dtype: Any) -> _FakeAutocast:
+        """Record autocast parameters and return its context manager."""
+        assert device_type == "cuda"
+        assert dtype == self.float16
+        return _FakeAutocast(self.events)
 
 
 class _FakeDefaultTrainer:
@@ -362,6 +401,26 @@ def test_latency_summary_reports_median_tail_and_throughput() -> None:
     assert summary["min"] == 10.0
     assert summary["max"] == 40.0
     assert summary["fps_from_mean"] == 40.0
+
+
+def test_fp16_predictor_runs_inside_cuda_autocast() -> None:
+    """FP16 latency tests should autocast only the predictor call."""
+    events: list[str] = []
+
+    def predictor(image: Any) -> Any:
+        events.append("predict")
+        return image
+
+    output = _run_predictor_with_precision(
+        predictor=predictor,
+        image="image",
+        torch=_FakeTorch(events),
+        device="cuda",
+        precision="fp16",
+    )
+
+    assert output == "image"
+    assert events == ["enter_fp16", "predict", "exit_fp16"]
 
 
 def test_convert_detectron2_instances_to_prediction_schema() -> None:

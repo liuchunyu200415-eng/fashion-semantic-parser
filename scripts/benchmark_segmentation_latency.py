@@ -45,6 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image-limit", type=int, default=20)
     parser.add_argument("--warmup-runs", type=int, default=10)
     parser.add_argument("--runs", type=int, default=100)
+    parser.add_argument("--precision", choices=["fp32", "fp16"], default="fp32")
     parser.add_argument("--device", default=None)
     parser.add_argument("--score-threshold", type=float, default=None)
     parser.add_argument(
@@ -88,6 +89,7 @@ def main() -> None:
         image_paths=image_paths,
         warmup_runs=args.warmup_runs,
         measured_runs=args.runs,
+        precision=args.precision,
     )
     results["model_family"] = settings.model_family
     output_json = json.dumps(results, ensure_ascii=False, indent=2)

@@ -162,6 +162,7 @@ class Detectron2SegmentationBaseline:
         image_paths: list[Path],
         warmup_runs: int = 10,
         measured_runs: int = 100,
+        precision: Literal["fp32", "fp16"] = "fp32",
     ) -> dict[str, Any]:
         """Benchmark a loaded predictor without model-load or image-read time."""
         if not image_paths:
@@ -179,7 +180,13 @@ class Detectron2SegmentationBaseline:
 
         for index in range(warmup_runs):
             image_path, image = loaded_images[index % len(loaded_images)]
-            outputs = predictor(image)
+            outputs = _run_predictor_with_precision(
+                predictor,
+                image,
+                torch,
+                device=self.settings.device,
+                precision=precision,
+            )
             _synchronize_torch_device(torch, self.settings.device)
             instances = _filter_detectron2_instances_by_score(
                 outputs["instances"],
@@ -199,7 +206,13 @@ class Detectron2SegmentationBaseline:
             image_path, image = loaded_images[index % len(loaded_images)]
             _synchronize_torch_device(torch, self.settings.device)
             start_time = time.perf_counter()
-            outputs = predictor(image)
+            outputs = _run_predictor_with_precision(
+                predictor,
+                image,
+                torch,
+                device=self.settings.device,
+                precision=precision,
+            )
             _synchronize_torch_device(torch, self.settings.device)
             predictor_end_time = time.perf_counter()
             instances = _filter_detectron2_instances_by_score(
@@ -223,6 +236,7 @@ class Detectron2SegmentationBaseline:
             "warmup_runs": warmup_runs,
             "measured_runs": measured_runs,
             "score_threshold": self.settings.score_threshold,
+            "precision": precision,
             "excluded_from_timing": ["model_load", "weight_load", "image_decode"],
             "predictor_ms": _latency_summary(predictor_latencies_ms),
             "pipeline_ms": _latency_summary(pipeline_latencies_ms),
@@ -488,6 +502,22 @@ def _torch_device_name(torch: Any, device: str) -> str | None:
     if not device.startswith("cuda") or not torch.cuda.is_available():
         return None
     return str(torch.cuda.get_device_name(torch.cuda.current_device()))
+
+
+def _run_predictor_with_precision(
+    predictor: Any,
+    image: Any,
+    torch: Any,
+    device: str,
+    precision: Literal["fp32", "fp16"],
+) -> Any:
+    """Run one predictor call in FP32 or CUDA autocast FP16."""
+    if precision == "fp32":
+        return predictor(image)
+    if not device.startswith("cuda") or not torch.cuda.is_available():
+        raise ValueError("FP16 segmentation benchmarking requires a CUDA device.")
+    with torch.autocast(device_type="cuda", dtype=torch.float16):
+        return predictor(image)
 
 
 def _latency_summary(latencies_ms: list[float]) -> dict[str, float]:
