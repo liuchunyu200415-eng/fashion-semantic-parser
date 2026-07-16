@@ -39,6 +39,7 @@ def parse_args() -> argparse.Namespace:
         help="Optional project-relative output JSON path.",
     )
     parser.add_argument("--device", default=None)
+    parser.add_argument("--precision", choices=["fp32", "fp16"], default=None)
     parser.add_argument("--score-threshold", type=float, default=None)
     parser.add_argument("--min-size-test", type=int, default=None)
     parser.add_argument("--max-size-test", type=int, default=None)
@@ -67,6 +68,7 @@ def main() -> None:
     overrides = {
         "weights": args.weights,
         "device": args.device,
+        "precision": args.precision,
         "score_threshold": args.score_threshold,
         "min_size_test": args.min_size_test,
         "max_size_test": args.max_size_test,

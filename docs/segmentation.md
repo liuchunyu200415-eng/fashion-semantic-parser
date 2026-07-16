@@ -445,3 +445,8 @@ Reducing resolution changes the model input and can reduce mask-boundary quality
 After selecting a latency candidate, run `evaluate_segmentation_baseline.py` with
 the same `--min-size-test` and `--max-size-test` values on the full validation set
 before treating it as the deployment configuration.
+
+When latency is benchmarked with `--precision fp16`, pass the same precision to
+evaluation, prediction, and visualization. This keeps reported mask quality on
+the exact autocast inference path used by the deployment candidate instead of
+silently evaluating FP32 outputs.

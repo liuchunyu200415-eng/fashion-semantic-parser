@@ -35,6 +35,7 @@ def parse_args() -> argparse.Namespace:
         help="Project-relative or absolute trained Detectron2 weights path.",
     )
     parser.add_argument("--device", default=None)
+    parser.add_argument("--precision", choices=["fp32", "fp16"], default=None)
     parser.add_argument("--score-threshold", type=float, default=None)
     parser.add_argument("--min-size-test", type=int, default=None)
     parser.add_argument("--max-size-test", type=int, default=None)
@@ -58,6 +59,7 @@ def main() -> None:
         "output_dir": args.output_dir,
         "weights": args.weights,
         "device": args.device,
+        "precision": args.precision,
         "score_threshold": args.score_threshold,
         "min_size_test": args.min_size_test,
         "max_size_test": args.max_size_test,

@@ -3,7 +3,7 @@
 import copy
 import itertools
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 import cv2
 from pydantic import BaseModel, Field
@@ -50,6 +50,7 @@ class SegmentationBaselineSettings(BaseModel):
     score_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     min_size_test: int | None = Field(default=None, ge=1)
     max_size_test: int | None = Field(default=None, ge=1)
+    precision: Literal["fp32", "fp16"] = "fp32"
     device: str = "cuda"
     resume: bool = False
     evaluate_after_training: bool = True
@@ -138,7 +139,13 @@ class Detectron2SegmentationBaseline:
         trainer_class = self._trainer_class(detectron2)
         trainer = trainer_class(cfg)
         trainer.resume_or_load(resume=False)
-        return trainer.test(cfg, trainer.model)
+        torch = _load_torch_module()
+        return _run_with_precision(
+            lambda: trainer.test(cfg, trainer.model),
+            torch,
+            device=self.settings.device,
+            precision=self.settings.precision,
+        )
 
     def predict_image(self, image_path: Path) -> SegmentationPrediction:
         """Run instance segmentation on one RGB product image."""
@@ -149,7 +156,13 @@ class Detectron2SegmentationBaseline:
         if image is None:
             raise ValueError(f"Unable to read image: {image_path}")
 
-        outputs = predictor(image)
+        outputs = _run_predictor_with_precision(
+            predictor,
+            image,
+            _load_torch_module(),
+            device=self.settings.device,
+            precision=self.settings.precision,
+        )
         instances = _filter_detectron2_instances_by_score(
             outputs["instances"],
             self.settings.score_threshold,
@@ -526,12 +539,27 @@ def _run_predictor_with_precision(
     precision: Literal["fp32", "fp16"],
 ) -> Any:
     """Run one predictor call in FP32 or CUDA autocast FP16."""
+    return _run_with_precision(
+        lambda: predictor(image),
+        torch,
+        device=device,
+        precision=precision,
+    )
+
+
+def _run_with_precision(
+    operation: Callable[[], Any],
+    torch: Any,
+    device: str,
+    precision: Literal["fp32", "fp16"],
+) -> Any:
+    """Run a synchronous inference operation in FP32 or CUDA autocast FP16."""
     if precision == "fp32":
-        return predictor(image)
+        return operation()
     if not device.startswith("cuda") or not torch.cuda.is_available():
-        raise ValueError("FP16 segmentation benchmarking requires a CUDA device.")
+        raise ValueError("FP16 segmentation inference requires a CUDA device.")
     with torch.autocast(device_type="cuda", dtype=torch.float16):
-        return predictor(image)
+        return operation()
 
 
 def _json_safe_config_value(value: Any) -> Any:

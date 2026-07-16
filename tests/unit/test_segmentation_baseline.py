@@ -15,6 +15,7 @@ from fashion_semantic_parser.service.segmentation_baseline import (
     _json_safe_config_value,
     _masks_to_arrays,
     _run_predictor_with_precision,
+    _run_with_precision,
     _selection_for_instance_field,
     convert_detectron2_instances,
     filter_prediction_by_subject_roi,
@@ -242,6 +243,7 @@ def test_segmentation_baseline_settings_defaults() -> None:
     assert settings.eval_period == 0
     assert settings.min_size_test is None
     assert settings.max_size_test is None
+    assert settings.precision == "fp32"
     assert settings.resume is False
     assert settings.evaluate_after_training is True
 
@@ -451,6 +453,25 @@ def test_fp16_predictor_runs_inside_cuda_autocast() -> None:
 
     assert output == "image"
     assert events == ["enter_fp16", "predict", "exit_fp16"]
+
+
+def test_fp16_evaluation_operation_runs_inside_cuda_autocast() -> None:
+    """Full evaluation should use the same FP16 autocast path as prediction."""
+    events: list[str] = []
+
+    def evaluate() -> str:
+        events.append("evaluate")
+        return "metrics"
+
+    output = _run_with_precision(
+        operation=evaluate,
+        torch=_FakeTorch(events),
+        device="cuda",
+        precision="fp16",
+    )
+
+    assert output == "metrics"
+    assert events == ["enter_fp16", "evaluate", "exit_fp16"]
 
 
 def test_convert_detectron2_instances_to_prediction_schema() -> None:
