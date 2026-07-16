@@ -496,3 +496,28 @@ DeepFashion2 has no ground truth for shoes, bag, or accessory, so the full
 eight-class PRD contract still requires additional labelled data. Outerwear is
 also the weakest covered category and remains a priority for data and model
 improvement.
+
+## Visual Acceptance Review
+
+Do not use early low-threshold debug overlays as final visual evidence. Build
+the acceptance set from the exact saved predictions used by the full-validation
+metrics. The command below creates `Original | Ground truth | Prediction`
+comparisons, two deterministic samples per labelled category, one explicit
+category-level miss per category when available, a contact sheet, and a JSON
+manifest:
+
+```bash
+python scripts/visualize_segmentation_acceptance.py \
+  --val-json data/processed/autodl/segmentation/deepfashion2_validation_full.json \
+  --predictions outputs/segmentation/eval_official_05000_384_fp16_full/inference/coco_instances_results.json \
+  --image-root . \
+  --score-threshold 0.8 \
+  --samples-per-category 2 \
+  --misses-per-category 1 \
+  --output-dir outputs/segmentation/eval_official_05000_384_fp16_full/acceptance_visuals
+```
+
+Review `acceptance_visuals/contact_sheet.jpg` first, then inspect the individual
+PNG files at full resolution. Each comparison and the manifest record why the
+image was selected, using labels such as `sample:top` and `miss:outerwear`, so
+the review set is repeatable and does not hide known failure cases.
