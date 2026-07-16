@@ -311,6 +311,21 @@ def test_mask2former_project_config_uses_pretrained_weights() -> None:
     assert config["evaluate_after_training"] is False
 
 
+def test_mask2former_deployment_config_records_validated_profile() -> None:
+    """Deployment config should preserve the measured speed-quality profile."""
+    config_path = Path("configs/segmentation_mask2former_deployment.yaml")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert config["model_family"] == "mask2former"
+    assert config["weights"].endswith("model_official_0004999.pth")
+    assert config["val_json"].endswith("deepfashion2_validation_full.json")
+    assert config["score_threshold"] == 0.8
+    assert config["min_size_test"] == 384
+    assert config["max_size_test"] == 640
+    assert config["precision"] == "fp16"
+    assert config["device"] == "cuda"
+
+
 def test_mask2former_trainer_uses_target_optimizer_and_scheduler(
     monkeypatch: Any,
 ) -> None:

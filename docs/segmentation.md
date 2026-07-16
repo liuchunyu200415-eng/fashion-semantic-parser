@@ -351,13 +351,13 @@ become false positives in the five-class DeepFashion2 report. Use
 `MatchedMeanIoU` to describe mask-boundary quality, and always report `Recall50`
 or `AllGTIoU85Rate` beside it so missed garments are visible. Run COCO AP at
 score threshold `0.0`; run a second direct-IoU report at the selected deployment
-threshold, initially `0.1` while that threshold is tuned:
+threshold. The validated five-class deployment profile uses `0.8`:
 
 ```bash
 python scripts/evaluate_segmentation_baseline.py \
   --config configs/segmentation_mask2former.yaml \
   --weights outputs/segmentation/mask2former_r50_official_stage2/model_official_0004999.pth \
-  --score-threshold 0.1
+  --score-threshold 0.8
 ```
 
 If full inference has already completed at score threshold `0.0`, reuse the COCO
@@ -450,3 +450,49 @@ When latency is benchmarked with `--precision fp16`, pass the same precision to
 evaluation, prediction, and visualization. This keeps reported mask quality on
 the exact autocast inference path used by the deployment candidate instead of
 silently evaluating FP32 outputs.
+
+## Validated Deployment Profile
+
+The current five-class DeepFashion2-backed deployment profile is stored in
+`configs/segmentation_mask2former_deployment.yaml`. It fixes the selected
+checkpoint and the exact measured inference settings:
+
+```text
+weights             model_official_0004999.pth
+precision           fp16
+minimum test size   384
+maximum test size   640
+score threshold     0.8
+```
+
+On an NVIDIA GeForce RTX 4080 SUPER, using 100 source images, 20 warmup runs,
+and 200 measured runs, the loaded-model pipeline produced mean `49.82 ms`,
+median `47.38 ms`, p95 `57.17 ms`, and `20.07 FPS`. Model/weight loading and
+image decoding were excluded. The mean meets the 50 ms target, but p95 does not;
+the result is hardware- and protocol-specific rather than a universal latency
+guarantee.
+
+Full-validation FP16 accuracy at this resolution was mask AP `57.09`, AP50
+`75.36`, AP75 `65.92`, AP85 `47.95`, and AP90 `28.48`. At deployment threshold
+`0.8`, direct matched mask IoU was `88.41%`, precision was `77.94%`, recall was
+`76.62%`, and F1 was `77.28%`. Unmatched ground-truth masks count as zero in
+AllGTMeanIoU, which was `67.74%`.
+
+Threshold `0.75` retains more skirt and outerwear predictions with essentially
+the same F1, but its measured full-pipeline mean was `51.20 ms`; keep it as a
+higher-recall experiment rather than the latency-compliant default.
+
+Run the recorded deployment profile without repeating its flags:
+
+```bash
+python scripts/predict_segmentation.py \
+  data/raw/example.jpg \
+  --config configs/segmentation_mask2former_deployment.yaml \
+  --output outputs/segmentation/example_deployment_prediction.json
+```
+
+The validated accuracy currently covers top, pants, skirt, outerwear, and dress.
+DeepFashion2 has no ground truth for shoes, bag, or accessory, so the full
+eight-class PRD contract still requires additional labelled data. Outerwear is
+also the weakest covered category and remains a priority for data and model
+improvement.
