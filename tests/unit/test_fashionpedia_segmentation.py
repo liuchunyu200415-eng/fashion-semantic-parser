@@ -164,10 +164,50 @@ def test_audit_allows_missing_images_but_conversion_rejects_them(
     assert not (tmp_path / "output.json").exists()
 
 
+def test_convert_fashionpedia_reads_validation_images_from_test_directory(
+    tmp_path: Path,
+) -> None:
+    """The official validation/test archive stores labelled images in test/."""
+    root = tmp_path / "fashionpedia"
+    annotation_path = root / "annotations" / "instances_attributes_val2020.json"
+    image_root = root / "test"
+    output_path = tmp_path / "output.json"
+    annotation_path.parent.mkdir(parents=True)
+    image_root.mkdir(parents=True)
+    (image_root / "official.jpg").write_bytes(b"fixture")
+    annotation_path.write_text(
+        json.dumps(
+            {
+                "categories": [{"id": 23, "name": "shoe"}],
+                "images": [
+                    {
+                        "id": 1,
+                        "file_name": "official.jpg",
+                        "width": 100,
+                        "height": 200,
+                    }
+                ],
+                "annotations": [_annotation(1, 1, 23)],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = convert_fashionpedia_to_coco(
+        root=root,
+        split="validation",
+        output_path=output_path,
+    )
+    converted = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert summary.missing_image_count == 0
+    assert converted["images"][0]["file_name"].endswith("test/official.jpg")
+
+
 def test_convert_fashionpedia_accepts_legacy_image_directory(
     tmp_path: Path,
 ) -> None:
-    """Older train2020/val2020 layouts should remain usable."""
+    """Older val2020 layouts should remain usable."""
     root = tmp_path / "fashionpedia"
     annotation_path = root / "annotations" / "instances_attributes_val2020.json"
     image_root = root / "val2020"

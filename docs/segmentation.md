@@ -68,13 +68,14 @@ data/raw/fashionpedia/
 │   ├── instances_attributes_train2020.json
 │   └── instances_attributes_val2020.json
 ├── train/
-├── val/
 └── test/
 ```
 
-The official image archives extract to `train/`, `val/`, and `test/`. The
-converter also accepts the older `train2020/` and `val2020/` directory names
-when those are already present.
+The official training archive extracts to `train/`. The combined validation and
+test archive extracts all 3,200 images to `test/`; the validation annotation
+file selects its labelled 1,158-image subset by filename. The converter also
+accepts `train2020/`, `val/`, and `val2020/` directory names for previously
+organized copies.
 
 The official JSON contains 27 main-apparel classes and 19 overlapping garment
 part classes. The project maps 26 unambiguous main classes into the eight PRD

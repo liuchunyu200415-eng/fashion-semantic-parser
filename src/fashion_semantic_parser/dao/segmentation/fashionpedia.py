@@ -17,7 +17,10 @@ from fashion_semantic_parser.dao.segmentation.taxonomy import (
 
 _SPLIT_LAYOUT: dict[str, tuple[str, tuple[str, ...]]] = {
     "train": ("instances_attributes_train2020.json", ("train", "train2020")),
-    "validation": ("instances_attributes_val2020.json", ("val", "val2020")),
+    "validation": (
+        "instances_attributes_val2020.json",
+        ("test", "val", "val2020"),
+    ),
 }
 
 
