@@ -497,6 +497,32 @@ eight-class PRD contract still requires additional labelled data. Outerwear is
 also the weakest covered category and remains a priority for data and model
 improvement.
 
+### Experimental category-conflict filter
+
+Some images receive one large `dress` prediction over a stronger `top` plus
+`pants/skirt` pair. Do not raise the global score threshold to hide this case,
+because the correct lower garment may have a similar score. The experimental
+post-processor only suppresses a dress when its box closely matches the union
+of a vertically ordered top and lower garment, both components are covered by
+the dress box, and their average score is at least as high as the dress score.
+
+Generate a filtered prediction file without changing API defaults:
+
+```bash
+python scripts/postprocess_segmentation_predictions.py \
+  --predictions outputs/segmentation/eval_official_05000_384_fp16_full/inference/coco_instances_results.json \
+  --score-threshold 0.8 \
+  --min-union-iou 0.8 \
+  --min-component-coverage 0.8 \
+  --score-margin 0.0 \
+  --output outputs/segmentation/eval_official_05000_384_fp16_full/predictions_score_080_conflict_filtered.json \
+  --report outputs/segmentation/eval_official_05000_384_fp16_full/conflict_filter_score_080_report.json
+```
+
+Evaluate the generated file on the complete validation set before enabling the
+policy in runtime inference. It remains experimental unless aggregate F1
+improves without a material dress or lower-garment recall regression.
+
 ## Visual Acceptance Review
 
 Do not use early low-threshold debug overlays as final visual evidence. Build
