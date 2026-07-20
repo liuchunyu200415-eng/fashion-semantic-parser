@@ -15,9 +15,9 @@ from fashion_semantic_parser.dao.segmentation.taxonomy import (
     map_fashionpedia_category,
 )
 
-_SPLIT_LAYOUT = {
-    "train": ("instances_attributes_train2020.json", "train2020"),
-    "validation": ("instances_attributes_val2020.json", "val2020"),
+_SPLIT_LAYOUT: dict[str, tuple[str, tuple[str, ...]]] = {
+    "train": ("instances_attributes_train2020.json", ("train", "train2020")),
+    "validation": ("instances_attributes_val2020.json", ("val", "val2020")),
 }
 
 
@@ -95,13 +95,21 @@ def convert_fashionpedia_to_coco(
 def _split_paths(root: Path, split: str) -> tuple[Path, Path]:
     """Resolve official Fashionpedia annotation and image directories."""
     try:
-        annotation_name, image_directory = _SPLIT_LAYOUT[split]
+        annotation_name, image_directories = _SPLIT_LAYOUT[split]
     except KeyError as error:
         supported = ", ".join(sorted(_SPLIT_LAYOUT))
         raise ValueError(
             f"Unsupported Fashionpedia split {split!r}; expected one of {supported}"
         ) from error
-    return root / "annotations" / annotation_name, root / image_directory
+    image_root = next(
+        (
+            root / image_directory
+            for image_directory in image_directories
+            if (root / image_directory).is_dir()
+        ),
+        root / image_directories[0],
+    )
+    return root / "annotations" / annotation_name, image_root
 
 
 def _prepare_fashionpedia_coco(

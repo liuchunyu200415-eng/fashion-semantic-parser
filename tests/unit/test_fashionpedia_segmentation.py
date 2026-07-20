@@ -54,7 +54,7 @@ def test_convert_fashionpedia_writes_only_unambiguous_main_apparel(
     """Conversion should remap targets without turning jumpsuits into background."""
     root = tmp_path / "fashionpedia"
     annotation_path = root / "annotations" / "instances_attributes_train2020.json"
-    image_root = root / "train2020"
+    image_root = root / "train"
     output_path = tmp_path / "processed" / "fashionpedia_train.json"
     annotation_path.parent.mkdir(parents=True)
     image_root.mkdir(parents=True)
@@ -119,7 +119,7 @@ def test_convert_fashionpedia_writes_only_unambiguous_main_apparel(
     assert summary.category_counts["bag"] == 1
     assert summary.category_counts["accessory"] == 1
     assert converted["images"][0]["source_image_id"] == 100
-    assert converted["images"][0]["file_name"].endswith("train2020/a.jpg")
+    assert converted["images"][0]["file_name"].endswith("train/a.jpg")
     assert [row["category_id"] for row in converted["annotations"]] == [6, 7, 8]
     assert converted["annotations"][1]["segmentation"]["counts"] == "encoded"
     assert len(converted["categories"]) == 8
@@ -162,6 +162,46 @@ def test_audit_allows_missing_images_but_conversion_rejects_them(
             output_path=tmp_path / "output.json",
         )
     assert not (tmp_path / "output.json").exists()
+
+
+def test_convert_fashionpedia_accepts_legacy_image_directory(
+    tmp_path: Path,
+) -> None:
+    """Older train2020/val2020 layouts should remain usable."""
+    root = tmp_path / "fashionpedia"
+    annotation_path = root / "annotations" / "instances_attributes_val2020.json"
+    image_root = root / "val2020"
+    output_path = tmp_path / "output.json"
+    annotation_path.parent.mkdir(parents=True)
+    image_root.mkdir(parents=True)
+    (image_root / "legacy.jpg").write_bytes(b"fixture")
+    annotation_path.write_text(
+        json.dumps(
+            {
+                "categories": [{"id": 23, "name": "shoe"}],
+                "images": [
+                    {
+                        "id": 1,
+                        "file_name": "legacy.jpg",
+                        "width": 100,
+                        "height": 200,
+                    }
+                ],
+                "annotations": [_annotation(1, 1, 23)],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = convert_fashionpedia_to_coco(
+        root=root,
+        split="validation",
+        output_path=output_path,
+    )
+    converted = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert summary.missing_image_count == 0
+    assert converted["images"][0]["file_name"].endswith("val2020/legacy.jpg")
 
 
 def _annotation(
