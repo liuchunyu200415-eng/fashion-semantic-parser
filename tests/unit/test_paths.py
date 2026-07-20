@@ -18,3 +18,9 @@ def test_resolve_project_path_rejects_absolute_path() -> None:
     """Absolute paths should be rejected to keep project configuration portable."""
     with pytest.raises(ValueError):
         resolve_project_path(Path("/tmp/example.jpg"))
+
+
+def test_resolve_project_path_rejects_parent_traversal() -> None:
+    """API-facing project paths must not escape the repository root."""
+    with pytest.raises(ValueError, match="cannot leave"):
+        resolve_project_path("../private-image.jpg")

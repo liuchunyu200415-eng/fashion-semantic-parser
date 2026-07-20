@@ -3,6 +3,7 @@
 import copy
 import itertools
 from pathlib import Path
+from threading import Lock
 from typing import Any, Callable, Literal
 
 import cv2
@@ -65,6 +66,9 @@ class Detectron2SegmentationBaseline:
     def __init__(self, settings: SegmentationBaselineSettings) -> None:
         """Create a baseline adapter with explicit settings."""
         self.settings = settings
+        self._predictor: Any | None = None
+        self._predictor_init_lock = Lock()
+        self._inference_lock = Lock()
 
     def build_config(self) -> Any:
         """Build a Detectron2 cfg object for the configured model family.
@@ -149,20 +153,19 @@ class Detectron2SegmentationBaseline:
 
     def predict_image(self, image_path: Path) -> SegmentationPrediction:
         """Run instance segmentation on one RGB product image."""
-        detectron2 = _load_detectron2_modules()
-        cfg = self.build_config()
-        predictor = detectron2["DefaultPredictor"](cfg)
+        predictor = self._get_predictor()
         image = cv2.imread(str(image_path))
         if image is None:
             raise ValueError(f"Unable to read image: {image_path}")
 
-        outputs = _run_predictor_with_precision(
-            predictor,
-            image,
-            _load_torch_module(),
-            device=self.settings.device,
-            precision=self.settings.precision,
-        )
+        with self._inference_lock:
+            outputs = _run_predictor_with_precision(
+                predictor,
+                image,
+                _load_torch_module(),
+                device=self.settings.device,
+                precision=self.settings.precision,
+            )
         instances = _filter_detectron2_instances_by_score(
             outputs["instances"],
             self.settings.score_threshold,
@@ -172,6 +175,17 @@ class Detectron2SegmentationBaseline:
             image_path=image_path,
             score_threshold=self.settings.score_threshold,
         )
+
+    def _get_predictor(self, detectron2: dict[str, Any] | None = None) -> Any:
+        """Build the expensive predictor once and reuse it across requests."""
+        if self._predictor is not None:
+            return self._predictor
+
+        with self._predictor_init_lock:
+            if self._predictor is None:
+                modules = detectron2 or _load_detectron2_modules()
+                self._predictor = modules["DefaultPredictor"](self.build_config())
+        return self._predictor
 
     def benchmark_latency(
         self,

@@ -4,6 +4,7 @@ from fashion_semantic_parser.models.segmentation import (
     SegmentationBoundingBox,
     SegmentationInstance,
     SegmentationPrediction,
+    SegmentationRequest,
     SegmentationSubjectROI,
 )
 
@@ -11,5 +12,6 @@ __all__ = [
     "SegmentationBoundingBox",
     "SegmentationInstance",
     "SegmentationPrediction",
+    "SegmentationRequest",
     "SegmentationSubjectROI",
 ]

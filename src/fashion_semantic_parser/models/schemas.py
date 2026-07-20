@@ -2,6 +2,8 @@
 
 from pydantic import BaseModel, Field
 
+from fashion_semantic_parser.models.segmentation import SegmentationPrediction
+
 
 class BoundingBox(BaseModel):
     """Axis-aligned bounding box in image pixel coordinates."""
@@ -42,3 +44,4 @@ class MultimodalQueryResponse(BaseModel):
     answer: str
     regions: list[RegionPrediction] = Field(default_factory=list)
     references: list[str] = Field(default_factory=list)
+    segmentation: SegmentationPrediction | None = None

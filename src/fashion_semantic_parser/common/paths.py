@@ -20,7 +20,15 @@ def resolve_project_path(relative_path: str | Path) -> Path:
     path = Path(relative_path)
     if path.is_absolute():
         raise ValueError("Only project-relative paths are allowed.")
-    return PROJECT_ROOT / path
+
+    resolved_path = (PROJECT_ROOT / path).resolve()
+    try:
+        resolved_path.relative_to(PROJECT_ROOT.resolve())
+    except ValueError as error:
+        raise ValueError(
+            "Project-relative paths cannot leave the project root."
+        ) from error
+    return resolved_path
 
 
 def to_project_relative_path(path: str | Path) -> str:

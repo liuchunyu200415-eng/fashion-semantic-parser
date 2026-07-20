@@ -34,6 +34,12 @@ class ModelSettings(BaseModel):
     precision: str = "fp16"
 
 
+class SegmentationServiceSettings(BaseModel):
+    """Garment segmentation inference service settings."""
+
+    config_path: str = "configs/segmentation_mask2former_deployment.yaml"
+
+
 class DatasetSettings(BaseModel):
     """Project-relative dataset root paths."""
 
@@ -55,6 +61,9 @@ class Settings(BaseModel):
     paths: PathSettings = Field(default_factory=PathSettings)
     service: ServiceSettings = Field(default_factory=ServiceSettings)
     model: ModelSettings = Field(default_factory=ModelSettings)
+    segmentation: SegmentationServiceSettings = Field(
+        default_factory=SegmentationServiceSettings
+    )
     datasets: DatasetSettings = Field(default_factory=DatasetSettings)
 
 

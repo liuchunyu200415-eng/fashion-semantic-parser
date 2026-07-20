@@ -295,6 +295,24 @@ def test_inference_size_defaults_preserve_model_config() -> None:
     assert _json_safe_config_value(cfg.INPUT.MIN_SIZE_TEST) == [640, 800]
 
 
+def test_inference_predictor_is_initialized_once(monkeypatch: Any) -> None:
+    """API requests should reuse one loaded Detectron2 predictor."""
+    created_predictors = []
+    expected_predictor = object()
+    baseline = Detectron2SegmentationBaseline(SegmentationBaselineSettings())
+    monkeypatch.setattr(baseline, "build_config", lambda: "test-config")
+
+    def build_predictor(config: Any) -> Any:
+        created_predictors.append(config)
+        return expected_predictor
+
+    modules = {"DefaultPredictor": build_predictor}
+
+    assert baseline._get_predictor(modules) is expected_predictor
+    assert baseline._get_predictor(modules) is expected_predictor
+    assert created_predictors == ["test-config"]
+
+
 def test_mask2former_project_config_uses_pretrained_weights() -> None:
     """Short Mask2Former fine-tuning should start from COCO pretrained weights."""
     config_path = Path("configs/segmentation_mask2former.yaml")

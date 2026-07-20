@@ -1,14 +1,33 @@
 """High-level orchestration service for multimodal fashion parsing."""
 
-from fashion_semantic_parser.common.exceptions import ModelNotReadyError
+import math
+
 from fashion_semantic_parser.models.schemas import (
+    BoundingBox,
     MultimodalQueryRequest,
     MultimodalQueryResponse,
+    RegionPrediction,
+)
+from fashion_semantic_parser.models.segmentation import SegmentationPrediction
+from fashion_semantic_parser.service.segmentation_runtime import (
+    GarmentSegmentationService,
+    SegmentationRuntime,
 )
 
 
 class FashionParserService:
     """Coordinate visual parsing, RAG retrieval, and answer generation."""
+
+    def __init__(
+        self,
+        segmentation_service: SegmentationRuntime | None = None,
+    ) -> None:
+        """Create the parser with a shared garment segmentation runtime."""
+        self.segmentation_service = (
+            segmentation_service
+            if segmentation_service is not None
+            else GarmentSegmentationService()
+        )
 
     def answer_query(
         self,
@@ -22,10 +41,37 @@ class FashionParserService:
         Returns:
             Structured answer with localized regions and references.
 
-        Raises:
-            ModelNotReadyError: Always raised until model adapters are implemented.
+        Notes:
+            PRD 3.1.1 is integrated here. Later language grounding, attribute,
+            RAG, and answer-generation adapters remain separate milestones.
         """
-        raise ModelNotReadyError(
-            "Model adapters are not implemented yet. "
-            f"Received query for image: {request.image_path}"
+        segmentation = self.segmentation_service.segment(request.image_path)
+        return MultimodalQueryResponse(
+            answer=_segmentation_summary(segmentation),
+            regions=[
+                RegionPrediction(
+                    label=instance.category_label,
+                    box=BoundingBox(
+                        x_min=math.floor(instance.box.x_min),
+                        y_min=math.floor(instance.box.y_min),
+                        x_max=math.ceil(instance.box.x_max),
+                        y_max=math.ceil(instance.box.y_max),
+                    ),
+                    confidence=instance.confidence,
+                )
+                for instance in segmentation.instances
+            ],
+            segmentation=segmentation,
         )
+
+
+def _segmentation_summary(prediction: SegmentationPrediction) -> str:
+    """Describe the completed 3.1.1 stage without claiming full QA support."""
+    if not prediction.instances:
+        return "Garment segmentation completed; no garment instances were detected."
+
+    labels = ", ".join(instance.category_label for instance in prediction.instances)
+    return (
+        "Garment segmentation completed. "
+        f"Detected {len(prediction.instances)} instance(s): {labels}."
+    )

@@ -521,3 +521,58 @@ Review `acceptance_visuals/contact_sheet.jpg` first, then inspect the individual
 PNG files at full resolution. Each comparison and the manifest record why the
 image was selected, using labels such as `sample:top` and `miss:outerwear`, so
 the review set is repeatable and does not hide known failure cases.
+
+## FastAPI Inference Service
+
+The application uses `configs/app.yaml` to select the validated deployment
+profile. The Detectron2/Mask2Former predictor is loaded on the first valid
+request and then reused, so model and weight loading are not repeated for every
+image.
+
+On AutoDL, start the service from the project root:
+
+```bash
+export OMP_NUM_THREADS=1
+export TORCH_CUDA_ARCH_LIST="8.9"
+export PYTHONPATH=$PWD/src:$PWD/external/Mask2Former:$PYTHONPATH
+
+python -m uvicorn fashion_semantic_parser.api.app:app \
+  --host 0.0.0.0 \
+  --port 8000
+```
+
+Call the dedicated PRD 3.1.1 endpoint with a project-relative image path:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/segment \
+  -H 'Content-Type: application/json' \
+  -d '{"image_path":"data/raw/example.jpg"}'
+```
+
+The response uses `SegmentationPrediction` and includes `category_id`,
+`category_label`, `confidence`, an `xyxy` box, and polygon mask coordinates for
+every retained instance. An optional manual subject ROI remains available:
+
+```json
+{
+  "image_path": "data/raw/example.jpg",
+  "subject_roi": {
+    "x_min": 100,
+    "y_min": 20,
+    "x_max": 700,
+    "y_max": 980
+  }
+}
+```
+
+`POST /v1/query` invokes the same segmentation runtime and returns both compact
+`regions` and the complete `segmentation` object. Its answer text only reports
+that PRD 3.1.1 segmentation completed; it does not claim that language-guided
+grounding, attribute extraction, RAG, or multimodal answer generation is ready.
+
+For security and reproducibility, API image paths must stay inside the project
+checkout and must be relative. Invalid or missing paths return HTTP 400.
+Missing model dependencies, invalid runtime configuration, or unavailable CUDA
+return HTTP 503. The first request includes model-loading latency; use the
+benchmark script, not first-request wall time, when comparing the validated
+loaded-model latency profile.

@@ -9,3 +9,6 @@ def test_load_settings_reads_default_config() -> None:
 
     assert settings.app.name == "fashion-semantic-parser"
     assert settings.service.port == 8000
+    assert settings.segmentation.config_path.endswith(
+        "segmentation_mask2former_deployment.yaml"
+    )
