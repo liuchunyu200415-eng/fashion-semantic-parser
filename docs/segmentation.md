@@ -523,6 +523,22 @@ Evaluate the generated file on the complete validation set before enabling the
 policy in runtime inference. It remains experimental unless aggregate F1
 improves without a material dress or lower-garment recall regression.
 
+The complete validation-set sweep at the `0.8` deployment threshold rejected
+this policy for runtime use:
+
+| Score margin | Dresses removed | P50 | R50 | F1 | GT at IoU 0.85 | Dress R50 | Dress GT at IoU 0.85 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Disabled | 0 | 77.94 | 76.62 | 77.28 | 58.94 | 74.01 | 60.81 |
+| 0.02 | 529 | 78.42 | 76.30 | 77.34 | 58.71 | 72.16 | 59.48 |
+| 0.05 | 337 | 78.26 | 76.43 | 77.34 | 58.81 | 72.94 | 60.09 |
+| 0.10 | 90 | 78.03 | 76.57 | 77.29 | 58.91 | 73.72 | 60.65 |
+
+Margins `0.02` and `0.05` traded a negligible aggregate F1 increase for a
+material dress-recall regression. Margin `0.10` reduced that regression, but
+its `0.01` F1 gain was not meaningful enough to justify runtime complexity or
+false suppression risk. Keep the API on the unfiltered predictions; retain
+this command only as a reproducible diagnostic experiment.
+
 ## Visual Acceptance Review
 
 Do not use early low-threshold debug overlays as final visual evidence. Build
