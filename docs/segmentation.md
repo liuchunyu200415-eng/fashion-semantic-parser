@@ -56,6 +56,69 @@ data/processed/autodl/segmentation
 The COCO files use project-relative image paths so they can be reused across
 local and AutoDL environments.
 
+## Audit And Convert Fashionpedia
+
+Fashionpedia supplements the five DeepFashion2-backed categories with instance
+masks for shoes, bags, and accessories. Keep the official layout under the
+configured `data/raw/fashionpedia` root:
+
+```text
+data/raw/fashionpedia/
+├── annotations/
+│   ├── instances_attributes_train2020.json
+│   └── instances_attributes_val2020.json
+├── train2020/
+└── val2020/
+```
+
+The official JSON contains 27 main-apparel classes and 19 overlapping garment
+part classes. The project maps 26 unambiguous main classes into the eight PRD
+categories, excludes garment parts, and drops every image containing a
+`jumpsuit`. Dropping the complete image prevents an excluded whole-body garment
+from becoming unlabeled background. The initial mapping treats cardigans,
+jackets, coats, and capes as outerwear; shoes and bags remain dedicated classes;
+and wearable items such as hats, glasses, belts, watches, and scarves map to
+accessory.
+
+Audit annotation mapping before downloading or extracting images:
+
+```bash
+python scripts/convert_fashionpedia_to_coco.py \
+  --split validation \
+  --audit-only
+```
+
+The audit reports source and output image/annotation counts, every source-class
+count, mapped PRD counts, missing images, excluded parts, ambiguous images, and
+invalid records. It writes no training file and does not require image files.
+
+After the official image archive is extracted, run a deterministic smoke test:
+
+```bash
+python scripts/convert_fashionpedia_to_coco.py \
+  --split validation \
+  --limit 10
+```
+
+Then convert both complete labelled splits:
+
+```bash
+python scripts/convert_fashionpedia_to_coco.py --split train
+python scripts/convert_fashionpedia_to_coco.py --split validation
+```
+
+The converter preserves official polygon or RLE masks and mask area, remaps
+category IDs to the existing PRD `1..8` contract, and writes project-relative
+image paths. Conversion fails when selected image files are missing; use
+`--audit-only` for annotation-only inspection.
+
+These Fashionpedia outputs are intentionally independent from the current
+DeepFashion2 training JSON. Do not point the production config at them yet. The
+next data stage must build a mixed-data training policy with source balancing
+and keep both source validation sets separate. Fashionpedia annotations use CC
+BY 4.0, while each image remains subject to its original source license; retain
+attribution and review image rights before non-research deployment.
+
 ## Check AutoDL Environment
 
 After pulling the latest code on AutoDL, check whether the segmentation training

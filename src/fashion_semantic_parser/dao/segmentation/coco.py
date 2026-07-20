@@ -100,7 +100,7 @@ def convert_deepfashion2_to_coco(
     coco = {
         "images": images,
         "annotations": annotations,
-        "categories": _coco_categories(PRD_SEGMENTATION_CATEGORIES),
+        "categories": coco_categories(PRD_SEGMENTATION_CATEGORIES),
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
@@ -190,7 +190,7 @@ def _bbox_area(bbox: list[float]) -> float:
     return bbox[2] * bbox[3]
 
 
-def _coco_categories(
+def coco_categories(
     categories: list[SegmentationCategory],
 ) -> list[dict[str, object]]:
     """Convert PRD categories to COCO categories."""

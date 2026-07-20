@@ -45,6 +45,7 @@ class DatasetSettings(BaseModel):
 
     fashionai_root: str = "data/raw/fashionai/round1_fashionAI_attributes_test_a"
     deepfashion2_root: str = "data/raw/deepfashion2"
+    fashionpedia_root: str = "data/raw/fashionpedia"
 
 
 class AppSettings(BaseModel):
