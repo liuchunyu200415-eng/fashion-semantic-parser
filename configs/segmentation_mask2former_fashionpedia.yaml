@@ -1,0 +1,25 @@
+# Experimental PRD 3.1.1 eight-class Fashionpedia transfer stage.
+#
+# This starts a new optimizer schedule from the validated DeepFashion2-backed
+# checkpoint. It does not replace the deployment config until both Fashionpedia
+# and DeepFashion2 validation results pass acceptance.
+model_family: mask2former
+train_json: data/processed/autodl/segmentation/fashionpedia_train.json
+val_json: data/processed/autodl/segmentation/fashionpedia_validation.json
+image_root: .
+output_dir: outputs/segmentation/fashionpedia/mask2former_r50_stage1
+config_source: local
+config_file: external/Mask2Former/configs/coco/instance-segmentation/maskformer2_R50_bs16_50ep.yaml
+weights: outputs/segmentation/mask2former_r50_official_stage2/model_official_0004999.pth
+num_classes: 8
+ims_per_batch: 4
+base_lr: 0.00001
+max_iter: 10000
+checkpoint_period: 1000
+eval_period: 0
+num_workers: 2
+score_threshold: 0.0
+precision: fp16
+device: cuda
+resume: false
+evaluate_after_training: false

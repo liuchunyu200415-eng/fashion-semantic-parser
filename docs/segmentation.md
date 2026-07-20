@@ -125,6 +125,49 @@ and keep both source validation sets separate. Fashionpedia annotations use CC
 BY 4.0, while each image remains subject to its original source license; retain
 attribution and review image rights before non-research deployment.
 
+## Establish The Fashionpedia Transfer Baseline
+
+Before fine-tuning, evaluate the selected DeepFashion2-backed checkpoint on the
+complete Fashionpedia validation set. This records the cross-dataset baseline,
+including the previously untrained shoes, bag, and accessory classes. Formal
+COCO evaluation keeps the score threshold at zero. `--metrics-output` writes a
+clean JSON file even when Detectron2 emits verbose logs:
+
+```bash
+python scripts/evaluate_segmentation_baseline.py \
+  --config configs/segmentation_mask2former_fashionpedia.yaml \
+  --weights outputs/segmentation/mask2former_r50_official_stage2/model_official_0004999.pth \
+  --output-dir outputs/segmentation/fashionpedia/zero_shot \
+  --metrics-output outputs/segmentation/fashionpedia/zero_shot/metrics.json
+```
+
+The experimental Fashionpedia config starts a new optimizer schedule from the
+validated checkpoint. It uses all eight PRD classes, batch size four, a
+conservative `1e-5` transfer learning rate, and a 10,000-iteration target. Run a
+1,000-iteration stability stage first:
+
+```bash
+python scripts/train_segmentation_baseline.py \
+  --config configs/segmentation_mask2former_fashionpedia.yaml \
+  --max-iter 1000
+```
+
+Evaluate that checkpoint on Fashionpedia and DeepFashion2 separately before
+resuming. If mask losses and both validation suites remain acceptable, resume
+the same output directory to the next planned checkpoint rather than starting a
+new optimizer:
+
+```bash
+python scripts/train_segmentation_baseline.py \
+  --config configs/segmentation_mask2former_fashionpedia.yaml \
+  --resume \
+  --max-iter 5000
+```
+
+This Fashionpedia-only stage is not the final production model. Its purpose is
+to activate and measure all eight classes; a later mixed-data consolidation
+stage must recover or preserve DeepFashion2 performance before deployment.
+
 ## Check AutoDL Environment
 
 After pulling the latest code on AutoDL, check whether the segmentation training

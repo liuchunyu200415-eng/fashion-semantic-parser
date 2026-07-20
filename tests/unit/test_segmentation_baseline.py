@@ -4,15 +4,16 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import fashion_semantic_parser.service.segmentation_baseline as segmentation_module
 import numpy as np
 import yaml
 
+import fashion_semantic_parser.service.segmentation_baseline as segmentation_module
+from fashion_semantic_parser.models.segmentation import SegmentationSubjectROI
 from fashion_semantic_parser.service.segmentation_baseline import (
     Detectron2SegmentationBaseline,
     SegmentationBaselineSettings,
-    _latency_summary,
     _json_safe_config_value,
+    _latency_summary,
     _masks_to_arrays,
     _run_predictor_with_precision,
     _run_with_precision,
@@ -26,7 +27,6 @@ from fashion_semantic_parser.service.segmentation_metrics import (
     _greedy_match_ious,
     _summarize_mask_iou_matches,
 )
-from fashion_semantic_parser.models.segmentation import SegmentationSubjectROI
 
 
 class _FakeBoxes:
@@ -342,6 +342,23 @@ def test_mask2former_deployment_config_records_validated_profile() -> None:
     assert config["max_size_test"] == 640
     assert config["precision"] == "fp16"
     assert config["device"] == "cuda"
+
+
+def test_mask2former_fashionpedia_config_is_isolated_transfer_stage() -> None:
+    """Eight-class transfer should not overwrite the validated deployment run."""
+    config_path = Path("configs/segmentation_mask2former_fashionpedia.yaml")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert config["model_family"] == "mask2former"
+    assert config["train_json"].endswith("fashionpedia_train.json")
+    assert config["val_json"].endswith("fashionpedia_validation.json")
+    assert config["weights"].endswith("model_official_0004999.pth")
+    assert config["num_classes"] == 8
+    assert config["base_lr"] == 0.00001
+    assert config["max_iter"] == 10000
+    assert config["output_dir"].endswith("fashionpedia/mask2former_r50_stage1")
+    assert config["score_threshold"] == 0.0
+    assert config["evaluate_after_training"] is False
 
 
 def test_mask2former_trainer_uses_target_optimizer_and_scheduler(

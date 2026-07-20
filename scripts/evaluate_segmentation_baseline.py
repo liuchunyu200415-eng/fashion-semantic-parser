@@ -39,6 +39,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--score-threshold", type=float, default=None)
     parser.add_argument("--min-size-test", type=int, default=None)
     parser.add_argument("--max-size-test", type=int, default=None)
+    parser.add_argument(
+        "--metrics-output",
+        default=None,
+        help="Optional project-relative path for the final metrics JSON.",
+    )
     return parser.parse_args()
 
 
@@ -69,7 +74,13 @@ def main() -> None:
     )
     settings = SegmentationBaselineSettings.model_validate(raw_config)
     results = Detectron2SegmentationBaseline(settings).evaluate()
-    print(json.dumps(results, ensure_ascii=False, indent=2))
+    metrics_json = json.dumps(results, ensure_ascii=False, indent=2)
+    if args.metrics_output:
+        _write_metrics_output(
+            resolve_project_path(args.metrics_output),
+            metrics_json,
+        )
+    print(metrics_json)
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -79,6 +90,12 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"Expected mapping in config file: {path}")
     return data
+
+
+def _write_metrics_output(output_path: Path, metrics_json: str) -> None:
+    """Persist evaluation metrics separately from verbose framework logs."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(metrics_json + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":
