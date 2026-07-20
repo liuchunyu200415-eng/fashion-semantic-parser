@@ -1,5 +1,6 @@
 """Relative path helpers for project resources."""
 
+import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -21,9 +22,10 @@ def resolve_project_path(relative_path: str | Path) -> Path:
     if path.is_absolute():
         raise ValueError("Only project-relative paths are allowed.")
 
-    resolved_path = (PROJECT_ROOT / path).resolve()
+    project_root = Path(os.path.abspath(PROJECT_ROOT))
+    resolved_path = Path(os.path.abspath(project_root / path))
     try:
-        resolved_path.relative_to(PROJECT_ROOT.resolve())
+        resolved_path.relative_to(project_root)
     except ValueError as error:
         raise ValueError(
             "Project-relative paths cannot leave the project root."
