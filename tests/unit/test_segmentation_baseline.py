@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
+import pytest
 import yaml
 
 import fashion_semantic_parser.service.segmentation_baseline as segmentation_module
@@ -337,6 +338,8 @@ def test_segmentation_baseline_settings_defaults() -> None:
 
     assert settings.num_classes == 8
     assert settings.train_json.endswith("deepfashion2_train.json")
+    assert settings.additional_train_jsons == []
+    assert settings.train_source_repeat_factors is None
     assert settings.val_json.endswith("deepfashion2_validation.json")
     assert settings.model_family == "mask_rcnn"
     assert settings.device == "cuda"
@@ -347,6 +350,86 @@ def test_segmentation_baseline_settings_defaults() -> None:
     assert settings.precision == "fp32"
     assert settings.resume is False
     assert settings.evaluate_after_training is True
+
+
+def test_mixed_training_settings_require_one_positive_factor_per_source() -> None:
+    """Invalid source balancing must fail before a long GPU run starts."""
+    with pytest.raises(ValueError, match="one value per training COCO"):
+        SegmentationBaselineSettings(
+            additional_train_jsons=["fashionpedia.json"],
+            train_source_repeat_factors=[1.0],
+        )
+    with pytest.raises(ValueError, match="finite and positive"):
+        SegmentationBaselineSettings(train_source_repeat_factors=[0.0])
+    with pytest.raises(ValueError, match="must be unique"):
+        SegmentationBaselineSettings(
+            train_json="same.json",
+            additional_train_jsons=["same.json"],
+        )
+
+
+def test_mixed_training_configures_weighted_source_sampler() -> None:
+    """Repeat factors should balance sources without materializing merged JSON."""
+    baseline = Detectron2SegmentationBaseline(
+        SegmentationBaselineSettings(
+            additional_train_jsons=["fashionpedia.json"],
+            train_source_repeat_factors=[1.0, 4.3],
+        )
+    )
+    cfg = SimpleNamespace(
+        DATASETS=SimpleNamespace(TRAIN=()),
+        DATALOADER=SimpleNamespace(SAMPLER_TRAIN="TrainingSampler"),
+    )
+
+    baseline._apply_training_dataset_settings(cfg)
+
+    assert cfg.DATASETS.TRAIN == (
+        "prd_3_1_1_deepfashion2_train",
+        "prd_3_1_1_additional_train_1",
+    )
+    assert cfg.DATALOADER.SAMPLER_TRAIN == "WeightedTrainingSampler"
+    assert cfg.DATASETS.TRAIN_REPEAT_FACTOR == (
+        ("prd_3_1_1_deepfashion2_train", 1.0),
+        ("prd_3_1_1_additional_train_1", 4.3),
+    )
+
+
+def test_register_datasets_includes_every_mixed_training_source(
+    monkeypatch: Any,
+) -> None:
+    """Each mixed COCO source must receive its own Detectron2 registration."""
+    registrations: list[tuple[str, str]] = []
+
+    def register(
+        name: str,
+        metadata: dict[str, Any],
+        json_path: str,
+        image_root: str,
+    ) -> None:
+        assert len(metadata["thing_classes"]) == 8
+        assert image_root == "."
+        registrations.append((name, json_path))
+
+    monkeypatch.setattr(
+        segmentation_module,
+        "_load_detectron2_modules",
+        lambda: {"register_coco_instances": register},
+    )
+    baseline = Detectron2SegmentationBaseline(
+        SegmentationBaselineSettings(
+            train_json="deepfashion2.json",
+            additional_train_jsons=["fashionpedia.json"],
+            val_json="validation.json",
+        )
+    )
+
+    baseline.register_datasets()
+
+    assert registrations == [
+        ("prd_3_1_1_deepfashion2_train", "deepfashion2.json"),
+        ("prd_3_1_1_additional_train_1", "fashionpedia.json"),
+        ("prd_3_1_1_deepfashion2_validation", "validation.json"),
+    ]
 
 
 def test_mask2former_settings_use_local_project_config() -> None:
@@ -460,6 +543,21 @@ def test_mask2former_fashionpedia_config_is_isolated_transfer_stage() -> None:
     assert config["output_dir"].endswith("fashionpedia/mask2former_r50_stage1")
     assert config["score_threshold"] == 0.0
     assert config["evaluate_after_training"] is False
+
+
+def test_mask2former_mixed_config_balances_both_training_sources() -> None:
+    """Consolidation should preserve old classes while retaining new classes."""
+    config_path = Path("configs/segmentation_mask2former_mixed.yaml")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert config["train_json"].endswith("deepfashion2_train.json")
+    assert config["additional_train_jsons"] == [
+        "data/processed/autodl/segmentation/fashionpedia_train.json"
+    ]
+    assert config["train_source_repeat_factors"] == [1.0, 4.3]
+    assert config["weights"].endswith("model_0000999.pth")
+    assert config["base_lr"] == 0.000005
+    assert config["resume"] is False
 
 
 def test_mask2former_mixed_mask_mapper_accepts_rle_and_polygons() -> None:

@@ -174,6 +174,30 @@ This Fashionpedia-only stage is not the final production model. Its purpose is
 to activate and measure all eight classes; a later mixed-data consolidation
 stage must recover or preserve DeepFashion2 performance before deployment.
 
+The 1,000-iteration Fashionpedia stage activated the missing classes, reaching
+mask AP `35.29` for shoes, `23.41` for bag, and `17.44` for accessory. However,
+the same checkpoint lost `10.25` aggregate mask AP on full DeepFashion2, with
+the largest regression on pants (`-23.54`). Do not resume Fashionpedia-only
+training from this point.
+
+Use the mixed consolidation config instead. It starts a new optimizer from the
+1,000-iteration transfer checkpoint, lowers the learning rate to `5e-6`, and
+uses Detectron2's weighted training sampler. DeepFashion2 contains about 4.3
+times as many mapped images, so per-source repeat factors `1.0` and `4.3`
+produce an approximately 50:50 expected source mix without duplicating either
+COCO file:
+
+```bash
+python scripts/train_segmentation_baseline.py \
+  --config configs/segmentation_mask2former_mixed.yaml \
+  --max-iter 1000
+```
+
+Evaluate that checkpoint independently on full Fashionpedia and DeepFashion2
+before extending the same mixed run. If the old classes recover but shoes, bag,
+or accessory regress too far, adjust the source repeat factors based on the two
+validation suites rather than resuming either single-source run.
+
 ## Check AutoDL Environment
 
 After pulling the latest code on AutoDL, check whether the segmentation training

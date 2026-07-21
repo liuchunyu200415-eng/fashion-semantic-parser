@@ -2,12 +2,13 @@
 
 import copy
 import itertools
+import math
 from pathlib import Path
 from threading import Lock
 from typing import Any, Callable, Literal
 
 import cv2
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from fashion_semantic_parser.common.exceptions import ModelNotReadyError
 from fashion_semantic_parser.common.paths import (
@@ -34,6 +35,8 @@ class SegmentationBaselineSettings(BaseModel):
 
     model_family: Literal["mask_rcnn", "mask2former"] = "mask_rcnn"
     train_json: str = "data/processed/autodl/segmentation/deepfashion2_train.json"
+    additional_train_jsons: list[str] = Field(default_factory=list)
+    train_source_repeat_factors: list[float] | None = None
     val_json: str = "data/processed/autodl/segmentation/deepfashion2_validation.json"
     image_root: str = "."
     output_dir: str = "outputs/segmentation/mask_rcnn_r50_fpn"
@@ -56,11 +59,34 @@ class SegmentationBaselineSettings(BaseModel):
     resume: bool = False
     evaluate_after_training: bool = True
 
+    @model_validator(mode="after")
+    def validate_training_sources(self) -> "SegmentationBaselineSettings":
+        """Keep mixed-source paths and repeat factors unambiguous."""
+        train_jsons = [self.train_json, *self.additional_train_jsons]
+        if len(set(train_jsons)) != len(train_jsons):
+            raise ValueError("Training COCO paths must be unique.")
+        if self.train_source_repeat_factors is None:
+            return self
+        if len(self.train_source_repeat_factors) != len(train_jsons):
+            raise ValueError(
+                "train_source_repeat_factors must contain one value per "
+                "training COCO file."
+            )
+        if any(
+            not math.isfinite(factor) or factor <= 0.0
+            for factor in self.train_source_repeat_factors
+        ):
+            raise ValueError(
+                "Training source repeat factors must be finite and positive."
+            )
+        return self
+
 
 class Detectron2SegmentationBaseline:
     """Adapter around Detectron2-family models for training and inference."""
 
     train_dataset_name = "prd_3_1_1_deepfashion2_train"
+    additional_train_dataset_name_prefix = "prd_3_1_1_additional_train"
     val_dataset_name = "prd_3_1_1_deepfashion2_validation"
 
     def __init__(self, settings: SegmentationBaselineSettings) -> None:
@@ -84,7 +110,7 @@ class Detectron2SegmentationBaseline:
             mask2former["add_maskformer2_config"](cfg)
 
         cfg.merge_from_file(self._resolve_config_file(detectron2["model_zoo"]))
-        cfg.DATASETS.TRAIN = (self.train_dataset_name,)
+        self._apply_training_dataset_settings(cfg)
         cfg.DATASETS.TEST = (self.val_dataset_name,)
         cfg.DATALOADER.NUM_WORKERS = self.settings.num_workers
         cfg.SOLVER.IMS_PER_BATCH = self.settings.ims_per_batch
@@ -108,17 +134,47 @@ class Detectron2SegmentationBaseline:
                 category.english_name for category in PRD_SEGMENTATION_CATEGORIES
             ]
         }
-        detectron2["register_coco_instances"](
-            self.train_dataset_name,
-            metadata,
-            self.settings.train_json,
-            self.settings.image_root,
-        )
+        for dataset_name, json_path in self._training_dataset_specs():
+            detectron2["register_coco_instances"](
+                dataset_name,
+                metadata,
+                json_path,
+                self.settings.image_root,
+            )
         detectron2["register_coco_instances"](
             self.val_dataset_name,
             metadata,
             self.settings.val_json,
             self.settings.image_root,
+        )
+
+    def _training_dataset_specs(self) -> tuple[tuple[str, str], ...]:
+        """Return stable Detectron2 names for every configured training source."""
+        additional_specs = tuple(
+            (
+                f"{self.additional_train_dataset_name_prefix}_{index}",
+                json_path,
+            )
+            for index, json_path in enumerate(
+                self.settings.additional_train_jsons,
+                start=1,
+            )
+        )
+        return (
+            (self.train_dataset_name, self.settings.train_json),
+            *additional_specs,
+        )
+
+    def _apply_training_dataset_settings(self, cfg: Any) -> None:
+        """Configure one or more train sets and optional source balancing."""
+        dataset_names = tuple(name for name, _ in self._training_dataset_specs())
+        cfg.DATASETS.TRAIN = dataset_names
+        repeat_factors = self.settings.train_source_repeat_factors
+        if repeat_factors is None:
+            return
+        cfg.DATALOADER.SAMPLER_TRAIN = "WeightedTrainingSampler"
+        cfg.DATASETS.TRAIN_REPEAT_FACTOR = tuple(
+            zip(dataset_names, repeat_factors, strict=True)
         )
 
     def train(self) -> None:

@@ -51,6 +51,7 @@ def _project_status() -> dict[str, Any]:
         "mask_rcnn_config": "configs/segmentation_mask_rcnn.yaml",
         "mask2former_config": "configs/segmentation_mask2former.yaml",
         "fashionpedia_config": ("configs/segmentation_mask2former_fashionpedia.yaml"),
+        "mixed_training_config": "configs/segmentation_mask2former_mixed.yaml",
         "mask2former_repo": "external/Mask2Former",
     }
     return {name: resolve_project_path(path).exists() for name, path in paths.items()}
