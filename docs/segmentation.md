@@ -181,12 +181,19 @@ The report checks:
 
 ```text
 PyTorch and CUDA availability
+active GPU compute capability and memory
 OpenCV
-Detectron2
+Detectron2 CUDA architecture compatibility
 Mask2Former
-converted COCO files
+DeepFashion2 and Fashionpedia converted COCO files
+Fashionpedia image directories and broken data-volume symlinks
 project config files
 ```
+
+When moving between GPU generations, update `TORCH_CUDA_ARCH_LIST` and rerun
+this check before training. A cloned system disk may retain CUDA extensions for
+the previous GPU while project symlinks point to a data disk that was not
+migrated.
 
 If Detectron2 or Mask2Former is missing, install those dependencies before
 running training.
