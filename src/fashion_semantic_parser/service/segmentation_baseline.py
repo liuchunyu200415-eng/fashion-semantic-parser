@@ -374,8 +374,13 @@ class Detectron2SegmentationBaseline:
 
             @classmethod
             def build_train_loader(cls, cfg: Any) -> Any:
-                """Build a loader that provides tensor masks expected by Mask2Former."""
-                mapper = mapper_class(cfg, True)
+                """Build a loader that accepts both polygon and RLE masks."""
+                mapper = _Mask2FormerMixedMaskDatasetMapper(
+                    mapper_class(cfg, True),
+                    detection_utils=detectron2["detection_utils"],
+                    transforms=detectron2["transforms"],
+                    torch=_load_torch_module(),
+                )
                 return build_detection_train_loader(cfg, mapper=mapper)
 
             @classmethod
@@ -393,6 +398,88 @@ class Detectron2SegmentationBaseline:
                 return mask2former["build_lr_scheduler"](cfg, optimizer)
 
         return Mask2FormerTrainer
+
+
+class _Mask2FormerMixedMaskDatasetMapper:
+    """Adapt Mask2Former's COCO mapper to mixed polygon and RLE masks.
+
+    The upstream mapper always asks Detectron2 for polygon masks. Detectron2
+    transforms an RLE annotation into a dense array first, so that path fails
+    before Mask2Former receives the sample. This adapter preserves the upstream
+    augmentations while constructing BitMasks for every supported COCO format.
+    """
+
+    def __init__(
+        self,
+        upstream_mapper: Any,
+        *,
+        detection_utils: Any,
+        transforms: Any,
+        torch: Any,
+    ) -> None:
+        """Store the configured upstream mapper and optional framework modules."""
+        self.upstream_mapper = upstream_mapper
+        self.detection_utils = detection_utils
+        self.transforms = transforms
+        self.torch = torch
+
+    def __call__(self, dataset_dict: dict[str, Any]) -> dict[str, Any]:
+        """Map one Detectron2 record without assuming polygon-only masks."""
+        import numpy as np
+
+        dataset_dict = copy.deepcopy(dataset_dict)
+        mapper = self.upstream_mapper
+        image = self.detection_utils.read_image(
+            dataset_dict["file_name"],
+            format=mapper.img_format,
+        )
+        self.detection_utils.check_image_size(dataset_dict, image)
+
+        padding_mask = np.ones(image.shape[:2])
+        image, applied_transforms = self.transforms.apply_transform_gens(
+            mapper.tfm_gens,
+            image,
+        )
+        padding_mask = applied_transforms.apply_segmentation(padding_mask)
+        padding_mask = ~padding_mask.astype(bool)
+        image_shape = image.shape[:2]
+        dataset_dict["image"] = self.torch.as_tensor(
+            np.ascontiguousarray(image.transpose(2, 0, 1))
+        )
+        dataset_dict["padding_mask"] = self.torch.as_tensor(
+            np.ascontiguousarray(padding_mask)
+        )
+
+        if not mapper.is_train:
+            dataset_dict.pop("annotations", None)
+            return dataset_dict
+
+        if "annotations" not in dataset_dict:
+            return dataset_dict
+
+        for annotation in dataset_dict["annotations"]:
+            annotation.pop("keypoints", None)
+        annotations = [
+            self.detection_utils.transform_instance_annotations(
+                annotation,
+                applied_transforms,
+                image_shape,
+            )
+            for annotation in dataset_dict.pop("annotations")
+            if annotation.get("iscrowd", 0) == 0
+        ]
+        instances = self.detection_utils.annotations_to_instances(
+            annotations,
+            image_shape,
+            mask_format="bitmask",
+        )
+        if instances.has("gt_masks"):
+            instances.gt_boxes = instances.gt_masks.get_bounding_boxes()
+        instances = self.detection_utils.filter_empty_instances(instances)
+        if instances.has("gt_masks"):
+            instances.gt_masks = instances.gt_masks.tensor
+        dataset_dict["instances"] = instances
+        return dataset_dict
 
 
 def convert_detectron2_instances(
@@ -458,7 +545,11 @@ def _load_detectron2_modules() -> dict[str, Any]:
     try:
         from detectron2 import model_zoo
         from detectron2.config import get_cfg
-        from detectron2.data import build_detection_train_loader
+        from detectron2.data import (
+            build_detection_train_loader,
+            detection_utils,
+            transforms,
+        )
         from detectron2.data.datasets import register_coco_instances
         from detectron2.engine import DefaultPredictor, DefaultTrainer
         from detectron2.evaluation import COCOEvaluator
@@ -475,6 +566,8 @@ def _load_detectron2_modules() -> dict[str, Any]:
         "DefaultPredictor": DefaultPredictor,
         "DefaultTrainer": DefaultTrainer,
         "build_detection_train_loader": build_detection_train_loader,
+        "detection_utils": detection_utils,
+        "transforms": transforms,
         "BitMasks": BitMasks,
         "get_cfg": get_cfg,
         "model_zoo": model_zoo,

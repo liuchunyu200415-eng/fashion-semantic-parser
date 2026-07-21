@@ -12,6 +12,7 @@ from fashion_semantic_parser.models.segmentation import SegmentationSubjectROI
 from fashion_semantic_parser.service.segmentation_baseline import (
     Detectron2SegmentationBaseline,
     SegmentationBaselineSettings,
+    _Mask2FormerMixedMaskDatasetMapper,
     _json_safe_config_value,
     _latency_summary,
     _masks_to_arrays,
@@ -180,6 +181,106 @@ class _FakeTorch:
 
 class _FakeDefaultTrainer:
     """Minimal trainer base for testing dynamic trainer subclasses."""
+
+
+class _FakeAppliedTransforms:
+    """Identity transforms for mixed-mask mapper tests."""
+
+    @staticmethod
+    def apply_segmentation(mask: Any) -> Any:
+        """Return an unchanged dense mask."""
+        return mask
+
+
+class _FakeTransformsModule:
+    """Detectron2 transform-module stand-in."""
+
+    @staticmethod
+    def apply_transform_gens(generators: Any, image: Any) -> tuple[Any, Any]:
+        """Return an unchanged image and identity annotation transforms."""
+        assert generators == ["resize-and-crop"]
+        return image, _FakeAppliedTransforms()
+
+
+class _FakeGroundTruthMasks:
+    """BitMasks-like object returned by Detectron2."""
+
+    tensor = "dense-mask-tensor"
+
+    @staticmethod
+    def get_bounding_boxes() -> str:
+        """Return mask-derived boxes."""
+        return "tight-mask-boxes"
+
+
+class _FakeMappedInstances:
+    """Instances-like object used by the mixed-mask mapper test."""
+
+    def __init__(self) -> None:
+        self.gt_masks: Any = _FakeGroundTruthMasks()
+        self.gt_boxes: Any = None
+
+    def has(self, field_name: str) -> bool:
+        """Return whether a field is present."""
+        return hasattr(self, field_name)
+
+
+class _FakeMixedMaskDetectionUtils:
+    """Record the mask format requested by the project mapper."""
+
+    requested_mask_format: str | None = None
+
+    @staticmethod
+    def read_image(file_name: str, format: str) -> np.ndarray:
+        """Return a deterministic fixture image."""
+        assert file_name == "fashionpedia.jpg"
+        assert format == "BGR"
+        return np.zeros((4, 5, 3), dtype=np.uint8)
+
+    @staticmethod
+    def check_image_size(dataset_dict: Any, image: Any) -> None:
+        """Accept the fixture dimensions."""
+        assert image.shape[:2] == (4, 5)
+
+    @staticmethod
+    def transform_instance_annotations(
+        annotation: dict[str, Any],
+        transforms: Any,
+        image_shape: tuple[int, int],
+    ) -> dict[str, Any]:
+        """Model Detectron2 converting transformed RLE into a dense array."""
+        assert image_shape == (4, 5)
+        if isinstance(annotation["segmentation"], dict):
+            annotation["segmentation"] = np.ones(image_shape, dtype=np.uint8)
+        return annotation
+
+    @classmethod
+    def annotations_to_instances(
+        cls,
+        annotations: list[dict[str, Any]],
+        image_shape: tuple[int, int],
+        *,
+        mask_format: str,
+    ) -> _FakeMappedInstances:
+        """Require the bitmask route for transformed RLE and polygons."""
+        cls.requested_mask_format = mask_format
+        assert annotations[0]["segmentation"].shape == image_shape
+        assert isinstance(annotations[1]["segmentation"], list)
+        return _FakeMappedInstances()
+
+    @staticmethod
+    def filter_empty_instances(instances: Any) -> Any:
+        """Return all fixture instances."""
+        return instances
+
+
+class _FakeTensorModule:
+    """Torch stand-in that preserves arrays for assertions."""
+
+    @staticmethod
+    def as_tensor(value: Any) -> Any:
+        """Return the contiguous NumPy input unchanged."""
+        return value
 
 
 class _FakeCOCOEvaluator:
@@ -359,6 +460,50 @@ def test_mask2former_fashionpedia_config_is_isolated_transfer_stage() -> None:
     assert config["output_dir"].endswith("fashionpedia/mask2former_r50_stage1")
     assert config["score_threshold"] == 0.0
     assert config["evaluate_after_training"] is False
+
+
+def test_mask2former_mixed_mask_mapper_accepts_rle_and_polygons() -> None:
+    """Fashionpedia mask formats must share Detectron2's bitmask path."""
+    upstream_mapper = SimpleNamespace(
+        img_format="BGR",
+        tfm_gens=["resize-and-crop"],
+        is_train=True,
+    )
+    mapper = _Mask2FormerMixedMaskDatasetMapper(
+        upstream_mapper,
+        detection_utils=_FakeMixedMaskDetectionUtils,
+        transforms=_FakeTransformsModule,
+        torch=_FakeTensorModule,
+    )
+    source = {
+        "file_name": "fashionpedia.jpg",
+        "height": 4,
+        "width": 5,
+        "annotations": [
+            {
+                "bbox": [0, 0, 3, 3],
+                "category_id": 5,
+                "iscrowd": 0,
+                "keypoints": [1, 1, 2],
+                "segmentation": {"size": [4, 5], "counts": "encoded"},
+            },
+            {
+                "bbox": [1, 1, 3, 3],
+                "category_id": 7,
+                "iscrowd": 0,
+                "segmentation": [[1, 1, 3, 1, 3, 3, 1, 3]],
+            },
+        ],
+    }
+
+    mapped = mapper(source)
+
+    assert _FakeMixedMaskDetectionUtils.requested_mask_format == "bitmask"
+    assert mapped["instances"].gt_boxes == "tight-mask-boxes"
+    assert mapped["instances"].gt_masks == "dense-mask-tensor"
+    assert mapped["image"].shape == (3, 4, 5)
+    assert mapped["padding_mask"].shape == (4, 5)
+    assert isinstance(source["annotations"][0]["segmentation"], dict)
 
 
 def test_mask2former_trainer_uses_target_optimizer_and_scheduler(

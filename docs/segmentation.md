@@ -118,6 +118,12 @@ category IDs to the existing PRD `1..8` contract, and writes project-relative
 image paths. Conversion fails when selected image files are missing; use
 `--audit-only` for annotation-only inspection.
 
+Fashionpedia contains both polygon and RLE masks. During training, the project
+keeps Mask2Former's resize-and-crop augmentation but routes the transformed
+annotations through Detectron2's bitmask conversion. This is required because
+the upstream COCO instance mapper assumes polygon-only input after augmentation.
+Do not discard RLE annotations or approximate them as polygons.
+
 These Fashionpedia outputs are intentionally independent from the current
 DeepFashion2 training JSON. Do not point the production config at them yet. The
 next data stage must build a mixed-data training policy with source balancing
