@@ -645,8 +645,11 @@ The current PyTorch deployment path does not meet the 50 ms target on an RTX
 `93.33 ms`, while Fashionpedia mask AP falls to `41.38`. Do not reduce
 resolution further as the default eight-class profile: shoes and accessory AP
 already fall by `9.92` and `7.38` points at `384/640`. Candidate-count
-optimization must preserve the eight-class metrics; otherwise use a faster GPU
-or an optimized runtime such as TensorRT.
+optimization also fails to close the gap: limiting each image from 100
+candidates to 20 reduces the `384/640` pipeline mean only to `74.17 ms` and p95
+to `88.57 ms`. Keep this limit as a diagnostic option rather than a validated
+default. Use a faster GPU or an optimized runtime such as TensorRT instead of
+further reducing resolution or candidates.
 
 ## Validated Deployment Profile
 
