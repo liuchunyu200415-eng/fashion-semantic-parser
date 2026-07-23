@@ -669,9 +669,13 @@ candidates/image    100 (Mask2Former default)
 On complete Fashionpedia validation at this resolution, mask AP is `44.04`;
 shoes, bag, and accessory AP are `30.88`, `25.35`, and `16.11`. At threshold
 `0.6`, direct mask matching gives precision `66.28`, recall `62.64`, and F1
-`64.41`. Full-resolution DeepFashion2 validation for the same checkpoint gives
-mask AP `60.58` and AP90 `38.60`; an exact `512/853 + FP16` DeepFashion2 rerun
-remains part of deployment acceptance.
+`64.41`. The exact `512/853 + FP16` DeepFashion2 500-image check gives mask AP
+`45.68`, AP85 `39.32`, and AP90 `32.41`. Compared with the same checkpoint's
+previous 500-image check, mask AP changes by `-0.56` and AP90 by `+1.09`;
+outerwear is the main resolution-sensitive class at `-3.95` AP. At threshold
+`0.6`, this check retains 1,111 predictions with precision `55.46`, recall
+`70.75`, F1 `62.18`, matched mean mask IoU `89.81`, and all-ground-truth
+IoU-at-0.85 rate `55.27`.
 
 The RTX 3090 latency measurements and the decision to defer runtime optimization
 are recorded in the preceding section. This accuracy profile deliberately keeps
@@ -759,6 +763,14 @@ PNG files at full resolution. Each comparison and the manifest record why the
 image was selected, using labels such as `sample:top` and `miss:outerwear`, so
 the review set is repeatable and does not hide known failure cases.
 
+The reviewed Fashionpedia contact sheet confirms actual predictions across all
+eight classes and no recurrence of the early full-background mask failure.
+Representative top, pants, skirt, outerwear, dress, shoes, and bag masks follow
+the visible garment region. The retained failure examples show distant or small
+object misses, outerwear/dress and dress/top confusion, missed bags, and unstable
+accessory detection. Treat this as functional visual evidence; use the recorded
+IoU metrics, not the scaled contact sheet, for strict boundary acceptance.
+
 ## FastAPI Inference Service
 
 The application uses `configs/app.yaml` to select the current deployment
@@ -770,7 +782,7 @@ On AutoDL, start the service from the project root:
 
 ```bash
 export OMP_NUM_THREADS=1
-export TORCH_CUDA_ARCH_LIST="8.9"
+export TORCH_CUDA_ARCH_LIST="8.6"
 export PYTHONPATH=$PWD/src:$PWD/external/Mask2Former:$PYTHONPATH
 
 python -m uvicorn fashion_semantic_parser.api.app:app \
