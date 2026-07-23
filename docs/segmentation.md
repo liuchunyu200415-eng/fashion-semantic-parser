@@ -198,6 +198,15 @@ before extending the same mixed run. If the old classes recover but shoes, bag,
 or accessory regress too far, adjust the source repeat factors based on the two
 validation suites rather than resuming either single-source run.
 
+The 2,000-iteration mixed checkpoint is the current eight-class candidate.
+Compared with the original DeepFashion2-backed checkpoint, full DeepFashion2
+mask AP is `60.58` versus `61.76`, while AP90 improves from `36.64` to `38.60`.
+Fashionpedia mask AP is `45.74`; shoes, bag, and accessory reach `35.96`,
+`25.60`, and `19.07`. Pants remains the largest source-domain tradeoff:
+DeepFashion2 pants AP is `59.68`, compared with `68.47` before eight-class
+transfer. Keep the 2,000-iteration checkpoint as the control rather than
+blindly extending the same 50:50 schedule.
+
 ## Check AutoDL Environment
 
 After pulling the latest code on AutoDL, check whether the segmentation training
@@ -563,6 +572,28 @@ contour extraction; converting every pixel of all 100 Mask2Former queries into
 nested Python lists is intentionally avoided.
 
 Use `--precision fp16` to benchmark CUDA autocast on GPUs with Tensor Cores.
+
+Mask2Former and Detectron2 retain up to 100 candidate instances per image by
+default. Fashion product images usually contain far fewer garments. Deployment
+experiments may cap this post-model candidate set without changing checkpoint
+weights:
+
+```bash
+python scripts/benchmark_segmentation_latency.py \
+  --config configs/segmentation_mask2former_fashionpedia.yaml \
+  --weights outputs/segmentation/mixed/mask2former_r50_consolidation/model_0001999.pth \
+  --val-json data/processed/autodl/segmentation/fashionpedia_validation.json \
+  --precision fp16 \
+  --min-size-test 384 \
+  --max-size-test 640 \
+  --score-threshold 0.6 \
+  --detections-per-image 20
+```
+
+The default remains unchanged so formal COCO evaluations stay comparable.
+Before adopting a lower limit, rerun the matching validation configuration and
+confirm that aggregate metrics and shoes, bag, and accessory recall do not
+regress.
 FP32 remains the default, and the output report records the selected precision
 so latency artifacts remain comparable. Run the same image sample, warmup count,
 measurement count, score threshold, and weights when comparing FP32 with FP16.
@@ -599,6 +630,23 @@ When latency is benchmarked with `--precision fp16`, pass the same precision to
 evaluation, prediction, and visualization. This keeps reported mask quality on
 the exact autocast inference path used by the deployment candidate instead of
 silently evaluating FP32 outputs.
+
+### Eight-class deployment candidate
+
+At FP16 and `512/853`, the 2,000-iteration mixed checkpoint reaches Fashionpedia
+mask AP `44.04`. At score threshold `0.6`, direct mask matching reports
+precision `66.28`, recall `62.64`, F1 `64.41`, and ground-truth IoU-at-0.85 rate
+`32.82`. The same threshold preserves more rare-class recall than `0.7` for a
+negligible `0.10` F1 difference.
+
+The current PyTorch deployment path does not meet the 50 ms target on an RTX
+3090. The `512/853` profile records pipeline mean `85.37 ms` and p95
+`146.30 ms`; reducing to `384/640` still records mean `78.38 ms` and p95
+`93.33 ms`, while Fashionpedia mask AP falls to `41.38`. Do not reduce
+resolution further as the default eight-class profile: shoes and accessory AP
+already fall by `9.92` and `7.38` points at `384/640`. Candidate-count
+optimization must preserve the eight-class metrics; otherwise use a faster GPU
+or an optimized runtime such as TensorRT.
 
 ## Validated Deployment Profile
 

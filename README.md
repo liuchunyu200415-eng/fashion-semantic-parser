@@ -4,7 +4,7 @@
 
 ## 项目状态
 
-当前阶段聚焦 PRD 3.1.1 服饰实例分割功能。已经完成 DeepFashion2 到 COCO 的数据转换、Mask2Former 训练与完整验证集评估、FP16 部署配置、延迟基准、可视化验收，以及可复用模型实例的 FastAPI 推理接口。Fashionpedia 八类迁移已使鞋子、包包和配饰获得非零正式指标，但单源微调造成了明显的 DeepFashion2 遗忘。工程现已加入带来源平衡的 DeepFashion2 + Fashionpedia 混合训练配置；混合 checkpoint 的双数据集指标和部署验收仍未完成。
+当前阶段聚焦 PRD 3.1.1 服饰实例分割功能。已经完成 DeepFashion2 与 Fashionpedia 到统一八类 COCO 数据的转换、Mask2Former 混合训练、双数据集完整验证、FP16 精度与延迟实验、可视化验收，以及可复用模型实例的 FastAPI 推理接口。2,000 次混合训练 checkpoint 在完整 DeepFashion2 上达到 mask AP `60.58`，在 Fashionpedia 上达到 mask AP `45.74`，鞋子、包包和配饰均获得非零正式指标。当前剩余部署问题是八类模型在 RTX 3090 上尚未达到 50 ms 延迟目标；工程正在验证候选实例上限和后续 TensorRT/更高性能 GPU 路径。
 
 分割服务入口为 `POST /v1/segment`，返回每个服饰实例的 Mask、边界框、类别和置信度。现有 `POST /v1/query` 也已接入同一分割服务，但语言引导定位、属性提取和最终问答仍属于后续 PRD 模块，不能由当前分割结果替代。
 

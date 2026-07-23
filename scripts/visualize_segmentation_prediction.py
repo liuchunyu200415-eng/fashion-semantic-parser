@@ -61,6 +61,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--score-threshold", type=float, default=None)
     parser.add_argument("--min-size-test", type=int, default=None)
     parser.add_argument("--max-size-test", type=int, default=None)
+    parser.add_argument("--detections-per-image", type=int, default=None)
     parser.add_argument(
         "--subject-roi",
         default=None,
@@ -91,6 +92,7 @@ def main() -> None:
         "score_threshold": args.score_threshold,
         "min_size_test": args.min_size_test,
         "max_size_test": args.max_size_test,
+        "detections_per_image": args.detections_per_image,
     }
     raw_config.update(
         {key: value for key, value in overrides.items() if value is not None}

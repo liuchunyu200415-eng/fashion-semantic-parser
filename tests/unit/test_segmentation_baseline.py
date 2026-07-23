@@ -347,6 +347,7 @@ def test_segmentation_baseline_settings_defaults() -> None:
     assert settings.eval_period == 0
     assert settings.min_size_test is None
     assert settings.max_size_test is None
+    assert settings.detections_per_image is None
     assert settings.precision == "fp32"
     assert settings.resume is False
     assert settings.evaluate_after_training is True
@@ -477,6 +478,21 @@ def test_inference_size_defaults_preserve_model_config() -> None:
     assert cfg.INPUT.MIN_SIZE_TEST == (640, 800)
     assert cfg.INPUT.MAX_SIZE_TEST == 1333
     assert _json_safe_config_value(cfg.INPUT.MIN_SIZE_TEST) == [640, 800]
+
+
+def test_detection_limit_overrides_detectron2_default() -> None:
+    """Deployment may reduce returned candidates without changing model weights."""
+    baseline = Detectron2SegmentationBaseline(
+        SegmentationBaselineSettings(detections_per_image=20)
+    )
+    cfg = SimpleNamespace(
+        TEST=SimpleNamespace(DETECTIONS_PER_IMAGE=100),
+        MODEL=SimpleNamespace(),
+    )
+
+    baseline._apply_model_head_settings(cfg)
+
+    assert cfg.TEST.DETECTIONS_PER_IMAGE == 20
 
 
 def test_inference_predictor_is_initialized_once(monkeypatch: Any) -> None:

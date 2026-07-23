@@ -54,6 +54,7 @@ class SegmentationBaselineSettings(BaseModel):
     score_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     min_size_test: int | None = Field(default=None, ge=1)
     max_size_test: int | None = Field(default=None, ge=1)
+    detections_per_image: int | None = Field(default=None, ge=1)
     precision: Literal["fp32", "fp16"] = "fp32"
     device: str = "cuda"
     resume: bool = False
@@ -327,6 +328,9 @@ class Detectron2SegmentationBaseline:
                 "min_size_test": _json_safe_config_value(cfg.INPUT.MIN_SIZE_TEST),
                 "max_size_test": _json_safe_config_value(cfg.INPUT.MAX_SIZE_TEST),
             },
+            "detections_per_image": _json_safe_config_value(
+                cfg.TEST.DETECTIONS_PER_IMAGE
+            ),
             "excluded_from_timing": ["model_load", "weight_load", "image_decode"],
             "predictor_ms": _latency_summary(predictor_latencies_ms),
             "pipeline_ms": _latency_summary(pipeline_latencies_ms),
@@ -365,6 +369,8 @@ class Detectron2SegmentationBaseline:
 
     def _apply_model_head_settings(self, cfg: Any) -> None:
         """Apply class-count and score-threshold settings across model families."""
+        if self.settings.detections_per_image is not None:
+            cfg.TEST.DETECTIONS_PER_IMAGE = self.settings.detections_per_image
         if hasattr(cfg.MODEL, "ROI_HEADS"):
             cfg.MODEL.ROI_HEADS.NUM_CLASSES = self.settings.num_classes
             cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = self.settings.score_threshold
