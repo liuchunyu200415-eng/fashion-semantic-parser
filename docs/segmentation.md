@@ -814,6 +814,22 @@ every retained instance. An optional manual subject ROI remains available:
 }
 ```
 
+The recorded AutoDL API acceptance run used the default deployment config and
+one saved high-confidence prediction example for each PRD category. All eight
+requests returned HTTP 200 and detected their expected category; every returned
+instance had a non-empty mask and a valid positive-area box. The report is
+stored at:
+
+```text
+outputs/segmentation/mixed/api_eight_class_acceptance/report_v2.json
+```
+
+This verifies configuration, checkpoint loading, eight-class label mapping,
+serialization, and response schema end to end. Because the images were selected
+from high-confidence offline predictions, it is a functional API check rather
+than an unbiased accuracy estimate; use the complete COCO and direct-IoU
+evaluations for model quality.
+
 `POST /v1/query` invokes the same segmentation runtime and returns both compact
 `regions` and the complete `segmentation` object. Its answer text only reports
 that PRD 3.1.1 segmentation completed; it does not claim that language-guided
