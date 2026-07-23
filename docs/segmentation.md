@@ -29,8 +29,9 @@ DeepFashion2 currently covers garment categories that map to:
 top, pants, skirt, outerwear, dress
 ```
 
-Shoes, bags, and accessories require additional data sources before they can be
-trained with the same quality.
+Fashionpedia supplies labelled shoes, bags, and accessories. The balanced mixed
+training stage uses both datasets and produces one model with all eight output
+classes.
 
 ## Convert DeepFashion2 To COCO
 
@@ -124,11 +125,10 @@ annotations through Detectron2's bitmask conversion. This is required because
 the upstream COCO instance mapper assumes polygon-only input after augmentation.
 Do not discard RLE annotations or approximate them as polygons.
 
-These Fashionpedia outputs are intentionally independent from the current
-DeepFashion2 training JSON. Do not point the production config at them yet. The
-next data stage must build a mixed-data training policy with source balancing
-and keep both source validation sets separate. Fashionpedia annotations use CC
-BY 4.0, while each image remains subject to its original source license; retain
+The Fashionpedia outputs remain independent from the DeepFashion2 COCO files.
+The mixed training config combines them through source-balanced sampling while
+keeping both validation sets separate. Fashionpedia annotations use CC BY 4.0,
+while each image remains subject to its original source license; retain
 attribution and review image rights before non-research deployment.
 
 ## Establish The Fashionpedia Transfer Baseline
@@ -504,18 +504,18 @@ AllGTIoU85Rate       fraction of all ground-truth items matched at IoU at least 
 
 Per-category forms such as `MatchedMeanIoU-top` and `AllGTIoU85Rate-dress` are
 included. Aggregate values only include categories that have ground-truth
-coverage, so the current unlabelled shoes, bag, and accessory classes do not
-become false positives in the five-class DeepFashion2 report. Use
+coverage, so shoes, bag, and accessory do not become false positives in a
+DeepFashion2-only report. Use
 `MatchedMeanIoU` to describe mask-boundary quality, and always report `Recall50`
 or `AllGTIoU85Rate` beside it so missed garments are visible. Run COCO AP at
 score threshold `0.0`; run a second direct-IoU report at the selected deployment
-threshold. The validated five-class deployment profile uses `0.8`:
+threshold. The current eight-class deployment profile uses `0.6`:
 
 ```bash
 python scripts/evaluate_segmentation_baseline.py \
-  --config configs/segmentation_mask2former.yaml \
-  --weights outputs/segmentation/mask2former_r50_official_stage2/model_official_0004999.pth \
-  --score-threshold 0.8
+  --config configs/segmentation_mask2former_deployment.yaml \
+  --weights outputs/segmentation/mixed/mask2former_r50_consolidation/model_0001999.pth \
+  --score-threshold 0.6
 ```
 
 If full inference has already completed at score threshold `0.0`, reuse the COCO
@@ -531,10 +531,10 @@ Then calculate direct IoU at the deployment threshold entirely offline:
 
 ```bash
 python scripts/evaluate_segmentation_predictions.py \
-  --val-json data/processed/autodl/segmentation/deepfashion2_validation.json \
-  --predictions outputs/segmentation/mask2former_r50_official_stage2/inference/coco_instances_results.json \
-  --score-threshold 0.1 \
-  --output outputs/segmentation/mask2former_r50_official_stage2/direct_mask_iou.json
+  --val-json data/processed/autodl/segmentation/fashionpedia_validation.json \
+  --predictions outputs/segmentation/mixed/eval_2k_fashionpedia_512_fp16/inference/coco_instances_results.json \
+  --score-threshold 0.6 \
+  --output outputs/segmentation/mixed/eval_2k_fashionpedia_512_fp16/direct_mask_iou_score_060.json
 ```
 
 This path loads neither Mask2Former weights nor images and does not require a
@@ -651,36 +651,32 @@ to `88.57 ms`. Keep this limit as a diagnostic option rather than a validated
 default. Use a faster GPU or an optimized runtime such as TensorRT instead of
 further reducing resolution or candidates.
 
-## Validated Deployment Profile
+## Current Eight-Class Deployment Profile
 
-The current five-class DeepFashion2-backed deployment profile is stored in
-`configs/segmentation_mask2former_deployment.yaml`. It fixes the selected
-checkpoint and the exact measured inference settings:
+`configs/segmentation_mask2former_deployment.yaml` now selects the
+2,000-iteration balanced mixed checkpoint and the chosen eight-class inference
+settings:
 
 ```text
-weights             model_official_0004999.pth
+weights             model_0001999.pth
 precision           fp16
-minimum test size   384
-maximum test size   640
-score threshold     0.8
+minimum test size   512
+maximum test size   853
+score threshold     0.6
+candidates/image    100 (Mask2Former default)
 ```
 
-On an NVIDIA GeForce RTX 4080 SUPER, using 100 source images, 20 warmup runs,
-and 200 measured runs, the loaded-model pipeline produced mean `49.82 ms`,
-median `47.38 ms`, p95 `57.17 ms`, and `20.07 FPS`. Model/weight loading and
-image decoding were excluded. The mean meets the 50 ms target, but p95 does not;
-the result is hardware- and protocol-specific rather than a universal latency
-guarantee.
+On complete Fashionpedia validation at this resolution, mask AP is `44.04`;
+shoes, bag, and accessory AP are `30.88`, `25.35`, and `16.11`. At threshold
+`0.6`, direct mask matching gives precision `66.28`, recall `62.64`, and F1
+`64.41`. Full-resolution DeepFashion2 validation for the same checkpoint gives
+mask AP `60.58` and AP90 `38.60`; an exact `512/853 + FP16` DeepFashion2 rerun
+remains part of deployment acceptance.
 
-Full-validation FP16 accuracy at this resolution was mask AP `57.09`, AP50
-`75.36`, AP75 `65.92`, AP85 `47.95`, and AP90 `28.48`. At deployment threshold
-`0.8`, direct matched mask IoU was `88.41%`, precision was `77.94%`, recall was
-`76.62%`, and F1 was `77.28%`. Unmatched ground-truth masks count as zero in
-AllGTMeanIoU, which was `67.74%`.
-
-Threshold `0.75` retains more skirt and outerwear predictions with essentially
-the same F1, but its measured full-pipeline mean was `51.20 ms`; keep it as a
-higher-recall experiment rather than the latency-compliant default.
+The RTX 3090 latency measurements and the decision to defer runtime optimization
+are recorded in the preceding section. This accuracy profile deliberately keeps
+the 100-candidate default because a 20-candidate cap did not provide enough
+latency improvement to justify a new accuracy regression test.
 
 Run the recorded deployment profile without repeating its flags:
 
@@ -691,11 +687,10 @@ python scripts/predict_segmentation.py \
   --output outputs/segmentation/example_deployment_prediction.json
 ```
 
-The validated accuracy currently covers top, pants, skirt, outerwear, and dress.
-DeepFashion2 has no ground truth for shoes, bag, or accessory, so the full
-eight-class PRD contract still requires additional labelled data. Outerwear is
-also the weakest covered category and remains a priority for data and model
-improvement.
+The current checkpoint has formal non-zero validation metrics for all eight PRD
+classes. Bag and accessory remain the weakest Fashionpedia categories, while
+DeepFashion2 pants remains the largest cross-domain regression; keep both in
+the visual acceptance sample.
 
 ### Experimental category-conflict filter
 
@@ -750,13 +745,13 @@ manifest:
 
 ```bash
 python scripts/visualize_segmentation_acceptance.py \
-  --val-json data/processed/autodl/segmentation/deepfashion2_validation_full.json \
-  --predictions outputs/segmentation/eval_official_05000_384_fp16_full/inference/coco_instances_results.json \
+  --val-json data/processed/autodl/segmentation/fashionpedia_validation.json \
+  --predictions outputs/segmentation/mixed/eval_2k_fashionpedia_512_fp16/inference/coco_instances_results.json \
   --image-root . \
-  --score-threshold 0.8 \
+  --score-threshold 0.6 \
   --samples-per-category 2 \
   --misses-per-category 1 \
-  --output-dir outputs/segmentation/eval_official_05000_384_fp16_full/acceptance_visuals
+  --output-dir outputs/segmentation/mixed/eval_2k_fashionpedia_512_fp16/acceptance_visuals
 ```
 
 Review `acceptance_visuals/contact_sheet.jpg` first, then inspect the individual
@@ -766,7 +761,7 @@ the review set is repeatable and does not hide known failure cases.
 
 ## FastAPI Inference Service
 
-The application uses `configs/app.yaml` to select the validated deployment
+The application uses `configs/app.yaml` to select the current deployment
 profile. The Detectron2/Mask2Former predictor is loaded on the first valid
 request and then reused, so model and weight loading are not repeated for every
 image.

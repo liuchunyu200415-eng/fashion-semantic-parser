@@ -530,22 +530,24 @@ def test_mask2former_project_config_uses_pretrained_weights() -> None:
 
 
 def test_mask2former_deployment_config_records_validated_profile() -> None:
-    """Deployment config should preserve the measured speed-quality profile."""
+    """Deployment config should preserve the selected eight-class profile."""
     config_path = Path("configs/segmentation_mask2former_deployment.yaml")
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
 
     assert config["model_family"] == "mask2former"
-    assert config["weights"].endswith("model_official_0004999.pth")
-    assert config["val_json"].endswith("deepfashion2_validation_full.json")
-    assert config["score_threshold"] == 0.8
-    assert config["min_size_test"] == 384
-    assert config["max_size_test"] == 640
+    assert config["weights"].endswith("model_0001999.pth")
+    assert config["val_json"].endswith("fashionpedia_validation.json")
+    assert config["num_classes"] == 8
+    assert config["score_threshold"] == 0.6
+    assert config["min_size_test"] == 512
+    assert config["max_size_test"] == 853
+    assert "detections_per_image" not in config
     assert config["precision"] == "fp16"
     assert config["device"] == "cuda"
 
 
 def test_mask2former_fashionpedia_config_is_isolated_transfer_stage() -> None:
-    """Eight-class transfer should not overwrite the validated deployment run."""
+    """Transfer training should stay isolated until mixed consolidation."""
     config_path = Path("configs/segmentation_mask2former_fashionpedia.yaml")
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
 

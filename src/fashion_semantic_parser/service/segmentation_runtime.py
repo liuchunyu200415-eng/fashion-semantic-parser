@@ -45,7 +45,7 @@ PredictorFactory = Callable[[SegmentationBaselineSettings], SegmentationPredicto
 
 
 class GarmentSegmentationService:
-    """Load and reuse the validated PRD 3.1.1 segmentation predictor."""
+    """Load and reuse the configured PRD 3.1.1 segmentation predictor."""
 
     def __init__(
         self,

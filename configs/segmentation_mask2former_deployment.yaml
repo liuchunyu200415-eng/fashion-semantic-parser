@@ -1,17 +1,19 @@
-# Validated PRD 3.1.1 five-class deployment profile for RTX 4080 SUPER.
+# Current PRD 3.1.1 eight-class deployment profile.
+#
+# The checkpoint comes from balanced DeepFashion2 + Fashionpedia consolidation.
 # Keep formal COCO evaluation at score threshold 0.0; this file is for inference.
 model_family: mask2former
 train_json: data/processed/autodl/segmentation/deepfashion2_train.json
-val_json: data/processed/autodl/segmentation/deepfashion2_validation_full.json
+val_json: data/processed/autodl/segmentation/fashionpedia_validation.json
 image_root: .
-output_dir: outputs/segmentation/mask2former_r50_deployment
+output_dir: outputs/segmentation/mixed/mask2former_r50_eight_class_deployment
 config_source: local
 config_file: external/Mask2Former/configs/coco/instance-segmentation/maskformer2_R50_bs16_50ep.yaml
-weights: outputs/segmentation/mask2former_r50_official_stage2/model_official_0004999.pth
+weights: outputs/segmentation/mixed/mask2former_r50_consolidation/model_0001999.pth
 num_classes: 8
 num_workers: 2
-score_threshold: 0.8
-min_size_test: 384
-max_size_test: 640
+score_threshold: 0.6
+min_size_test: 512
+max_size_test: 853
 precision: fp16
 device: cuda
