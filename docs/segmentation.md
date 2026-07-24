@@ -511,6 +511,14 @@ or `AllGTIoU85Rate` beside it so missed garments are visible. Run COCO AP at
 score threshold `0.0`; run a second direct-IoU report at the selected deployment
 threshold. The current eight-class deployment profile uses `0.6`:
 
+The same direct metrics are also reported by standard COCO ground-truth mask
+area: `small` is below `32 x 32` pixels, `medium` is from `32 x 32` up to
+`96 x 96` pixels, and `large` is at least `96 x 96` pixels. For example,
+`MatchedMeanIoU-small` measures boundary quality among matched small objects,
+while `AllGTMeanIoU-small`, `Recall50-small`, and
+`AllGTIoU85Rate-small` also expose missed small objects. These direct size
+metrics are distinct from COCO `APs`, `APm`, and `APl`.
+
 ```bash
 python scripts/evaluate_segmentation_baseline.py \
   --config configs/segmentation_mask2former_deployment.yaml \

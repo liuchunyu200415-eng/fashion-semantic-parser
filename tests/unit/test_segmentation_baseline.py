@@ -313,7 +313,11 @@ class _FakeCOCOMaskIoUResult:
             maxDets=[1, 10, 100],
         )
         self._gts = {
-            (10, 1): [{"id": 1}, {"id": 2}, {"id": 3}],
+            (10, 1): [
+                {"id": 1, "area": 400},
+                {"id": 2, "area": 2500},
+                {"id": 3, "area": 10000},
+            ],
             (10, 2): [],
         }
         self._dts = {
@@ -732,6 +736,11 @@ def test_coco_matched_mask_iou_metrics_include_per_category_results() -> None:
     assert np.isclose(results["AllGTMeanIoU"], 160.0 / 3.0)
     assert np.isclose(results["Recall50-top"], 200.0 / 3.0)
     assert np.isnan(results["MatchedMeanIoU-pants"])
+    assert np.isclose(results["MatchedMeanIoU-small"], 90.0)
+    assert np.isclose(results["AllGTMeanIoU-medium"], 70.0)
+    assert results["GroundTruthCount-large"] == 1.0
+    assert results["MatchedCount-large"] == 0.0
+    assert np.isclose(results["AllGTMeanIoU-large"], 0.0)
 
 
 def test_latency_summary_reports_median_tail_and_throughput() -> None:

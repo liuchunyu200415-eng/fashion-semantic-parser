@@ -2,6 +2,12 @@
 
 from typing import Any
 
+_COCO_AREA_RANGES = {
+    "small": (0.0, float(32**2)),
+    "medium": (float(32**2), float(96**2)),
+    "large": (float(96**2), float("inf")),
+}
+
 
 def _coco_ap_at_iou(
     coco_eval: Any,
@@ -63,10 +69,7 @@ def _coco_matched_mask_iou_metrics(
         target_iou_threshold=target_iou_threshold,
     )
 
-    if class_names is None:
-        return results
-
-    per_category_metrics = (
+    area_metrics = (
         "MatchedCount",
         "GroundTruthCount",
         "MatchedMeanIoU",
@@ -74,6 +77,28 @@ def _coco_matched_mask_iou_metrics(
         "Recall50",
         "AllGTIoU85Rate",
     )
+    for area_name in _COCO_AREA_RANGES:
+        matched_ious = [
+            iou
+            for stats in evaluable_stats
+            for iou in stats["area_stats"][area_name]["matched_ious"]
+        ]
+        area_summary = _summarize_mask_iou_matches(
+            matched_ious=matched_ious,
+            ground_truth_count=sum(
+                stats["area_stats"][area_name]["ground_truth_count"]
+                for stats in evaluable_stats
+            ),
+            prediction_count=0,
+            match_iou_threshold=match_iou_threshold,
+            target_iou_threshold=target_iou_threshold,
+        )
+        for metric_name in area_metrics:
+            results[f"{metric_name}-{area_name}"] = area_summary[metric_name]
+
+    if class_names is None:
+        return results
+
     for category_index, category_name in enumerate(class_names):
         if category_index >= len(category_stats):
             break
@@ -85,7 +110,7 @@ def _coco_matched_mask_iou_metrics(
             match_iou_threshold=match_iou_threshold,
             target_iou_threshold=target_iou_threshold,
         )
-        for metric_name in per_category_metrics:
+        for metric_name in area_metrics:
             results[f"{metric_name}-{category_name}"] = category_summary[metric_name]
     return results
 
@@ -101,6 +126,10 @@ def _coco_category_mask_iou_stats(
     ground_truth_count = 0
     prediction_count = 0
     matched_ious: list[float] = []
+    area_stats = {
+        area_name: {"matched_ious": [], "ground_truth_count": 0}
+        for area_name in _COCO_AREA_RANGES
+    }
     max_detections = int(coco_eval.params.maxDets[-1])
 
     for image_id in coco_eval.params.imgIds:
@@ -114,6 +143,11 @@ def _coco_category_mask_iou_stats(
         detection_count = min(len(coco_eval._dts.get(key, [])), max_detections)
         ground_truth_count += len(valid_gt_indices)
         prediction_count += detection_count
+        valid_ground_truth = [ground_truth[index] for index in valid_gt_indices]
+        for annotation in valid_ground_truth:
+            area_name = _coco_area_name(annotation)
+            if area_name is not None:
+                area_stats[area_name]["ground_truth_count"] += 1
         if not valid_gt_indices or detection_count == 0:
             continue
 
@@ -126,17 +160,40 @@ def _coco_category_mask_iou_stats(
                 continue
             iou_matrix = iou_matrix.reshape(detection_count, len(ground_truth))
         iou_matrix = iou_matrix[:detection_count, valid_gt_indices]
-        matched_ious.extend(_greedy_match_ious(iou_matrix, min_iou=match_iou_threshold))
+        matches = _greedy_match_iou_pairs(
+            iou_matrix,
+            min_iou=match_iou_threshold,
+        )
+        matched_ious.extend(iou for _, _, iou in matches)
+        for _, ground_truth_index, iou in matches:
+            area_name = _coco_area_name(valid_ground_truth[ground_truth_index])
+            if area_name is not None:
+                area_stats[area_name]["matched_ious"].append(iou)
 
     return {
         "matched_ious": matched_ious,
         "ground_truth_count": ground_truth_count,
         "prediction_count": prediction_count,
+        "area_stats": area_stats,
     }
 
 
 def _greedy_match_ious(iou_matrix: Any, min_iou: float = 0.50) -> list[float]:
     """Greedily make one-to-one prediction/ground-truth matches by mask IoU."""
+    return [
+        iou
+        for _, _, iou in _greedy_match_iou_pairs(
+            iou_matrix,
+            min_iou=min_iou,
+        )
+    ]
+
+
+def _greedy_match_iou_pairs(
+    iou_matrix: Any,
+    min_iou: float = 0.50,
+) -> list[tuple[int, int, float]]:
+    """Return one-to-one prediction, ground-truth, and mask-IoU matches."""
     import numpy as np
 
     matrix = np.asarray(iou_matrix, dtype=float)
@@ -150,7 +207,7 @@ def _greedy_match_ious(iou_matrix: Any, min_iou: float = 0.50) -> list[float]:
     order = np.argsort(-candidate_ious, kind="stable")
     used_predictions: set[int] = set()
     used_ground_truth: set[int] = set()
-    matched_ious: list[float] = []
+    matches: list[tuple[int, int, float]] = []
     for candidate_index in order:
         prediction_index, ground_truth_index = candidates[candidate_index]
         prediction_index = int(prediction_index)
@@ -162,8 +219,29 @@ def _greedy_match_ious(iou_matrix: Any, min_iou: float = 0.50) -> list[float]:
             continue
         used_predictions.add(prediction_index)
         used_ground_truth.add(ground_truth_index)
-        matched_ious.append(float(matrix[prediction_index, ground_truth_index]))
-    return matched_ious
+        matches.append(
+            (
+                prediction_index,
+                ground_truth_index,
+                float(matrix[prediction_index, ground_truth_index]),
+            )
+        )
+    return matches
+
+
+def _coco_area_name(annotation: dict[str, Any]) -> str | None:
+    """Map a COCO annotation to its standard small, medium, or large bucket."""
+    area = annotation.get("area")
+    if area is None:
+        bbox = annotation.get("bbox")
+        if bbox is None or len(bbox) < 4:
+            return None
+        area = float(bbox[2]) * float(bbox[3])
+    area = float(area)
+    for area_name, (minimum, maximum) in _COCO_AREA_RANGES.items():
+        if minimum <= area < maximum:
+            return area_name
+    return None
 
 
 def _summarize_mask_iou_matches(
