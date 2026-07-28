@@ -23,9 +23,15 @@ from fashion_semantic_parser.service.segmentation_runtime import (
 class _FakePredictor:
     def __init__(self) -> None:
         self.image_paths: list[Path] = []
+        self.subject_rois: list[SegmentationSubjectROI | None] = []
 
-    def predict_image(self, image_path: Path) -> SegmentationPrediction:
+    def predict_image(
+        self,
+        image_path: Path,
+        subject_roi: SegmentationSubjectROI | None = None,
+    ) -> SegmentationPrediction:
         self.image_paths.append(image_path)
+        self.subject_rois.append(subject_roi)
         return SegmentationPrediction(
             image_path="README.md",
             instances=[
@@ -36,7 +42,11 @@ class _FakePredictor:
 
 
 class _MissingAssetPredictor:
-    def predict_image(self, image_path: Path) -> SegmentationPrediction:
+    def predict_image(
+        self,
+        image_path: Path,
+        subject_roi: SegmentationSubjectROI | None = None,
+    ) -> SegmentationPrediction:
         raise FileNotFoundError("missing model weights")
 
 
@@ -81,25 +91,29 @@ def test_runtime_loads_config_once_and_reuses_predictor() -> None:
     assert loaded_settings[0].score_threshold == 0.6
     assert loaded_settings[0].min_size_test == 512
     assert loaded_settings[0].max_size_test == 853
+    assert loaded_settings[0].subject_roi_margin == 0.15
     assert loaded_settings[0].precision == "fp16"
     assert len(fake_predictor.image_paths) == 2
 
 
-def test_runtime_applies_optional_subject_roi() -> None:
-    """Manual ROI remains available at the service boundary."""
-    service = GarmentSegmentationService(predictor=_FakePredictor())
+def test_runtime_forwards_optional_subject_roi_to_predictor() -> None:
+    """Manual ROI should trigger crop-aware model inference."""
+    predictor = _FakePredictor()
+    service = GarmentSegmentationService(predictor=predictor)
+    subject_roi = SegmentationSubjectROI(
+        x_min=0.0,
+        y_min=0.0,
+        x_max=100.0,
+        y_max=100.0,
+    )
 
     prediction = service.segment(
         "README.md",
-        subject_roi=SegmentationSubjectROI(
-            x_min=0.0,
-            y_min=0.0,
-            x_max=100.0,
-            y_max=100.0,
-        ),
+        subject_roi=subject_roi,
     )
 
-    assert [instance.category_label for instance in prediction.instances] == ["top"]
+    assert predictor.subject_rois == [subject_roi]
+    assert len(prediction.instances) == 2
 
 
 def test_subject_roi_rejects_reversed_coordinates() -> None:

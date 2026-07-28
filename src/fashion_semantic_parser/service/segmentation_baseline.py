@@ -55,6 +55,7 @@ class SegmentationBaselineSettings(BaseModel):
     min_size_test: int | None = Field(default=None, ge=1)
     max_size_test: int | None = Field(default=None, ge=1)
     detections_per_image: int | None = Field(default=None, ge=1)
+    subject_roi_margin: float = Field(default=0.15, ge=0.0, le=1.0)
     precision: Literal["fp32", "fp16"] = "fp32"
     device: str = "cuda"
     resume: bool = False
@@ -208,12 +209,23 @@ class Detectron2SegmentationBaseline:
             precision=self.settings.precision,
         )
 
-    def predict_image(self, image_path: Path) -> SegmentationPrediction:
-        """Run instance segmentation on one RGB product image."""
-        predictor = self._get_predictor()
+    def predict_image(
+        self,
+        image_path: Path,
+        subject_roi: SegmentationSubjectROI | None = None,
+    ) -> SegmentationPrediction:
+        """Run segmentation on one image or an expanded subject crop."""
         image = cv2.imread(str(image_path))
         if image is None:
             raise ValueError(f"Unable to read image: {image_path}")
+        coordinate_offset = (0.0, 0.0)
+        if subject_roi is not None:
+            image, coordinate_offset = _crop_image_to_subject_roi(
+                image,
+                subject_roi,
+                margin=self.settings.subject_roi_margin,
+            )
+        predictor = self._get_predictor()
 
         with self._inference_lock:
             outputs = _run_predictor_with_precision(
@@ -231,6 +243,7 @@ class Detectron2SegmentationBaseline:
             instances=instances,
             image_path=image_path,
             score_threshold=self.settings.score_threshold,
+            coordinate_offset=coordinate_offset,
         )
 
     def _get_predictor(self, detectron2: dict[str, Any] | None = None) -> Any:
@@ -548,6 +561,7 @@ def convert_detectron2_instances(
     instances: Any,
     image_path: Path,
     score_threshold: float = 0.0,
+    coordinate_offset: tuple[float, float] = (0.0, 0.0),
 ) -> SegmentationPrediction:
     """Convert Detectron2 Instances to project prediction schema."""
     instances = _filter_detectron2_instances_by_score(instances, score_threshold)
@@ -557,6 +571,7 @@ def convert_detectron2_instances(
     boxes = _boxes_with_mask_fallback(instances, mask_list)
     masks = _masks_to_polygons(mask_list)
     predictions: list[SegmentationInstance] = []
+    x_offset, y_offset = coordinate_offset
 
     for index, class_index in enumerate(classes):
         if float(scores[index]) < score_threshold:
@@ -569,12 +584,16 @@ def convert_detectron2_instances(
                 category_label=category.english_name,
                 confidence=float(scores[index]),
                 box=SegmentationBoundingBox(
-                    x_min=float(x_min),
-                    y_min=float(y_min),
-                    x_max=float(x_max),
-                    y_max=float(y_max),
+                    x_min=float(x_min) + x_offset,
+                    y_min=float(y_min) + y_offset,
+                    x_max=float(x_max) + x_offset,
+                    y_max=float(y_max) + y_offset,
                 ),
-                mask=masks[index],
+                mask=_offset_mask_polygons(
+                    masks[index],
+                    x_offset=x_offset,
+                    y_offset=y_offset,
+                ),
             )
         )
 
@@ -600,6 +619,45 @@ def filter_prediction_by_subject_roi(
         image_path=prediction.image_path,
         instances=filtered_instances,
     )
+
+
+def _crop_image_to_subject_roi(
+    image: Any,
+    subject_roi: SegmentationSubjectROI,
+    *,
+    margin: float,
+) -> tuple[Any, tuple[float, float]]:
+    """Crop an expanded ROI and return its original-image coordinate offset."""
+    image_height, image_width = image.shape[:2]
+    roi_width = subject_roi.x_max - subject_roi.x_min
+    roi_height = subject_roi.y_max - subject_roi.y_min
+    x_margin = roi_width * margin
+    y_margin = roi_height * margin
+
+    x_min = max(0, int(math.floor(subject_roi.x_min - x_margin)))
+    y_min = max(0, int(math.floor(subject_roi.y_min - y_margin)))
+    x_max = min(image_width, int(math.ceil(subject_roi.x_max + x_margin)))
+    y_max = min(image_height, int(math.ceil(subject_roi.y_max + y_margin)))
+    if x_max <= x_min or y_max <= y_min:
+        raise ValueError("Subject ROI does not overlap the input image.")
+
+    return image[y_min:y_max, x_min:x_max], (float(x_min), float(y_min))
+
+
+def _offset_mask_polygons(
+    polygons: list[list[float]],
+    *,
+    x_offset: float,
+    y_offset: float,
+) -> list[list[float]]:
+    """Map crop-relative polygon coordinates back to the original image."""
+    return [
+        [
+            coordinate + (x_offset if index % 2 == 0 else y_offset)
+            for index, coordinate in enumerate(polygon)
+        ]
+        for polygon in polygons
+    ]
 
 
 def _load_detectron2_modules() -> dict[str, Any]:

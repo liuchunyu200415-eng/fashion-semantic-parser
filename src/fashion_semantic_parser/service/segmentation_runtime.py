@@ -19,14 +19,17 @@ from fashion_semantic_parser.models.segmentation import (
 from fashion_semantic_parser.service.segmentation_baseline import (
     Detectron2SegmentationBaseline,
     SegmentationBaselineSettings,
-    filter_prediction_by_subject_roi,
 )
 
 
 class SegmentationPredictor(Protocol):
     """Minimal predictor contract used by the service layer."""
 
-    def predict_image(self, image_path: Path) -> SegmentationPrediction:
+    def predict_image(
+        self,
+        image_path: Path,
+        subject_roi: SegmentationSubjectROI | None = None,
+    ) -> SegmentationPrediction:
         """Predict garment instances for one image."""
 
 
@@ -69,10 +72,13 @@ class GarmentSegmentationService:
         image_path: str,
         subject_roi: SegmentationSubjectROI | None = None,
     ) -> SegmentationPrediction:
-        """Segment one project-relative image and optionally apply a subject ROI."""
+        """Segment one image, optionally using a cropped subject ROI."""
         resolved_image_path = self._resolve_image_path(image_path)
         try:
-            prediction = self._get_predictor().predict_image(resolved_image_path)
+            prediction = self._get_predictor().predict_image(
+                resolved_image_path,
+                subject_roi=subject_roi,
+            )
         except (ConfigurationError, ModelNotReadyError):
             raise
         except OSError as error:
@@ -81,14 +87,11 @@ class GarmentSegmentationService:
             ) from error
         except ValueError as error:
             message = str(error)
-            if "Unable to read image" in message:
+            if "Unable to read image" in message or "Subject ROI" in message:
                 raise InvalidImageInputError(message) from error
             raise ModelNotReadyError(
                 f"Segmentation runtime is not usable: {message}"
             ) from error
-
-        if subject_roi is not None:
-            prediction = filter_prediction_by_subject_roi(prediction, subject_roi)
         return prediction
 
     def _get_predictor(self) -> SegmentationPredictor:

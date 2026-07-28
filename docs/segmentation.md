@@ -446,7 +446,7 @@ The visualization draws translucent predicted masks, mask-derived boxes, class
 labels, and confidence scores.
 
 If a validation image contains a full scene, provide a subject/person ROI to
-focus diagnosis on the model region:
+crop the model region before inference:
 
 ```bash
 python scripts/visualize_segmentation_prediction.py \
@@ -455,12 +455,17 @@ python scripts/visualize_segmentation_prediction.py \
   --weights outputs/segmentation/mask2former_r50/model_final.pth \
   --score-threshold 0.05 \
   --subject-roi 170,80,330,520 \
+  --subject-roi-margin 0.15 \
   --output outputs/segmentation/visualizations/val_000001_roi.png \
   --json-output outputs/segmentation/visualizations/val_000001_roi.json
 ```
 
 The ROI format is `x_min,y_min,x_max,y_max` in image pixel coordinates. This is
-a manual stand-in for the planned person/subject detector stage.
+a manual stand-in for the planned person/subject detector stage. The runtime
+adds 15% context by default, runs Mask2Former on the crop, and maps mask and box
+coordinates back to the original image. Because the configured test resize is
+applied to the smaller crop, garments receive more input pixels than they do in
+whole-scene inference. Keep enough context to preserve shoes and hand-held bags.
 
 ## Evaluate Existing Weights
 
@@ -808,7 +813,8 @@ curl -X POST http://127.0.0.1:8000/v1/segment \
 
 The response uses `SegmentationPrediction` and includes `category_id`,
 `category_label`, `confidence`, an `xyxy` box, and polygon mask coordinates for
-every retained instance. An optional manual subject ROI remains available:
+every retained instance. An optional manual subject ROI enables crop-aware
+inference:
 
 ```json
 {
@@ -821,6 +827,12 @@ every retained instance. An optional manual subject ROI remains available:
   }
 }
 ```
+
+The service expands this ROI using `subject_roi_margin` from the deployment
+config, segments the crop, then returns all coordinates in the original-image
+coordinate system. Requests without `subject_roi` retain whole-image behavior.
+Automatic person detection is still a separate follow-up experiment; ROI
+cropping must not be reported as automatic until that detector is connected.
 
 The recorded AutoDL API acceptance run used the default deployment config and
 one saved high-confidence prediction example for each PRD category. All eight

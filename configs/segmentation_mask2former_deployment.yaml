@@ -15,5 +15,6 @@ num_workers: 2
 score_threshold: 0.6
 min_size_test: 512
 max_size_test: 853
+subject_roi_margin: 0.15
 precision: fp16
 device: cuda

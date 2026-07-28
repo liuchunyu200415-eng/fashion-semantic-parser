@@ -14,6 +14,7 @@ from fashion_semantic_parser.service.segmentation_baseline import (
     Detectron2SegmentationBaseline,
     SegmentationBaselineSettings,
     _Mask2FormerMixedMaskDatasetMapper,
+    _crop_image_to_subject_roi,
     _json_safe_config_value,
     _latency_summary,
     _masks_to_arrays,
@@ -842,6 +843,62 @@ def test_convert_detectron2_instances_filters_low_scores() -> None:
     assert len(prediction.instances) == 1
     assert prediction.instances[0].category_label == "dress"
     assert prediction.instances[0].confidence == 0.91
+
+
+def test_convert_detectron2_instances_maps_crop_coordinates_to_full_image() -> None:
+    """ROI predictions should retain original-image box and mask coordinates."""
+    prediction = convert_detectron2_instances(
+        instances=_FakeInstances(),
+        image_path="data/raw/example.jpg",
+        coordinate_offset=(50.0, 70.0),
+    )
+
+    instance = prediction.instances[0]
+    assert instance.box.model_dump() == {
+        "x_min": 60.0,
+        "y_min": 90.0,
+        "x_max": 160.0,
+        "y_max": 290.0,
+    }
+    polygon = instance.mask[0]
+    assert min(polygon[0::2]) >= 50.0
+    assert min(polygon[1::2]) >= 70.0
+
+
+def test_crop_image_to_subject_roi_expands_and_clamps_bounds() -> None:
+    """ROI crop should add context without leaving the source image."""
+    image = np.zeros((100, 200, 3), dtype=np.uint8)
+
+    crop, offset = _crop_image_to_subject_roi(
+        image,
+        SegmentationSubjectROI(
+            x_min=50.0,
+            y_min=20.0,
+            x_max=100.0,
+            y_max=80.0,
+        ),
+        margin=0.1,
+    )
+
+    assert crop.shape == (72, 60, 3)
+    assert offset == (45.0, 14.0)
+
+
+def test_crop_image_to_subject_roi_rejects_non_overlapping_region() -> None:
+    """An ROI outside the image cannot produce a usable model input."""
+    image = np.zeros((100, 200, 3), dtype=np.uint8)
+
+    with pytest.raises(ValueError, match="does not overlap"):
+        _crop_image_to_subject_roi(
+            image,
+            SegmentationSubjectROI(
+                x_min=210.0,
+                y_min=20.0,
+                x_max=260.0,
+                y_max=80.0,
+            ),
+            margin=0.0,
+        )
 
 
 def test_mask_conversion_keeps_pixels_in_dense_arrays() -> None:

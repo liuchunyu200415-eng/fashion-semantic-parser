@@ -65,7 +65,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--subject-roi",
         default=None,
-        help="Optional subject ROI as x_min,y_min,x_max,y_max.",
+        help="Optional subject crop as x_min,y_min,x_max,y_max.",
+    )
+    parser.add_argument(
+        "--subject-roi-margin",
+        type=float,
+        default=None,
+        help="Fractional context added around each side of the subject ROI.",
     )
     parser.add_argument("--alpha", type=float, default=0.45)
     return parser.parse_args()
@@ -80,7 +86,6 @@ def main() -> None:
     from fashion_semantic_parser.service.segmentation_baseline import (
         Detectron2SegmentationBaseline,
         SegmentationBaselineSettings,
-        filter_prediction_by_subject_roi,
     )
     from fashion_semantic_parser.models.segmentation import SegmentationSubjectROI
 
@@ -93,20 +98,22 @@ def main() -> None:
         "min_size_test": args.min_size_test,
         "max_size_test": args.max_size_test,
         "detections_per_image": args.detections_per_image,
+        "subject_roi_margin": args.subject_roi_margin,
     }
     raw_config.update(
         {key: value for key, value in overrides.items() if value is not None}
     )
     settings = SegmentationBaselineSettings.model_validate(raw_config)
     image_path = resolve_project_path(args.image)
-    prediction = Detectron2SegmentationBaseline(settings).predict_image(image_path)
     subject_roi = (
         _parse_subject_roi(args.subject_roi, SegmentationSubjectROI)
         if args.subject_roi
         else None
     )
-    if subject_roi:
-        prediction = filter_prediction_by_subject_roi(prediction, subject_roi)
+    prediction = Detectron2SegmentationBaseline(settings).predict_image(
+        image_path,
+        subject_roi=subject_roi,
+    )
 
     image = cv2.imread(str(image_path))
     if image is None:
