@@ -50,6 +50,16 @@ class _MissingAssetPredictor:
         raise FileNotFoundError("missing model weights")
 
 
+class _FakeSubjectROIDetector:
+    def __init__(self, roi: SegmentationSubjectROI | None) -> None:
+        self.roi = roi
+        self.image_paths: list[Path] = []
+
+    def detect(self, image_path: Path) -> SegmentationSubjectROI | None:
+        self.image_paths.append(image_path)
+        return self.roi
+
+
 def _instance(
     label: str,
     category_id: int,
@@ -114,6 +124,47 @@ def test_runtime_forwards_optional_subject_roi_to_predictor() -> None:
 
     assert predictor.subject_rois == [subject_roi]
     assert len(prediction.instances) == 2
+    assert prediction.subject_roi == subject_roi
+    assert prediction.subject_roi_source == "manual"
+
+
+def test_runtime_detects_automatic_subject_roi_before_segmentation() -> None:
+    """Automatic mode should detect once and segment the detected crop."""
+    subject_roi = SegmentationSubjectROI(
+        x_min=10.0,
+        y_min=20.0,
+        x_max=200.0,
+        y_max=300.0,
+    )
+    detector = _FakeSubjectROIDetector(subject_roi)
+    predictor = _FakePredictor()
+    service = GarmentSegmentationService(
+        predictor=predictor,
+        subject_roi_detector=detector,
+    )
+
+    prediction = service.segment("README.md", auto_subject_roi=True)
+
+    assert len(detector.image_paths) == 1
+    assert predictor.subject_rois == [subject_roi]
+    assert prediction.subject_roi == subject_roi
+    assert prediction.subject_roi_source == "detected"
+
+
+def test_runtime_falls_back_to_full_image_when_person_is_not_detected() -> None:
+    """Product-only images should remain usable without a person box."""
+    detector = _FakeSubjectROIDetector(None)
+    predictor = _FakePredictor()
+    service = GarmentSegmentationService(
+        predictor=predictor,
+        subject_roi_detector=detector,
+    )
+
+    prediction = service.segment("README.md", auto_subject_roi=True)
+
+    assert predictor.subject_rois == [None]
+    assert prediction.subject_roi is None
+    assert prediction.subject_roi_source == "full_image_fallback"
 
 
 def test_subject_roi_rejects_reversed_coordinates() -> None:

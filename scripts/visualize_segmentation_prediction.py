@@ -73,6 +73,13 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Fractional context added around each side of the subject ROI.",
     )
+    parser.add_argument(
+        "--auto-subject-roi",
+        action="store_true",
+        help="Detect the primary COCO person and segment its expanded crop.",
+    )
+    parser.add_argument("--person-score-threshold", type=float, default=0.7)
+    parser.add_argument("--person-min-area-ratio", type=float, default=0.005)
     parser.add_argument("--alpha", type=float, default=0.45)
     return parser.parse_args()
 
@@ -88,6 +95,13 @@ def main() -> None:
         SegmentationBaselineSettings,
     )
     from fashion_semantic_parser.models.segmentation import SegmentationSubjectROI
+    from fashion_semantic_parser.service.subject_roi import (
+        Detectron2PersonROIDetector,
+        PersonROIDetectorSettings,
+    )
+
+    if args.subject_roi and args.auto_subject_roi:
+        raise ValueError("--subject-roi and --auto-subject-roi cannot be used together")
 
     raw_config = _read_yaml(resolve_project_path(args.config))
     overrides = {
@@ -110,9 +124,26 @@ def main() -> None:
         if args.subject_roi
         else None
     )
+    roi_source = "manual" if subject_roi is not None else None
+    if args.auto_subject_roi:
+        subject_roi = Detectron2PersonROIDetector(
+            PersonROIDetectorSettings(
+                score_threshold=args.person_score_threshold,
+                min_area_ratio=args.person_min_area_ratio,
+                device=settings.device,
+                precision=settings.precision,
+            )
+        ).detect(image_path)
+        roi_source = "detected" if subject_roi is not None else "full_image_fallback"
     prediction = Detectron2SegmentationBaseline(settings).predict_image(
         image_path,
         subject_roi=subject_roi,
+    )
+    prediction = prediction.model_copy(
+        update={
+            "subject_roi": subject_roi,
+            "subject_roi_source": roi_source,
+        }
     )
 
     image = cv2.imread(str(image_path))

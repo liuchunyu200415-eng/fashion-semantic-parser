@@ -20,6 +20,10 @@ from fashion_semantic_parser.service.segmentation_baseline import (
     Detectron2SegmentationBaseline,
     SegmentationBaselineSettings,
 )
+from fashion_semantic_parser.service.subject_roi import (
+    Detectron2PersonROIDetector,
+    PersonROIDetectorSettings,
+)
 
 
 class SegmentationPredictor(Protocol):
@@ -40,11 +44,23 @@ class SegmentationRuntime(Protocol):
         self,
         image_path: str,
         subject_roi: SegmentationSubjectROI | None = None,
+        auto_subject_roi: bool = False,
     ) -> SegmentationPrediction:
         """Segment one project-relative image."""
 
 
+class SubjectROIDetector(Protocol):
+    """Minimal subject detector contract used by the runtime."""
+
+    def detect(self, image_path: Path) -> SegmentationSubjectROI | None:
+        """Return the primary subject box or None."""
+
+
 PredictorFactory = Callable[[SegmentationBaselineSettings], SegmentationPredictor]
+SubjectROIDetectorFactory = Callable[
+    [SegmentationBaselineSettings],
+    SubjectROIDetector,
+]
 
 
 class GarmentSegmentationService:
@@ -56,6 +72,8 @@ class GarmentSegmentationService:
         *,
         predictor: SegmentationPredictor | None = None,
         predictor_factory: PredictorFactory = Detectron2SegmentationBaseline,
+        subject_roi_detector: SubjectROIDetector | None = None,
+        subject_roi_detector_factory: SubjectROIDetectorFactory | None = None,
     ) -> None:
         """Create a lazy segmentation runtime.
 
@@ -66,18 +84,37 @@ class GarmentSegmentationService:
         self._predictor = predictor
         self._predictor_factory = predictor_factory
         self._predictor_lock = Lock()
+        self._subject_roi_detector = subject_roi_detector
+        self._subject_roi_detector_factory = (
+            subject_roi_detector_factory or _build_default_subject_roi_detector
+        )
+        self._subject_roi_detector_lock = Lock()
 
     def segment(
         self,
         image_path: str,
         subject_roi: SegmentationSubjectROI | None = None,
+        auto_subject_roi: bool = False,
     ) -> SegmentationPrediction:
         """Segment one image, optionally using a cropped subject ROI."""
+        if subject_roi is not None and auto_subject_roi:
+            raise InvalidImageInputError(
+                "subject_roi and auto_subject_roi cannot be used together"
+            )
         resolved_image_path = self._resolve_image_path(image_path)
         try:
+            effective_roi = subject_roi
+            roi_source = "manual" if subject_roi is not None else None
+            if auto_subject_roi:
+                effective_roi = self._get_subject_roi_detector().detect(
+                    resolved_image_path
+                )
+                roi_source = (
+                    "detected" if effective_roi is not None else "full_image_fallback"
+                )
             prediction = self._get_predictor().predict_image(
                 resolved_image_path,
-                subject_roi=subject_roi,
+                subject_roi=effective_roi,
             )
         except (ConfigurationError, ModelNotReadyError):
             raise
@@ -92,7 +129,12 @@ class GarmentSegmentationService:
             raise ModelNotReadyError(
                 f"Segmentation runtime is not usable: {message}"
             ) from error
-        return prediction
+        return prediction.model_copy(
+            update={
+                "subject_roi": effective_roi,
+                "subject_roi_source": roi_source,
+            }
+        )
 
     def _get_predictor(self) -> SegmentationPredictor:
         """Initialize the configured predictor once in a thread-safe manner."""
@@ -103,6 +145,18 @@ class GarmentSegmentationService:
             if self._predictor is None:
                 self._predictor = self._predictor_factory(self._load_settings())
         return self._predictor
+
+    def _get_subject_roi_detector(self) -> SubjectROIDetector:
+        """Initialize the optional person detector once."""
+        if self._subject_roi_detector is not None:
+            return self._subject_roi_detector
+
+        with self._subject_roi_detector_lock:
+            if self._subject_roi_detector is None:
+                self._subject_roi_detector = self._subject_roi_detector_factory(
+                    self._load_settings()
+                )
+        return self._subject_roi_detector
 
     def _load_settings(self) -> SegmentationBaselineSettings:
         """Load the deployment YAML used by CLI and API inference."""
@@ -144,3 +198,15 @@ class GarmentSegmentationService:
         if not resolved_path.is_file():
             raise InvalidImageInputError(f"Input image not found: {image_path}")
         return resolved_path
+
+
+def _build_default_subject_roi_detector(
+    settings: SegmentationBaselineSettings,
+) -> SubjectROIDetector:
+    """Build a COCO person detector aligned with segmentation device settings."""
+    return Detectron2PersonROIDetector(
+        PersonROIDetectorSettings(
+            device=settings.device,
+            precision=settings.precision,
+        )
+    )

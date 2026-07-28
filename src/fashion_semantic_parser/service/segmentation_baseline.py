@@ -618,6 +618,8 @@ def filter_prediction_by_subject_roi(
     return SegmentationPrediction(
         image_path=prediction.image_path,
         instances=filtered_instances,
+        subject_roi=prediction.subject_roi,
+        subject_roi_source=prediction.subject_roi_source,
     )
 
 

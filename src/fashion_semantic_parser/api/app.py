@@ -66,6 +66,7 @@ def create_app(
             return segmentation_service.segment(
                 request.image_path,
                 subject_roi=request.subject_roi,
+                auto_subject_roi=request.auto_subject_roi,
             )
         except FashionParserError as error:
             raise _http_error(error) from error

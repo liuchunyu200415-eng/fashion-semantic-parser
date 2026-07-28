@@ -467,6 +467,24 @@ coordinates back to the original image. Because the configured test resize is
 applied to the smaller crop, garments receive more input pixels than they do in
 whole-scene inference. Keep enough context to preserve shoes and hand-held bags.
 
+To replace the oracle/manual box with a detected person box, use:
+
+```bash
+python scripts/visualize_segmentation_prediction.py \
+  data/raw/fashionpedia/test/example.jpg \
+  --config configs/segmentation_mask2former_deployment.yaml \
+  --weights outputs/segmentation/mixed/mask2former_r50_consolidation/model_0001999.pth \
+  --auto-subject-roi \
+  --output outputs/segmentation/visualizations/example_auto_roi.png \
+  --json-output outputs/segmentation/visualizations/example_auto_roi.json
+```
+
+Automatic mode uses Detectron2's COCO Faster R-CNN to find `person`
+detections, then ranks them by visible area, confidence, and proximity to the
+image center. The selected person is expanded by `subject_roi_margin`. If no
+person passes the threshold, segmentation falls back to the full image. The
+first run may download the official COCO detector checkpoint.
+
 ## Evaluate Existing Weights
 
 To compare mask quality without retraining, evaluate a saved checkpoint at
@@ -830,9 +848,23 @@ inference:
 
 The service expands this ROI using `subject_roi_margin` from the deployment
 config, segments the crop, then returns all coordinates in the original-image
-coordinate system. Requests without `subject_roi` retain whole-image behavior.
-Automatic person detection is still a separate follow-up experiment; ROI
-cropping must not be reported as automatic until that detector is connected.
+coordinate system. Requests without either ROI mode retain whole-image
+behavior.
+
+Automatic person-crop inference can be requested explicitly:
+
+```json
+{
+  "image_path": "data/raw/example.jpg",
+  "auto_subject_roi": true
+}
+```
+
+`subject_roi` and `auto_subject_roi` are mutually exclusive. The response adds
+`subject_roi` and `subject_roi_source`; the source is `manual`, `detected`, or
+`full_image_fallback`. Automatic ROI is an optional accuracy experiment and
+adds a second model pass, so its latency must be measured separately from the
+existing Mask2Former-only benchmark.
 
 The recorded AutoDL API acceptance run used the default deployment config and
 one saved high-confidence prediction example for each PRD category. All eight
