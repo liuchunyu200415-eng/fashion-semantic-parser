@@ -106,6 +106,24 @@ def test_runtime_loads_config_once_and_reuses_predictor() -> None:
     assert len(fake_predictor.image_paths) == 2
 
 
+def test_runtime_applies_segmentation_settings_overrides() -> None:
+    """Benchmark CLIs should override selected deployment settings safely."""
+    loaded_settings: list[Any] = []
+
+    def predictor_factory(settings: Any) -> _FakePredictor:
+        loaded_settings.append(settings)
+        return _FakePredictor()
+
+    service = GarmentSegmentationService(
+        predictor_factory=predictor_factory,
+        settings_overrides={"subject_roi_margin": 0.35},
+    )
+
+    service.segment("README.md")
+
+    assert loaded_settings[0].subject_roi_margin == 0.35
+
+
 def test_runtime_forwards_optional_subject_roi_to_predictor() -> None:
     """Manual ROI should trigger crop-aware model inference."""
     predictor = _FakePredictor()

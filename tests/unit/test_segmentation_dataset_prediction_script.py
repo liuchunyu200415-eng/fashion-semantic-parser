@@ -2,12 +2,15 @@
 
 from pathlib import Path
 
+import pytest
+
 from fashion_semantic_parser.models.segmentation import (
     SegmentationBoundingBox,
     SegmentationInstance,
     SegmentationPrediction,
 )
 from scripts.predict_segmentation_dataset import (
+    _build_settings_overrides,
     _summary_path,
     prediction_to_coco_results,
 )
@@ -74,3 +77,31 @@ def test_dataset_prediction_summary_uses_output_stem() -> None:
     output = Path("outputs/auto_roi_predictions.json")
 
     assert _summary_path(output) == Path("outputs/auto_roi_predictions_summary.json")
+
+
+def test_dataset_prediction_builds_auto_roi_margin_override() -> None:
+    """Automatic ROI experiments should override context without new configs."""
+    assert _build_settings_overrides(
+        roi_mode="auto",
+        subject_roi_margin=0.25,
+    ) == {"subject_roi_margin": 0.25}
+
+
+@pytest.mark.parametrize(
+    ("roi_mode", "margin"),
+    [
+        ("full", 0.25),
+        ("auto", -0.1),
+        ("auto", 1.1),
+    ],
+)
+def test_dataset_prediction_rejects_invalid_roi_margin(
+    roi_mode: str,
+    margin: float,
+) -> None:
+    """Margin sweeps should fail fast for misleading or invalid settings."""
+    with pytest.raises(ValueError, match="subject-roi-margin"):
+        _build_settings_overrides(
+            roi_mode=roi_mode,
+            subject_roi_margin=margin,
+        )

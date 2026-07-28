@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from threading import Lock
-from typing import Callable, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 import yaml
 
@@ -74,6 +74,7 @@ class GarmentSegmentationService:
         predictor_factory: PredictorFactory = Detectron2SegmentationBaseline,
         subject_roi_detector: SubjectROIDetector | None = None,
         subject_roi_detector_factory: SubjectROIDetectorFactory | None = None,
+        settings_overrides: Mapping[str, Any] | None = None,
     ) -> None:
         """Create a lazy segmentation runtime.
 
@@ -89,6 +90,7 @@ class GarmentSegmentationService:
             subject_roi_detector_factory or _build_default_subject_roi_detector
         )
         self._subject_roi_detector_lock = Lock()
+        self._settings_overrides = dict(settings_overrides or {})
 
     def segment(
         self,
@@ -180,6 +182,7 @@ class GarmentSegmentationService:
             raise ConfigurationError(
                 f"Expected a mapping in segmentation config: {self.config_path}"
             )
+        raw_config.update(self._settings_overrides)
 
         try:
             return SegmentationBaselineSettings.model_validate(raw_config)

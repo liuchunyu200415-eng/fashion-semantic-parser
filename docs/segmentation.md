@@ -505,6 +505,21 @@ python scripts/predict_segmentation_dataset.py \
 The script prints image count, elapsed time, ETA, and ROI-source counts every 25
 images. Evaluate both outputs with the same score threshold:
 
+To test whether more crop context preserves hand-held bags, override the
+deployment config's default `0.15` margin without creating another config:
+
+```bash
+python scripts/predict_segmentation_dataset.py \
+  --config configs/segmentation_mask2former_deployment.yaml \
+  --val-json data/processed/autodl/segmentation/fashionpedia_validation.json \
+  --roi-mode auto \
+  --subject-roi-margin 0.25 \
+  --output outputs/segmentation/roi_eval/predictions_auto_margin_025.json
+```
+
+The summary JSON records `subject_roi_margin_override`; a null value means the
+config file's margin was used.
+
 ```bash
 python scripts/evaluate_segmentation_predictions.py \
   --val-json data/processed/autodl/segmentation/fashionpedia_validation.json \

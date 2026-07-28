@@ -33,6 +33,15 @@ def parse_args() -> argparse.Namespace:
         choices=["full", "auto"],
         default="auto",
     )
+    parser.add_argument(
+        "--subject-roi-margin",
+        type=float,
+        default=None,
+        help=(
+            "Override the fractional context around automatic person ROIs; "
+            "otherwise use the config value."
+        ),
+    )
     parser.add_argument("--image-limit", type=int, default=None)
     parser.add_argument("--progress-every", type=int, default=25)
     return parser.parse_args()
@@ -52,6 +61,10 @@ def main() -> None:
         raise ValueError("--image-limit must be at least one.")
     if args.progress_every < 1:
         raise ValueError("--progress-every must be at least one.")
+    settings_overrides = _build_settings_overrides(
+        roi_mode=args.roi_mode,
+        subject_roi_margin=args.subject_roi_margin,
+    )
 
     validation_path = _resolve_path(args.val_json, resolve_project_path)
     output_path = resolve_project_path(args.output)
@@ -60,7 +73,10 @@ def main() -> None:
     if args.image_limit is not None:
         images = images[: args.image_limit]
 
-    service = GarmentSegmentationService(args.config)
+    service = GarmentSegmentationService(
+        args.config,
+        settings_overrides=settings_overrides,
+    )
     predictions: list[dict[str, Any]] = []
     roi_sources: Counter[str] = Counter()
     started_at = time.perf_counter()
@@ -97,6 +113,7 @@ def main() -> None:
         "validation_json": str(validation_path),
         "predictions_json": str(output_path),
         "roi_mode": args.roi_mode,
+        "subject_roi_margin_override": args.subject_roi_margin,
         "image_count": len(images),
         "prediction_count": len(predictions),
         "roi_source_counts": dict(sorted(roi_sources.items())),
@@ -182,6 +199,21 @@ def _print_progress(
 def _summary_path(output_path: Path) -> Path:
     """Place the run summary beside its COCO prediction list."""
     return output_path.with_name(f"{output_path.stem}_summary.json")
+
+
+def _build_settings_overrides(
+    *,
+    roi_mode: str,
+    subject_roi_margin: float | None,
+) -> dict[str, float]:
+    """Validate and build optional segmentation config overrides."""
+    if subject_roi_margin is None:
+        return {}
+    if roi_mode != "auto":
+        raise ValueError("--subject-roi-margin requires --roi-mode auto.")
+    if not 0.0 <= subject_roi_margin <= 1.0:
+        raise ValueError("--subject-roi-margin must be between 0 and 1.")
+    return {"subject_roi_margin": subject_roi_margin}
 
 
 def _resolve_path(path: str, resolver: Any) -> Path:
