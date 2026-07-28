@@ -158,14 +158,11 @@ def draw_prediction(
         color = COLORS_BY_CATEGORY.get(instance["category_label"], (255, 255, 255))
         _draw_mask_polygons(overlay, instance["mask"], color)
 
-    if subject_roi:
-        _clear_overlay_outside_roi(overlay, result, subject_roi)
-
     result = cv2.addWeighted(overlay, alpha, result, 1.0 - alpha, 0)
 
     for instance in prediction["instances"]:
         color = COLORS_BY_CATEGORY.get(instance["category_label"], (255, 255, 255))
-        _draw_box_and_label(result, instance, color, subject_roi)
+        _draw_box_and_label(result, instance, color)
 
     if subject_roi:
         _draw_subject_roi(result, subject_roi)
@@ -188,7 +185,6 @@ def _draw_box_and_label(
     image: np.ndarray,
     instance: dict[str, Any],
     color: tuple[int, int, int],
-    clip_roi: dict[str, float] | None = None,
 ) -> None:
     """Draw one xyxy bounding box and compact label."""
     box = instance["box"]
@@ -196,14 +192,6 @@ def _draw_box_and_label(
     y_min = int(round(box["y_min"]))
     x_max = int(round(box["x_max"]))
     y_max = int(round(box["y_max"]))
-    if clip_roi:
-        x_min, y_min, x_max, y_max = _clip_box_to_roi(
-            x_min,
-            y_min,
-            x_max,
-            y_max,
-            clip_roi,
-        )
     if x_max <= x_min or y_max <= y_min:
         return
     cv2.rectangle(image, (x_min, y_min), (x_max, y_max), color, 2)
@@ -235,35 +223,6 @@ def _draw_box_and_label(
     )
 
 
-def _clear_overlay_outside_roi(
-    overlay: np.ndarray,
-    original: np.ndarray,
-    roi: dict[str, float],
-) -> None:
-    """Restore overlay pixels outside the subject ROI to the original image."""
-    x_min, y_min, x_max, y_max = _roi_to_int_bounds(roi)
-    mask = np.zeros(overlay.shape[:2], dtype=np.uint8)
-    mask[y_min:y_max, x_min:x_max] = 1
-    overlay[mask == 0] = original[mask == 0]
-
-
-def _clip_box_to_roi(
-    x_min: int,
-    y_min: int,
-    x_max: int,
-    y_max: int,
-    roi: dict[str, float],
-) -> tuple[int, int, int, int]:
-    """Clip one box to the subject ROI for visualization."""
-    roi_x_min, roi_y_min, roi_x_max, roi_y_max = _roi_to_int_bounds(roi)
-    return (
-        max(x_min, roi_x_min),
-        max(y_min, roi_y_min),
-        min(x_max, roi_x_max),
-        min(y_max, roi_y_max),
-    )
-
-
 def _roi_to_int_bounds(roi: dict[str, float]) -> tuple[int, int, int, int]:
     """Convert ROI coordinates to integer pixel bounds."""
     return (
@@ -275,7 +234,7 @@ def _roi_to_int_bounds(roi: dict[str, float]) -> tuple[int, int, int, int]:
 
 
 def _draw_subject_roi(image: np.ndarray, roi: dict[str, float]) -> None:
-    """Draw the subject/person ROI used to filter predictions."""
+    """Draw the unexpanded subject/person ROI used to create the crop."""
     x_min, y_min, x_max, y_max = _roi_to_int_bounds(roi)
     color = (255, 255, 255)
     cv2.rectangle(image, (x_min, y_min), (x_max, y_max), color, 2)
