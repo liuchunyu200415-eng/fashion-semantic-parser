@@ -485,6 +485,39 @@ image center. The selected person is expanded by `subject_roi_margin`. If no
 person passes the threshold, segmentation falls back to the full image. The
 first run may download the official COCO detector checkpoint.
 
+For an unbiased paired comparison, generate full-image and automatic-ROI
+predictions through the same polygon conversion path:
+
+```bash
+python scripts/predict_segmentation_dataset.py \
+  --config configs/segmentation_mask2former_deployment.yaml \
+  --val-json data/processed/autodl/segmentation/fashionpedia_validation.json \
+  --roi-mode full \
+  --output outputs/segmentation/roi_eval/predictions_full.json
+
+python scripts/predict_segmentation_dataset.py \
+  --config configs/segmentation_mask2former_deployment.yaml \
+  --val-json data/processed/autodl/segmentation/fashionpedia_validation.json \
+  --roi-mode auto \
+  --output outputs/segmentation/roi_eval/predictions_auto.json
+```
+
+The script prints image count, elapsed time, ETA, and ROI-source counts every 25
+images. Evaluate both outputs with the same score threshold:
+
+```bash
+python scripts/evaluate_segmentation_predictions.py \
+  --val-json data/processed/autodl/segmentation/fashionpedia_validation.json \
+  --predictions outputs/segmentation/roi_eval/predictions_auto.json \
+  --score-threshold 0.6 \
+  --output outputs/segmentation/roi_eval/metrics_auto.json
+```
+
+Saved-prediction evaluation now reports standard COCO AP plus direct matched and
+all-GT IoU metrics. COCO AP is formal threshold-free AP only when the source
+model config retains predictions from score `0.0`; deployment-profile outputs
+remain operating-point comparisons.
+
 ## Evaluate Existing Weights
 
 To compare mask quality without retraining, evaluate a saved checkpoint at

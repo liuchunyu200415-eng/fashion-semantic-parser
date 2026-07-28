@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from scripts.evaluate_segmentation_predictions import (
+    _coco_ap_summary,
     _coco_class_names,
     _filter_predictions,
 )
@@ -44,3 +45,15 @@ def test_prediction_filter_rejects_invalid_threshold() -> None:
 def test_coco_class_names_follow_evaluator_category_order() -> None:
     """Per-category IoU labels should align with COCOeval matrix columns."""
     assert _coco_class_names(_FakeCOCO(), [1, 2]) == ["top", "pants"]
+
+
+def test_coco_ap_summary_converts_fractions_to_percentages() -> None:
+    """Saved-prediction AP should use the same percentage scale as other reports."""
+    metrics = _coco_ap_summary([0.4, 0.6, 0.3, -1.0, 0.2, 0.5])
+
+    assert metrics["AP"] == pytest.approx(40.0)
+    assert metrics["AP50"] == pytest.approx(60.0)
+    assert metrics["AP75"] == pytest.approx(30.0)
+    assert metrics["APs"] != metrics["APs"]
+    assert metrics["APm"] == pytest.approx(20.0)
+    assert metrics["APl"] == pytest.approx(50.0)

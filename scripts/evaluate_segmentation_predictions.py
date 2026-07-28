@@ -74,6 +74,8 @@ def main() -> None:
     coco_predictions = coco_ground_truth.loadRes(filtered_predictions)
     coco_eval = COCOeval(coco_ground_truth, coco_predictions, "segm")
     coco_eval.evaluate()
+    coco_eval.accumulate()
+    coco_eval.summarize()
     class_names = _coco_class_names(coco_ground_truth, coco_eval.params.catIds)
     mask_iou_results = _coco_matched_mask_iou_metrics(
         coco_eval,
@@ -85,6 +87,7 @@ def main() -> None:
         "score_threshold": args.score_threshold,
         "prediction_count_before_filter": len(predictions),
         "prediction_count_after_filter": len(filtered_predictions),
+        "segm_coco": _coco_ap_summary(coco_eval.stats),
         "segm_direct_iou": mask_iou_results,
     }
     output_json = json.dumps(results, ensure_ascii=False, indent=2)
@@ -128,6 +131,18 @@ def _coco_class_names(coco_ground_truth: Any, category_ids: list[int]) -> list[s
         int(category["id"]): str(category["name"]) for category in categories
     }
     return [category_names[category_id] for category_id in category_ids]
+
+
+def _coco_ap_summary(stats: Any) -> dict[str, float]:
+    """Return standard COCO mask AP values as percentages."""
+    values = list(stats)
+    if len(values) < 6:
+        raise ValueError("COCOeval stats must contain at least six AP values.")
+    keys = ["AP", "AP50", "AP75", "APs", "APm", "APl"]
+    return {
+        key: float(value) * 100.0 if float(value) >= 0.0 else float("nan")
+        for key, value in zip(keys, values[:6], strict=True)
+    }
 
 
 def _resolve_path(path: str, resolver: Any) -> Path:
