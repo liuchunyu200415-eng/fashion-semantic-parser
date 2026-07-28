@@ -461,11 +461,11 @@ python scripts/visualize_segmentation_prediction.py \
 ```
 
 The ROI format is `x_min,y_min,x_max,y_max` in image pixel coordinates. This is
-a manual stand-in for the planned person/subject detector stage. The runtime
-adds 15% context by default, runs Mask2Former on the crop, and maps mask and box
-coordinates back to the original image. Because the configured test resize is
-applied to the smaller crop, garments receive more input pixels than they do in
-whole-scene inference. Keep enough context to preserve shoes and hand-held bags.
+the manual alternative to automatic person detection. The command above adds
+15% context, runs Mask2Former on the crop, and maps mask and box coordinates
+back to the original image. Because the configured test resize is applied to
+the smaller crop, garments receive more input pixels than they do in whole-scene
+inference. Keep enough context to preserve shoes and hand-held bags.
 
 To replace the oracle/manual box with a detected person box, use:
 
@@ -503,10 +503,8 @@ python scripts/predict_segmentation_dataset.py \
 ```
 
 The script prints image count, elapsed time, ETA, and ROI-source counts every 25
-images. Evaluate both outputs with the same score threshold:
-
-To test whether more crop context preserves hand-held bags, override the
-deployment config's default `0.15` margin without creating another config:
+images. The accepted deployment profile uses a `0.35` context margin. Override
+it without creating another config when reproducing the margin ablation:
 
 ```bash
 python scripts/predict_segmentation_dataset.py \
@@ -519,6 +517,21 @@ python scripts/predict_segmentation_dataset.py \
 
 The summary JSON records `subject_roi_margin_override`; a null value means the
 config file's margin was used.
+
+The paired 1,137-image Fashionpedia validation experiment at score threshold
+`0.6` produced:
+
+| Mode | AP | AP75 | F1 | GT at IoU 0.85 | Small R50 | Shoes R50 | Bag R50 | Accessory R50 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Full image | 38.13 | 40.08 | 64.43 | 32.86 | 23.20 | 69.26 | 34.93 | 22.43 |
+| ROI margin 0.15 | 39.60 | 42.01 | 65.33 | 34.64 | 25.55 | 69.65 | 32.06 | 22.55 |
+| ROI margin 0.25 | 39.74 | 42.00 | 65.15 | 34.51 | 25.55 | 70.10 | 33.49 | 22.78 |
+| ROI margin 0.35 | 39.68 | 42.32 | 65.01 | 34.47 | 25.24 | 70.10 | 35.41 | 22.90 |
+
+Margin `0.35` is the accepted setting: it preserves the aggregate and
+high-overlap ROI gains while recovering bag recall above full-image inference.
+All 1,137 validation images produced a person ROI; no full-image fallback was
+needed.
 
 ```bash
 python scripts/evaluate_segmentation_predictions.py \

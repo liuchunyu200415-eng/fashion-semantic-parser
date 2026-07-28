@@ -101,7 +101,7 @@ def test_runtime_loads_config_once_and_reuses_predictor() -> None:
     assert loaded_settings[0].score_threshold == 0.6
     assert loaded_settings[0].min_size_test == 512
     assert loaded_settings[0].max_size_test == 853
-    assert loaded_settings[0].subject_roi_margin == 0.15
+    assert loaded_settings[0].subject_roi_margin == 0.35
     assert loaded_settings[0].precision == "fp16"
     assert len(fake_predictor.image_paths) == 2
 
@@ -116,12 +116,12 @@ def test_runtime_applies_segmentation_settings_overrides() -> None:
 
     service = GarmentSegmentationService(
         predictor_factory=predictor_factory,
-        settings_overrides={"subject_roi_margin": 0.35},
+        settings_overrides={"subject_roi_margin": 0.25},
     )
 
     service.segment("README.md")
 
-    assert loaded_settings[0].subject_roi_margin == 0.35
+    assert loaded_settings[0].subject_roi_margin == 0.25
 
 
 def test_runtime_forwards_optional_subject_roi_to_predictor() -> None:
