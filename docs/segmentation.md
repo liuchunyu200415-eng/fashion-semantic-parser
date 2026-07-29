@@ -964,6 +964,22 @@ only reports that PRD 3.1.1 segmentation completed; it does not claim that
 language-guided grounding, attribute extraction, RAG, or multimodal answer
 generation is ready.
 
+Run the repeatable eight-class query API acceptance against saved predictions:
+
+```bash
+python scripts/accept_segmentation_api.py \
+  --base-url http://127.0.0.1:8000 \
+  --val-json data/processed/autodl/segmentation/fashionpedia_validation.json \
+  --predictions outputs/segmentation/roi_auto_benchmark/predictions_auto_margin_035.json \
+  --score-threshold 0.6 \
+  --output outputs/segmentation/final_roi_acceptance/api_report.json
+```
+
+The script selects the highest-confidence saved example for each validation
+category, calls `/v1/query` without an ROI override, and verifies the configured
+automatic ROI source, expected class, non-empty masks, and positive-area boxes.
+It prints progress from `1/8` through `8/8` and exits nonzero if any check fails.
+
 For security and reproducibility, API image paths must stay inside the project
 checkout and must be relative. Invalid or missing paths return HTTP 400.
 Missing model dependencies, invalid runtime configuration, or unavailable CUDA
