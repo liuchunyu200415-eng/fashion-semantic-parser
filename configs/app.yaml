@@ -20,6 +20,7 @@ model:
 
 segmentation:
   config_path: configs/segmentation_mask2former_deployment.yaml
+  query_auto_subject_roi: true
 
 datasets:
   fashionai_root: data/raw/fashionai/round1_fashionAI_attributes_test_a

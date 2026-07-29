@@ -34,13 +34,22 @@ def create_app(
         Configured FastAPI application.
     """
     app = FastAPI(title="Fashion Semantic Parser", version="0.1.0")
+    app_settings = settings
     if segmentation_service is None:
-        app_settings = settings or load_settings()
+        app_settings = app_settings or load_settings()
         segmentation_service = GarmentSegmentationService(
             app_settings.segmentation.config_path
         )
     if parser_service is None:
-        parser_service = FashionParserService(segmentation_service)
+        query_auto_subject_roi = (
+            app_settings.segmentation.query_auto_subject_roi
+            if app_settings is not None
+            else True
+        )
+        parser_service = FashionParserService(
+            segmentation_service,
+            default_auto_subject_roi=query_auto_subject_roi,
+        )
 
     @app.get("/health")
     def health_check() -> dict[str, str]:

@@ -38,6 +38,7 @@ class SegmentationServiceSettings(BaseModel):
     """Garment segmentation inference service settings."""
 
     config_path: str = "configs/segmentation_mask2former_deployment.yaml"
+    query_auto_subject_roi: bool = True
 
 
 class DatasetSettings(BaseModel):

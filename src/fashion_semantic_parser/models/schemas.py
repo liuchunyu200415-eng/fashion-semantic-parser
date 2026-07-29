@@ -1,8 +1,11 @@
 """Typed schemas for image parsing and multimodal question answering."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-from fashion_semantic_parser.models.segmentation import SegmentationPrediction
+from fashion_semantic_parser.models.segmentation import (
+    SegmentationPrediction,
+    SegmentationSubjectROI,
+)
 
 
 class BoundingBox(BaseModel):
@@ -36,6 +39,15 @@ class MultimodalQueryRequest(BaseModel):
 
     image_path: str
     query: str
+    subject_roi: SegmentationSubjectROI | None = None
+    auto_subject_roi: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_roi_mode(self) -> "MultimodalQueryRequest":
+        """Keep manual and automatic ROI selection mutually exclusive."""
+        if self.subject_roi is not None and self.auto_subject_roi is True:
+            raise ValueError("subject_roi and auto_subject_roi cannot be used together")
+        return self
 
 
 class MultimodalQueryResponse(BaseModel):

@@ -8,6 +8,8 @@ from fashion_semantic_parser.common.exceptions import (
     InvalidImageInputError,
     ModelNotReadyError,
 )
+from fashion_semantic_parser.config import Settings
+from fashion_semantic_parser.models.schemas import MultimodalQueryRequest
 from fashion_semantic_parser.models.segmentation import (
     SegmentationPrediction,
     SegmentationRequest,
@@ -57,6 +59,14 @@ def _segment_endpoint(app: object) -> object:
     )
 
 
+def _query_endpoint(app: object) -> object:
+    return next(
+        route.endpoint
+        for route in app.routes  # type: ignore[attr-defined]
+        if getattr(route, "path", None) == "/v1/query"
+    )
+
+
 def test_segment_route_returns_typed_prediction() -> None:
     """The API should expose the exact PRD 3.1.1 prediction schema."""
     app = create_app(
@@ -84,6 +94,39 @@ def test_segment_route_forwards_automatic_subject_roi_mode() -> None:
     )
 
     assert service.calls == [("data/example.jpg", None, True)]
+
+
+def test_query_route_defaults_to_configured_automatic_subject_roi() -> None:
+    """The main query path should use the accepted automatic ROI pipeline."""
+    service = _FakeSegmentationService()
+    app = create_app(segmentation_service=service)
+
+    _query_endpoint(app)(  # type: ignore[operator]
+        MultimodalQueryRequest(
+            image_path="data/example.jpg",
+            query="图中有哪些服饰？",
+        )
+    )
+
+    assert service.calls == [("data/example.jpg", None, True)]
+
+
+def test_query_route_can_disable_configured_automatic_subject_roi() -> None:
+    """Application configuration should retain a full-image deployment mode."""
+    service = _FakeSegmentationService()
+    settings = Settings.model_validate(
+        {"segmentation": {"query_auto_subject_roi": False}}
+    )
+    app = create_app(settings=settings, segmentation_service=service)
+
+    _query_endpoint(app)(  # type: ignore[operator]
+        MultimodalQueryRequest(
+            image_path="data/example.jpg",
+            query="图中有哪些服饰？",
+        )
+    )
+
+    assert service.calls == [("data/example.jpg", None, False)]
 
 
 def test_segment_request_rejects_manual_and_automatic_roi_together() -> None:

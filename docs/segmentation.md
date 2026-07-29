@@ -923,7 +923,7 @@ Automatic person-crop inference can be requested explicitly:
 
 `subject_roi` and `auto_subject_roi` are mutually exclusive. The response adds
 `subject_roi` and `subject_roi_source`; the source is `manual`, `detected`, or
-`full_image_fallback`. Automatic ROI is an optional accuracy experiment and
+`full_image_fallback`. The accepted deployment margin is `0.35`. Automatic ROI
 adds a second model pass, so its latency must be measured separately from the
 existing Mask2Former-only benchmark.
 
@@ -944,9 +944,25 @@ than an unbiased accuracy estimate; use the complete COCO and direct-IoU
 evaluations for model quality.
 
 `POST /v1/query` invokes the same segmentation runtime and returns both compact
-`regions` and the complete `segmentation` object. Its answer text only reports
-that PRD 3.1.1 segmentation completed; it does not claim that language-guided
-grounding, attribute extraction, RAG, or multimodal answer generation is ready.
+`regions` and the complete `segmentation` object. The main query path enables
+automatic subject ROI by default through
+`segmentation.query_auto_subject_roi` in `configs/app.yaml`:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/query \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "image_path": "data/raw/example.jpg",
+    "query": "图中有哪些服饰？"
+  }'
+```
+
+Set `"auto_subject_roi": false` in the request for a controlled full-image
+comparison. A supplied `subject_roi` takes the manual path unless
+`auto_subject_roi` is explicitly and invalidly set to true. Query answer text
+only reports that PRD 3.1.1 segmentation completed; it does not claim that
+language-guided grounding, attribute extraction, RAG, or multimodal answer
+generation is ready.
 
 For security and reproducibility, API image paths must stay inside the project
 checkout and must be relative. Invalid or missing paths return HTTP 400.

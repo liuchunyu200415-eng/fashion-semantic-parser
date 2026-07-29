@@ -21,6 +21,8 @@ class FashionParserService:
     def __init__(
         self,
         segmentation_service: SegmentationRuntime | None = None,
+        *,
+        default_auto_subject_roi: bool = True,
     ) -> None:
         """Create the parser with a shared garment segmentation runtime."""
         self.segmentation_service = (
@@ -28,6 +30,7 @@ class FashionParserService:
             if segmentation_service is not None
             else GarmentSegmentationService()
         )
+        self.default_auto_subject_roi = default_auto_subject_roi
 
     def answer_query(
         self,
@@ -45,7 +48,16 @@ class FashionParserService:
             PRD 3.1.1 is integrated here. Later language grounding, attribute,
             RAG, and answer-generation adapters remain separate milestones.
         """
-        segmentation = self.segmentation_service.segment(request.image_path)
+        auto_subject_roi = request.auto_subject_roi
+        if auto_subject_roi is None:
+            auto_subject_roi = (
+                self.default_auto_subject_roi and request.subject_roi is None
+            )
+        segmentation = self.segmentation_service.segment(
+            request.image_path,
+            subject_roi=request.subject_roi,
+            auto_subject_roi=auto_subject_roi,
+        )
         return MultimodalQueryResponse(
             answer=_segmentation_summary(segmentation),
             regions=[
