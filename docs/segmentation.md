@@ -980,6 +980,15 @@ category, calls `/v1/query` without an ROI override, and verifies the configured
 automatic ROI source, expected class, non-empty masks, and positive-area boxes.
 It prints progress from `1/8` through `8/8` and exits nonzero if any check fails.
 
+The final AutoDL query acceptance passed all eight requests with
+`accepted=true`: every expected category was detected, every request used a
+detected subject ROI, and all returned masks and boxes were valid. The response
+set contained all eight deployment categories. The machine-readable report is:
+
+```text
+outputs/segmentation/final_roi_acceptance/api_report.json
+```
+
 For security and reproducibility, API image paths must stay inside the project
 checkout and must be relative. Invalid or missing paths return HTTP 400.
 Missing model dependencies, invalid runtime configuration, or unavailable CUDA
