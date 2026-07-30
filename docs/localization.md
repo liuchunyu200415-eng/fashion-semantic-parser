@@ -203,7 +203,8 @@ and both checkpoints.
 
 ## First Real-Image Smoke Test
 
-Select one validation image from the converted COCO file:
+Select one validation image whose ground truth contains a direct `collar`
+annotation:
 
 ```bash
 IMAGE_PATH="$(python - <<'PY'
@@ -211,19 +212,34 @@ import json
 
 path = "data/processed/autodl/localization/fashionpedia_parts_validation.json"
 data = json.load(open(path))
-print(f"data/raw/fashionpedia/test/{data['images'][0]['file_name']}")
+collar_id = next(
+    category["id"]
+    for category in data["categories"]
+    if category["name"] == "collar"
+)
+image_id = next(
+    annotation["image_id"]
+    for annotation in data["annotations"]
+    if annotation["category_id"] == collar_id
+)
+image = next(row for row in data["images"] if row["id"] == image_id)
+print(image["file_name"])
 PY
 )"
 
 python scripts/predict_localization.py \
   --image "$IMAGE_PATH" \
-  --query "这件衣服的领口" \
+  --query "这件衣服的衣领" \
+  --full-image \
   --output outputs/localization/grounded_sam_hq_smoke/collar.json
 ```
 
 The command prints `状态：正在加载模型并执行语言引导区域定位...` while the
 first request loads both checkpoints, then prints the result count and elapsed
-time. From another terminal, progress can be checked with:
+time. The first call intentionally uses the full image to isolate Grounding
+DINO and SAM-HQ startup from the independent person detector. After it passes,
+repeat the command without `--full-image` to exercise automatic subject ROI.
+From another terminal, progress can be checked with:
 
 ```bash
 pgrep -af predict_localization.py \
