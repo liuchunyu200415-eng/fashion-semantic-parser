@@ -1,4 +1,4 @@
-"""Evaluate a trained PRD 3.1.1 garment instance segmentation model."""
+"""Evaluate a configured Detectron2-family instance segmentation model."""
 
 import argparse
 import json
@@ -20,7 +20,7 @@ def add_src_to_python_path() -> None:
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Evaluate PRD 3.1.1 garment instance segmentation."
+        description="Evaluate a configured Detectron2-family segmentation model."
     )
     parser.add_argument(
         "--config",

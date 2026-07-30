@@ -491,6 +491,70 @@ original query still determines the returned API label and evaluation
 category. These overrides are experimental and are recorded in each run
 summary.
 
+### Supervised Part Mask2Former
+
+The proposal-recall smoke established the limit of the zero-shot baseline.
+Lowering Grounding DINO's box threshold from `0.25` to `0.15` increased
+Top-10 collar recall from `20%` to `40%`, but Top-1 recall stayed at `20%` and
+precision fell to `6.25%`. The contextual prompt produced no recall gain.
+Grounded SAM-HQ therefore remains an open-vocabulary fallback rather than the
+primary exact-category path.
+
+`configs/localization_mask2former_parts.yaml` trains a separate 19-class
+Mask2Former on the `44,898` Fashionpedia training images and `170,332` valid
+part masks. It transfers the accepted fashion checkpoint's compatible visual
+features, replaces the incompatible eight-class classifier, and uses
+Detectron2's `RepeatFactorTrainingSampler` for categories appearing in fewer
+than `1%` of training images. The eight-class deployment model is not modified.
+
+Run a 20-iteration infrastructure smoke before starting a longer stage:
+
+```bash
+cd /root/fashion-semantic-parser
+
+export OMP_NUM_THREADS=1
+export TORCH_CUDA_ARCH_LIST="8.6"
+export PYTHONPATH=$PWD/src:$PWD/external/Mask2Former:$PYTHONPATH
+
+RUN_DIR=outputs/localization/mask2former_parts_r50_smoke20
+mkdir -p "$RUN_DIR"
+
+nohup python scripts/train_segmentation_baseline.py \
+  --config configs/localization_mask2former_parts.yaml \
+  --output-dir "$RUN_DIR" \
+  --max-iter 20 \
+  --checkpoint-period 20 \
+  --skip-final-eval \
+  > "$RUN_DIR/train.log" 2>&1 &
+
+echo $! | tee "$RUN_DIR/train.pid"
+```
+
+Check progress and artifacts before starting another run:
+
+```bash
+RUN_DIR=outputs/localization/mask2former_parts_r50_smoke20
+PID="$(cat "$RUN_DIR/train.pid")"
+
+if ps -p "$PID" > /dev/null; then
+  echo "状态：19 类部位 Smoke 仍在训练"
+elif [ -s "$RUN_DIR/model_final.pth" ]; then
+  echo "状态：19 类部位 Smoke 已完成"
+else
+  echo "状态：进程结束，但没有最终 checkpoint"
+fi
+
+grep -E "iter:|max_mem|Traceback|out of memory" \
+  "$RUN_DIR/train.log" | tail -10
+ls -lh "$RUN_DIR"/*.pth 2>/dev/null
+```
+
+Warnings about the transferred checkpoint's incompatible classifier shape are
+expected: the source head has eight garment classes and the new head has 19
+part classes. Backbone, pixel-decoder, transformer-decoder, and compatible mask
+features still load. A traceback, CUDA out-of-memory message, missing
+`model_final.pth`, or missing category-repeat sampler is not expected.
+
 ## API Contract
 
 The request model accepts an image, query, and optional subject ROI:
@@ -542,7 +606,8 @@ mask constraints remain an evaluation-driven follow-up if text grounding
 produces cross-garment false positives. DINOv2 also remains an optional
 candidate re-ranker rather than a standalone text localizer.
 
-The next required work is to run the candidate-ranking validation, select
-Top-K and score settings from full-category evidence, then establish per-part
-mask IoU and recall. Only then should missing PRD regions, fine-tuning,
-TensorRT, and the `30 ms` target be addressed.
+The next required work is to validate the supervised 19-class Smoke run, train
+and evaluate staged checkpoints on Fashionpedia parts, and compare each class
+against the frozen Grounded SAM-HQ baseline. Missing PRD regions require new
+or pseudo annotations after the directly supervised classes are stable.
+Runtime optimization and the `30 ms` target follow accuracy acceptance.

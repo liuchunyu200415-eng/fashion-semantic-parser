@@ -1,0 +1,48 @@
+# PRD 3.1.2 supervised Fashionpedia local-part instance segmentation.
+#
+# The accepted eight-class fashion checkpoint supplies domain-adapted visual
+# features. Detectron2 skips its incompatible classifier while loading the
+# transferable backbone, pixel decoder, transformer decoder, and mask heads.
+model_family: mask2former
+train_json: data/processed/autodl/localization/fashionpedia_parts_train.json
+val_json: data/processed/autodl/localization/fashionpedia_parts_validation.json
+image_root: .
+output_dir: outputs/localization/mask2former_parts_r50_stage1
+config_source: local
+config_file: external/Mask2Former/configs/coco/instance-segmentation/maskformer2_R50_bs16_50ep.yaml
+weights: outputs/segmentation/mixed/mask2former_r50_consolidation/model_0001999.pth
+num_classes: 19
+category_names:
+  - hood
+  - collar
+  - lapel
+  - epaulette
+  - sleeve
+  - pocket
+  - neckline
+  - buckle
+  - zipper
+  - applique
+  - bead
+  - bow
+  - flower
+  - fringe
+  - ribbon
+  - rivet
+  - ruffle
+  - sequin
+  - tassel
+# Conservatively repeat images containing categories present in fewer than 1%
+# of training images. Revisit this only after per-category validation.
+repeat_factor_threshold: 0.01
+ims_per_batch: 4
+base_lr: 0.00001
+max_iter: 10000
+checkpoint_period: 1000
+eval_period: 0
+num_workers: 2
+score_threshold: 0.0
+precision: fp16
+device: cuda
+resume: false
+evaluate_after_training: false

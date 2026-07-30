@@ -13,10 +13,10 @@ from fashion_semantic_parser.models.segmentation import SegmentationSubjectROI
 from fashion_semantic_parser.service.segmentation_baseline import (
     Detectron2SegmentationBaseline,
     SegmentationBaselineSettings,
-    _Mask2FormerMixedMaskDatasetMapper,
     _crop_image_to_subject_roi,
     _json_safe_config_value,
     _latency_summary,
+    _Mask2FormerMixedMaskDatasetMapper,
     _masks_to_arrays,
     _run_predictor_with_precision,
     _run_with_precision,
@@ -345,6 +345,7 @@ def test_segmentation_baseline_settings_defaults() -> None:
     assert settings.train_json.endswith("deepfashion2_train.json")
     assert settings.additional_train_jsons == []
     assert settings.train_source_repeat_factors is None
+    assert settings.repeat_factor_threshold is None
     assert settings.val_json.endswith("deepfashion2_validation.json")
     assert settings.model_family == "mask_rcnn"
     assert settings.device == "cuda"
@@ -356,6 +357,16 @@ def test_segmentation_baseline_settings_defaults() -> None:
     assert settings.precision == "fp32"
     assert settings.resume is False
     assert settings.evaluate_after_training is True
+    assert settings.resolved_category_names() == (
+        "top",
+        "pants",
+        "skirt",
+        "outerwear",
+        "dress",
+        "shoes",
+        "bag",
+        "accessory",
+    )
 
 
 def test_mixed_training_settings_require_one_positive_factor_per_source() -> None:
@@ -371,6 +382,31 @@ def test_mixed_training_settings_require_one_positive_factor_per_source() -> Non
         SegmentationBaselineSettings(
             train_json="same.json",
             additional_train_jsons=["same.json"],
+        )
+    with pytest.raises(ValueError, match="cannot be enabled together"):
+        SegmentationBaselineSettings(
+            train_source_repeat_factors=[1.0],
+            repeat_factor_threshold=0.01,
+        )
+
+
+def test_custom_segmentation_taxonomy_must_match_model_head() -> None:
+    """A non-default model head needs ordered, unique category labels."""
+    settings = SegmentationBaselineSettings(
+        num_classes=2,
+        category_names=["collar", "pocket"],
+    )
+
+    assert settings.resolved_category_names() == ("collar", "pocket")
+    with pytest.raises(ValueError, match="exactly num_classes"):
+        SegmentationBaselineSettings(
+            num_classes=2,
+            category_names=["collar"],
+        )
+    with pytest.raises(ValueError, match="unique"):
+        SegmentationBaselineSettings(
+            num_classes=2,
+            category_names=["collar", "collar"],
         )
 
 
@@ -398,6 +434,25 @@ def test_mixed_training_configures_weighted_source_sampler() -> None:
         ("prd_3_1_1_deepfashion2_train", 1.0),
         ("prd_3_1_1_additional_train_1", 4.3),
     )
+
+
+def test_single_source_training_can_repeat_rare_category_images() -> None:
+    """Part training should use Detectron2's category-frequency sampler."""
+    baseline = Detectron2SegmentationBaseline(
+        SegmentationBaselineSettings(repeat_factor_threshold=0.01)
+    )
+    cfg = SimpleNamespace(
+        DATASETS=SimpleNamespace(TRAIN=()),
+        DATALOADER=SimpleNamespace(
+            SAMPLER_TRAIN="TrainingSampler",
+            REPEAT_THRESHOLD=0.0,
+        ),
+    )
+
+    baseline._apply_training_dataset_settings(cfg)
+
+    assert cfg.DATALOADER.SAMPLER_TRAIN == "RepeatFactorTrainingSampler"
+    assert cfg.DATALOADER.REPEAT_THRESHOLD == 0.01
 
 
 def test_register_datasets_includes_every_mixed_training_source(
@@ -436,6 +491,37 @@ def test_register_datasets_includes_every_mixed_training_source(
         ("prd_3_1_1_additional_train_1", "fashionpedia.json"),
         ("prd_3_1_1_deepfashion2_validation", "validation.json"),
     ]
+
+
+def test_register_datasets_uses_configured_category_names(
+    monkeypatch: Any,
+) -> None:
+    """The reusable trainer must not force the eight garment labels."""
+    registered_classes: list[str] = []
+
+    def register(
+        name: str,
+        metadata: dict[str, Any],
+        json_path: str,
+        image_root: str,
+    ) -> None:
+        registered_classes.extend(metadata["thing_classes"])
+
+    monkeypatch.setattr(
+        segmentation_module,
+        "_load_detectron2_modules",
+        lambda: {"register_coco_instances": register},
+    )
+    baseline = Detectron2SegmentationBaseline(
+        SegmentationBaselineSettings(
+            num_classes=2,
+            category_names=["collar", "pocket"],
+        )
+    )
+
+    baseline.register_datasets()
+
+    assert registered_classes == ["collar", "pocket"] * 2
 
 
 def test_mask2former_settings_use_local_project_config() -> None:
@@ -581,6 +667,25 @@ def test_mask2former_mixed_config_balances_both_training_sources() -> None:
     assert config["weights"].endswith("model_0000999.pth")
     assert config["base_lr"] == 0.000005
     assert config["resume"] is False
+
+
+def test_localization_parts_config_uses_supervised_nineteen_class_masks() -> None:
+    """PRD 3.1.2 should have an isolated, class-balanced training profile."""
+    config_path = Path("configs/localization_mask2former_parts.yaml")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert config["model_family"] == "mask2former"
+    assert config["train_json"].endswith("fashionpedia_parts_train.json")
+    assert config["val_json"].endswith("fashionpedia_parts_validation.json")
+    assert config["weights"].endswith("model_0001999.pth")
+    assert config["num_classes"] == 19
+    assert len(config["category_names"]) == 19
+    assert config["category_names"][0] == "hood"
+    assert config["category_names"][-1] == "tassel"
+    assert config["repeat_factor_threshold"] == 0.01
+    assert config["base_lr"] == 0.00001
+    assert config["evaluate_after_training"] is False
+    SegmentationBaselineSettings.model_validate(config)
 
 
 def test_mask2former_mixed_mask_mapper_accepts_rle_and_polygons() -> None:
@@ -814,6 +919,18 @@ def test_convert_detectron2_instances_to_prediction_schema() -> None:
     assert instance.box.y_max == 220.0
     assert len(instance.mask) == 1
     assert len(instance.mask[0]) >= 6
+
+
+def test_convert_detectron2_instances_uses_custom_taxonomy() -> None:
+    """Part-model inference should return its configured category labels."""
+    prediction = convert_detectron2_instances(
+        instances=_FakeInstances(),
+        image_path="data/raw/example.jpg",
+        category_names=("collar", "pocket"),
+    )
+
+    assert prediction.instances[0].category_id == 1
+    assert prediction.instances[0].category_label == "collar"
 
 
 def test_convert_detectron2_instances_derives_invalid_box_from_mask() -> None:

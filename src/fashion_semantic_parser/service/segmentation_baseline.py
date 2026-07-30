@@ -5,7 +5,7 @@ import itertools
 import math
 from pathlib import Path
 from threading import Lock
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, Sequence
 
 import cv2
 from pydantic import BaseModel, Field, model_validator
@@ -37,6 +37,7 @@ class SegmentationBaselineSettings(BaseModel):
     train_json: str = "data/processed/autodl/segmentation/deepfashion2_train.json"
     additional_train_jsons: list[str] = Field(default_factory=list)
     train_source_repeat_factors: list[float] | None = None
+    repeat_factor_threshold: float | None = Field(default=None, gt=0.0, le=1.0)
     val_json: str = "data/processed/autodl/segmentation/deepfashion2_validation.json"
     image_root: str = "."
     output_dir: str = "outputs/segmentation/mask_rcnn_r50_fpn"
@@ -45,6 +46,7 @@ class SegmentationBaselineSettings(BaseModel):
     model_zoo_config: str = "COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"
     weights: str | None = None
     num_classes: int = Field(default=len(PRD_SEGMENTATION_CATEGORIES), ge=1)
+    category_names: list[str] | None = None
     ims_per_batch: int = Field(default=2, ge=1)
     base_lr: float = Field(default=0.00025, gt=0.0)
     max_iter: int = Field(default=3000, ge=1)
@@ -67,21 +69,38 @@ class SegmentationBaselineSettings(BaseModel):
         train_jsons = [self.train_json, *self.additional_train_jsons]
         if len(set(train_jsons)) != len(train_jsons):
             raise ValueError("Training COCO paths must be unique.")
-        if self.train_source_repeat_factors is None:
-            return self
-        if len(self.train_source_repeat_factors) != len(train_jsons):
-            raise ValueError(
-                "train_source_repeat_factors must contain one value per "
-                "training COCO file."
-            )
-        if any(
-            not math.isfinite(factor) or factor <= 0.0
-            for factor in self.train_source_repeat_factors
-        ):
-            raise ValueError(
-                "Training source repeat factors must be finite and positive."
-            )
+        if self.train_source_repeat_factors is not None:
+            if self.repeat_factor_threshold is not None:
+                raise ValueError(
+                    "Source repeat factors and category repeat sampling cannot "
+                    "be enabled together."
+                )
+            if len(self.train_source_repeat_factors) != len(train_jsons):
+                raise ValueError(
+                    "train_source_repeat_factors must contain one value per "
+                    "training COCO file."
+                )
+            if any(
+                not math.isfinite(factor) or factor <= 0.0
+                for factor in self.train_source_repeat_factors
+            ):
+                raise ValueError(
+                    "Training source repeat factors must be finite and positive."
+                )
+        category_names = self.resolved_category_names()
+        if len(category_names) != self.num_classes:
+            raise ValueError("category_names must contain exactly num_classes values.")
+        if any(not name.strip() for name in category_names):
+            raise ValueError("Category names cannot be empty.")
+        if len(set(category_names)) != len(category_names):
+            raise ValueError("Category names must be unique.")
         return self
+
+    def resolved_category_names(self) -> tuple[str, ...]:
+        """Return configured labels or the default PRD 3.1.1 taxonomy."""
+        if self.category_names is not None:
+            return tuple(self.category_names)
+        return tuple(category.english_name for category in PRD_SEGMENTATION_CATEGORIES)
 
 
 class Detectron2SegmentationBaseline:
@@ -131,11 +150,7 @@ class Detectron2SegmentationBaseline:
     def register_datasets(self) -> None:
         """Register converted COCO files as Detectron2 datasets."""
         detectron2 = _load_detectron2_modules()
-        metadata = {
-            "thing_classes": [
-                category.english_name for category in PRD_SEGMENTATION_CATEGORIES
-            ]
-        }
+        metadata = {"thing_classes": list(self.settings.resolved_category_names())}
         for dataset_name, json_path in self._training_dataset_specs():
             detectron2["register_coco_instances"](
                 dataset_name,
@@ -172,12 +187,15 @@ class Detectron2SegmentationBaseline:
         dataset_names = tuple(name for name, _ in self._training_dataset_specs())
         cfg.DATASETS.TRAIN = dataset_names
         repeat_factors = self.settings.train_source_repeat_factors
-        if repeat_factors is None:
+        if repeat_factors is not None:
+            cfg.DATALOADER.SAMPLER_TRAIN = "WeightedTrainingSampler"
+            cfg.DATASETS.TRAIN_REPEAT_FACTOR = tuple(
+                zip(dataset_names, repeat_factors, strict=True)
+            )
             return
-        cfg.DATALOADER.SAMPLER_TRAIN = "WeightedTrainingSampler"
-        cfg.DATASETS.TRAIN_REPEAT_FACTOR = tuple(
-            zip(dataset_names, repeat_factors, strict=True)
-        )
+        if self.settings.repeat_factor_threshold is not None:
+            cfg.DATALOADER.SAMPLER_TRAIN = "RepeatFactorTrainingSampler"
+            cfg.DATALOADER.REPEAT_THRESHOLD = self.settings.repeat_factor_threshold
 
     def train(self) -> None:
         """Train the configured segmentation model on registered COCO data."""
@@ -244,6 +262,7 @@ class Detectron2SegmentationBaseline:
             image_path=image_path,
             score_threshold=self.settings.score_threshold,
             coordinate_offset=coordinate_offset,
+            category_names=self.settings.resolved_category_names(),
         )
 
     def _get_predictor(self, detectron2: dict[str, Any] | None = None) -> Any:
@@ -296,6 +315,7 @@ class Detectron2SegmentationBaseline:
                 instances=instances,
                 image_path=image_path,
                 score_threshold=self.settings.score_threshold,
+                category_names=self.settings.resolved_category_names(),
             )
 
         import time
@@ -323,6 +343,7 @@ class Detectron2SegmentationBaseline:
                 instances=instances,
                 image_path=image_path,
                 score_threshold=self.settings.score_threshold,
+                category_names=self.settings.resolved_category_names(),
             )
             pipeline_end_time = time.perf_counter()
             predictor_latencies_ms.append((predictor_end_time - start_time) * 1000.0)
@@ -562,6 +583,7 @@ def convert_detectron2_instances(
     image_path: Path,
     score_threshold: float = 0.0,
     coordinate_offset: tuple[float, float] = (0.0, 0.0),
+    category_names: Sequence[str] | None = None,
 ) -> SegmentationPrediction:
     """Convert Detectron2 Instances to project prediction schema."""
     instances = _filter_detectron2_instances_by_score(instances, score_threshold)
@@ -572,16 +594,26 @@ def convert_detectron2_instances(
     masks = _masks_to_polygons(mask_list)
     predictions: list[SegmentationInstance] = []
     x_offset, y_offset = coordinate_offset
+    resolved_category_names = tuple(category_names or ())
+    if not resolved_category_names:
+        resolved_category_names = tuple(
+            category.english_name for category in PRD_SEGMENTATION_CATEGORIES
+        )
 
     for index, class_index in enumerate(classes):
         if float(scores[index]) < score_threshold:
             continue
-        category = PRD_SEGMENTATION_CATEGORIES[int(class_index)]
+        category_index = int(class_index)
+        if not 0 <= category_index < len(resolved_category_names):
+            raise ValueError(
+                f"Predicted class index {category_index} is outside the "
+                f"configured {len(resolved_category_names)} categories."
+            )
         x_min, y_min, x_max, y_max = boxes[index]
         predictions.append(
             SegmentationInstance(
-                category_id=category.id,
-                category_label=category.english_name,
+                category_id=category_index + 1,
+                category_label=resolved_category_names[category_index],
                 confidence=float(scores[index]),
                 box=SegmentationBoundingBox(
                     x_min=float(x_min) + x_offset,
