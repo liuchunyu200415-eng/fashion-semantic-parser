@@ -259,8 +259,15 @@ def _select_acceptance_images(
             for image_id, annotations in ground_truth_by_image.items()
             if _annotations_include_category(annotations, category_id)
         ]
-        random_generator.shuffle(candidates)
-        for image_id in candidates[:samples_per_category]:
+        detected_candidates = [
+            image_id
+            for image_id in candidates
+            if _annotations_include_category(
+                predictions_by_image.get(image_id, []), category_id
+            )
+        ]
+        random_generator.shuffle(detected_candidates)
+        for image_id in detected_candidates[:samples_per_category]:
             add_image(image_id, f"sample:category_{category_id}")
 
         missed_candidates = [
@@ -270,6 +277,7 @@ def _select_acceptance_images(
                 predictions_by_image.get(image_id, []), category_id
             )
         ]
+        random_generator.shuffle(missed_candidates)
         for image_id in missed_candidates[:misses_per_category]:
             add_image(image_id, f"miss:category_{category_id}")
 

@@ -853,7 +853,10 @@ python scripts/visualize_segmentation_acceptance.py \
 Review `acceptance_visuals/contact_sheet.jpg` first, then inspect the individual
 PNG files at full resolution. Each comparison and the manifest record why the
 image was selected, using labels such as `sample:top` and `miss:outerwear`, so
-the review set is repeatable and does not hide known failure cases.
+the review set is repeatable and does not hide known failure cases. A
+`sample:<category>` image contains a prediction for that category, while a
+`miss:<category>` image has the ground-truth category but no retained
+prediction for it.
 
 The reviewed Fashionpedia contact sheet confirms actual predictions across all
 eight classes and no recurrence of the early full-background mask failure.

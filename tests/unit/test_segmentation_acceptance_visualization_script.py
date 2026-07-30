@@ -48,6 +48,43 @@ def test_acceptance_selection_includes_samples_and_category_misses() -> None:
         for values in reasons.values()
         for reason in values
     )
+    assert all(
+        not (
+            "sample:category_1" in image_reasons and "miss:category_1" in image_reasons
+        )
+        for image_reasons in reasons.values()
+    )
+    assert all(
+        not (
+            "sample:category_2" in image_reasons and "miss:category_2" in image_reasons
+        )
+        for image_reasons in reasons.values()
+    )
+
+
+def test_acceptance_samples_require_the_category_prediction() -> None:
+    """Normal samples should be hits while misses remain explicit failures."""
+    ground_truth = {
+        1: [{"category_id": 1}],
+        2: [{"category_id": 1}],
+    }
+    predictions = {
+        1: [],
+        2: [{"category_id": 1}],
+    }
+
+    image_ids, reasons = _select_acceptance_images(
+        ground_truth_by_image=ground_truth,
+        predictions_by_image=predictions,
+        category_ids=[1],
+        samples_per_category=1,
+        misses_per_category=1,
+        seed=311,
+    )
+
+    assert image_ids == [2, 1]
+    assert reasons[2] == ["sample:category_1"]
+    assert reasons[1] == ["miss:category_1"]
 
 
 def test_acceptance_selection_is_deterministic() -> None:
