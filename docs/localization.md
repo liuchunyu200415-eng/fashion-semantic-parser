@@ -23,12 +23,16 @@ The first executable engineering slice is implemented:
 - Grounding DINO candidate boxes followed by batched SAM-HQ mask refinement
 - output boxes derived from final masks instead of copied detector boxes
 - a lazy, reusable `POST /v1/localize` runtime
+- saved-result visualization against query-aligned Fashionpedia ground truth
+- direct one-to-one mask IoU diagnostics for full-image and subject-ROI modes
 
-The code path and injected unit tests are complete, but the external models
-have not yet been run on AutoDL. Missing repositories or weights therefore
-produce HTTP `503` with an explicit setup message. This stage does not prove
-the PRD `92%` accuracy or `30 ms` latency targets. Existing `/v1/segment` and
-`/v1/query` behavior is unchanged.
+The external models and checkpoints have now passed the AutoDL readiness check,
+and the first real-image full-image request completed end to end. It returned
+four collar candidates in `7.06 s` including cold model loading. Their
+scores were only `0.265` to `0.296`, and large false-positive candidates were
+present, so this proves runtime integration but not localization quality. The
+PRD `92%` accuracy and `30 ms` latency targets remain unverified. Existing
+`/v1/segment` and `/v1/query` behavior is unchanged.
 
 ## Annotation Coverage
 
@@ -249,6 +253,104 @@ test -s outputs/localization/grounded_sam_hq_smoke/collar.json \
   && echo "状态：定位结果已生成"
 ```
 
+The first completed smoke result is a functional check only. Confidence is not
+mask accuracy, and multiple low-confidence candidates cannot be accepted by
+inspection alone. Generate the automatic-person-ROI result for the exact same
+image:
+
+```bash
+cd /root/fashion-semantic-parser
+
+export OMP_NUM_THREADS=1
+export TORCH_CUDA_ARCH_LIST="8.6"
+export HF_ENDPOINT=https://hf-mirror.com
+export PYTHONPATH=$PWD/src:$PWD/external/Mask2Former:$PYTHONPATH
+
+RUN_DIR=outputs/localization/grounded_sam_hq_smoke
+IMAGE_PATH="$(python - <<'PY'
+import json
+
+print(json.load(open(
+    "outputs/localization/grounded_sam_hq_smoke/collar.json"
+))["image_path"])
+PY
+)"
+
+nohup python scripts/predict_localization.py \
+  --image "$IMAGE_PATH" \
+  --query "这件衣服的衣领" \
+  --output "$RUN_DIR/collar_auto.json" \
+  > "$RUN_DIR/collar_auto_stdout.json" \
+  2> "$RUN_DIR/collar_auto.log" &
+
+echo $! | tee "$RUN_DIR/collar_auto.pid"
+```
+
+Always check progress and completion before starting another process:
+
+```bash
+RUN_DIR=outputs/localization/grounded_sam_hq_smoke
+PID="$(cat "$RUN_DIR/collar_auto.pid")"
+
+if ps -p "$PID" > /dev/null; then
+  echo "状态：自动 ROI 定位仍在运行"
+elif [ -s "$RUN_DIR/collar_auto.json" ]; then
+  echo "状态：自动 ROI 定位已完成"
+else
+  echo "状态：进程已结束，但没有结果，检查日志"
+fi
+
+tail -n 20 "$RUN_DIR/collar_auto.log"
+```
+
+After completion, create an `Original / Ground Truth / full / auto_roi`
+comparison without loading either model again:
+
+```bash
+python scripts/visualize_localization_comparison.py \
+  --val-json data/processed/autodl/localization/fashionpedia_parts_validation.json \
+  --prediction full="$RUN_DIR/collar.json" \
+  --prediction auto_roi="$RUN_DIR/collar_auto.json" \
+  --output "$RUN_DIR/collar_full_vs_auto.png" \
+  --metrics-output "$RUN_DIR/collar_full_vs_auto_metrics.json"
+```
+
+The query `这件衣服的衣领` resolves to the exact Fashionpedia `collar` category.
+Exact category queries are not penalized for separate `lapel` or `neckline`
+annotations; broader targets such as `decoration` use all categories in that
+semantic group. Matching is one-to-one at mask IoU `>= 0.50`. Print only the
+acceptance-relevant summary:
+
+```bash
+python - <<'PY'
+import json
+
+path = (
+    "outputs/localization/grounded_sam_hq_smoke/"
+    "collar_full_vs_auto_metrics.json"
+)
+data = json.load(open(path))
+for label, metrics in data["predictions"].items():
+    print(label, {
+        key: None if metrics[key] is None else round(metrics[key], 2)
+        for key in (
+            "PredictionCount",
+            "MatchedCount",
+            "Precision50",
+            "Recall50",
+            "MatchedMeanIoU",
+            "AllGTMeanIoU",
+            "AllGTIoU85Rate",
+        )
+    })
+print("visualization", data["visualization"])
+PY
+```
+
+This is a one-image diagnostic, not an unbiased validation-set accuracy. The
+PNG is the visual acceptance artifact; the JSON determines whether automatic
+ROI improves mask matching and suppresses the large background candidates.
+
 ## API Contract
 
 The request model accepts an image, query, and optional subject ROI:
@@ -300,7 +402,7 @@ mask constraints remain an evaluation-driven follow-up if text grounding
 produces cross-garment false positives. DINOv2 also remains an optional
 candidate re-ranker rather than a standalone text localizer.
 
-After the first real-image smoke test, the next required work is to generate
-Fashionpedia validation predictions, establish per-part mask IoU and recall,
-and tune `box_threshold`/`text_threshold`. Only then should missing PRD regions,
-fine-tuning, TensorRT, and the `30 ms` target be addressed.
+After the full-versus-ROI smoke comparison, the next required work is to
+generate Fashionpedia validation predictions, establish per-part mask IoU and
+recall, and tune `box_threshold`/`text_threshold`. Only then should missing PRD
+regions, fine-tuning, TensorRT, and the `30 ms` target be addressed.
