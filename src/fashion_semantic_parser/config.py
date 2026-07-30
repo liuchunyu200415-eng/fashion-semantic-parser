@@ -41,6 +41,12 @@ class SegmentationServiceSettings(BaseModel):
     query_auto_subject_roi: bool = True
 
 
+class LocalizationServiceSettings(BaseModel):
+    """Language-guided local-region inference service settings."""
+
+    config_path: str = "configs/localization_grounded_sam_hq.yaml"
+
+
 class DatasetSettings(BaseModel):
     """Project-relative dataset root paths."""
 
@@ -65,6 +71,9 @@ class Settings(BaseModel):
     model: ModelSettings = Field(default_factory=ModelSettings)
     segmentation: SegmentationServiceSettings = Field(
         default_factory=SegmentationServiceSettings
+    )
+    localization: LocalizationServiceSettings = Field(
+        default_factory=LocalizationServiceSettings
     )
     datasets: DatasetSettings = Field(default_factory=DatasetSettings)
 

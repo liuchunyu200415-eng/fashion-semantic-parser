@@ -22,6 +22,9 @@ segmentation:
   config_path: configs/segmentation_mask2former_deployment.yaml
   query_auto_subject_roi: true
 
+localization:
+  config_path: configs/localization_grounded_sam_hq.yaml
+
 datasets:
   fashionai_root: data/raw/fashionai/round1_fashionAI_attributes_test_a
   deepfashion2_root: data/raw/deepfashion2

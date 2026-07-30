@@ -12,18 +12,23 @@ The PRD contract is:
 
 ## Current Status
 
-The first engineering slice is implemented:
+The first executable engineering slice is implemented:
 
 - a separate Fashionpedia local-part COCO conversion path
 - 19 directly annotated part categories with Chinese and English prompt terms
 - explicit PRD coverage reporting instead of relabeling weak proxies
 - typed request and response models for local-region masks and boxes
-- an injectable `POST /v1/localize` API route
+- Chinese and English query normalization for the Grounding DINO text encoder
+- automatic person ROI cropping with the accepted `0.35` context margin
+- Grounding DINO candidate boxes followed by batched SAM-HQ mask refinement
+- output boxes derived from final masks instead of copied detector boxes
+- a lazy, reusable `POST /v1/localize` runtime
 
-The Grounding DINO and SAM-HQ inference runtime is not implemented yet. The
-default route returns HTTP `503` with a model-setup message rather than
-inventing a localization result. Existing `/v1/segment` and `/v1/query`
-behavior is unchanged.
+The code path and injected unit tests are complete, but the external models
+have not yet been run on AutoDL. Missing repositories or weights therefore
+produce HTTP `503` with an explicit setup message. This stage does not prove
+the PRD `92%` accuracy or `30 ms` latency targets. Existing `/v1/segment` and
+`/v1/query` behavior is unchanged.
 
 ## Annotation Coverage
 
@@ -107,9 +112,94 @@ python scripts/convert_fashionpedia_parts_to_coco.py --split validation
 ls -lh data/processed/autodl/localization/fashionpedia_parts_*.json
 ```
 
+The completed official conversion contains:
+
+| Split | Images | Valid masks | Invalid masks | Missing images | File size |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| train | 44,898 | 170,332 | 9 | 0 | 212.0 MB |
+| validation | 1,150 | 4,093 | 0 | 0 | 5.2 MB |
+
 These outputs are independent from
 `data/processed/autodl/segmentation/fashionpedia_*.json`; converting local parts
 does not change the accepted PRD 3.1.1 training data.
+
+## Model Setup On AutoDL
+
+The first accuracy baseline uses the official Grounding DINO Swin-T checkpoint
+and SAM-HQ ViT-B. ViT-B is selected before ViT-H because it is a more practical
+starting point on the 24 GB RTX 3090 while retaining the high-quality mask
+decoder. `hq_token_only` remains `false`, matching the SAM-HQ recommendation
+for quantitative evaluation and images that can contain multiple objects.
+
+Install the official runtime and download the two checkpoints:
+
+```bash
+cd /root/fashion-semantic-parser
+
+export OMP_NUM_THREADS=1
+export TORCH_CUDA_ARCH_LIST="8.6"
+export CUDA_HOME=/usr/local/cuda
+export PYTHONPATH=$PWD/src:$PWD/external/Mask2Former:$PYTHONPATH
+
+mkdir -p external models/checkpoints/localization
+
+test -d external/GroundingDINO/.git || \
+  git clone https://github.com/IDEA-Research/GroundingDINO.git \
+  external/GroundingDINO
+
+python -m pip install --no-build-isolation -e external/GroundingDINO
+python -m pip install segment-anything-hq
+
+curl -L --fail --retry 3 \
+  https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth \
+  -o models/checkpoints/localization/groundingdino_swint_ogc.pth
+
+curl -L --fail --retry 3 \
+  https://huggingface.co/lkeab/hq-sam/resolve/main/sam_hq_vit_b.pth \
+  -o models/checkpoints/localization/sam_hq_vit_b.pth
+```
+
+Run the readiness check before starting inference:
+
+```bash
+python scripts/check_localization_env.py
+```
+
+A ready instance reports an empty `recommendations` list. The checker verifies
+the converted train/validation COCO files, CUDA, both official imports, model
+configuration, and both checkpoints.
+
+## First Real-Image Smoke Test
+
+Select one validation image from the converted COCO file:
+
+```bash
+IMAGE_PATH="$(python - <<'PY'
+import json
+
+path = "data/processed/autodl/localization/fashionpedia_parts_validation.json"
+data = json.load(open(path))
+print(f"data/raw/fashionpedia/test/{data['images'][0]['file_name']}")
+PY
+)"
+
+python scripts/predict_localization.py \
+  --image "$IMAGE_PATH" \
+  --query "这件衣服的领口" \
+  --output outputs/localization/grounded_sam_hq_smoke/collar.json
+```
+
+The command prints `状态：正在加载模型并执行语言引导区域定位...` while the
+first request loads both checkpoints, then prints the result count and elapsed
+time. From another terminal, progress can be checked with:
+
+```bash
+pgrep -af predict_localization.py \
+  || echo "状态：定位进程已结束"
+
+test -s outputs/localization/grounded_sam_hq_smoke/collar.json \
+  && echo "状态：定位结果已生成"
+```
 
 ## API Contract
 
@@ -146,17 +236,23 @@ A configured runtime returns:
 }
 ```
 
-## Next Model Slice
+## Implemented Inference Flow
 
-The first executable model baseline will use:
+1. validate the project-relative RGB image path
+2. normalize known Chinese/Fashionpedia terms into an English grounding prompt
+3. use the accepted person detector and retain a `0.35` context margin
+4. run Grounding DINO Swin-T to obtain text-conditioned candidate boxes
+5. refine all retained boxes in one SAM-HQ batch
+6. discard malformed or tiny masks and derive each final box from its mask
+7. map crop-local polygons and boxes back to original-image coordinates
 
-1. the accepted automatic person ROI to remove unrelated subjects and scenery
-2. the accepted garment segmentation result to constrain the parent garment
-3. Grounding DINO to convert the normalized text phrase into candidate boxes
-4. SAM-HQ to refine the selected box into a local-region mask
-5. overlap and confidence checks before returning a typed result
+The first baseline uses person ROI constraints but does not yet load the large
+Mask2Former garment model alongside Grounding DINO and SAM-HQ. Parent-garment
+mask constraints remain an evaluation-driven follow-up if text grounding
+produces cross-garment false positives. DINOv2 also remains an optional
+candidate re-ranker rather than a standalone text localizer.
 
-DINOv2 may be evaluated for candidate re-ranking, but it is not used as a
-standalone text localizer because it does not directly encode natural-language
-queries. Accuracy will be established before TensorRT and the `30 ms` latency
-target are addressed.
+After the first real-image smoke test, the next required work is to generate
+Fashionpedia validation predictions, establish per-part mask IoU and recall,
+and tune `box_threshold`/`text_threshold`. Only then should missing PRD regions,
+fine-tuning, TensorRT, and the `30 ms` target be addressed.

@@ -21,8 +21,8 @@ from fashion_semantic_parser.models.segmentation import (
 )
 from fashion_semantic_parser.service.parser_service import FashionParserService
 from fashion_semantic_parser.service.region_localization import (
+    GroundedSAMHQRegionLocalizationService,
     RegionLocalizationRuntime,
-    UnavailableRegionLocalizationService,
 )
 from fashion_semantic_parser.service.segmentation_runtime import (
     GarmentSegmentationService,
@@ -60,7 +60,10 @@ def create_app(
             default_auto_subject_roi=query_auto_subject_roi,
         )
     if localization_service is None:
-        localization_service = UnavailableRegionLocalizationService()
+        app_settings = app_settings or load_settings()
+        localization_service = GroundedSAMHQRegionLocalizationService(
+            app_settings.localization.config_path
+        )
 
     @app.get("/health")
     def health_check() -> dict[str, str]:

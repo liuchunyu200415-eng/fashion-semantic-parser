@@ -28,6 +28,14 @@ class PRDRegionCoverage(BaseModel):
     note: str
 
 
+class LocalizationPrompt(BaseModel):
+    """Normalized English grounding prompt for one user query."""
+
+    region_label: str
+    grounding_prompt: str
+    matched_term: str
+
+
 FASHIONPEDIA_PART_CATEGORIES = [
     FashionpediaPartCategory(
         id=1,
@@ -255,6 +263,49 @@ _SOURCE_NAME_TO_CATEGORY = {
     category.english_name: category for category in FASHIONPEDIA_PART_CATEGORIES
 }
 
+_PRD_QUERY_PROMPTS = (
+    (
+        "collar",
+        "neckline . collar . lapel",
+        ("领口", "衣领", "领子", "neckline", "collar"),
+    ),
+    (
+        "cuff",
+        "cuff . sleeve cuff",
+        ("袖口", "cuff", "sleeve cuff"),
+    ),
+    (
+        "hem",
+        "garment hem . lower hem",
+        ("下摆", "衣摆", "hem", "lower hem"),
+    ),
+    (
+        "pocket",
+        "pocket",
+        ("口袋", "衣袋", "pocket"),
+    ),
+    (
+        "shoulder",
+        "shoulder area . epaulette",
+        ("肩部", "肩膀", "shoulder", "shoulder area"),
+    ),
+    (
+        "waist",
+        "waist area . waistline",
+        ("腰部", "腰线", "waist", "waistline"),
+    ),
+    (
+        "pattern",
+        "fabric pattern . printed pattern",
+        ("图案", "花纹", "纹样", "pattern", "printed pattern"),
+    ),
+    (
+        "decoration",
+        "clothing decoration . embellishment",
+        ("装饰", "装饰物", "decoration", "embellishment"),
+    ),
+)
+
 
 def map_fashionpedia_part_category(
     category_name: str,
@@ -262,6 +313,60 @@ def map_fashionpedia_part_category(
     """Map one official Fashionpedia part name to the localization taxonomy."""
     normalized_name = " ".join(category_name.strip().lower().split())
     return _SOURCE_NAME_TO_CATEGORY.get(normalized_name)
+
+
+def resolve_localization_prompt(query: str) -> LocalizationPrompt:
+    """Map Chinese or English fashion-part language to an English prompt.
+
+    Grounding DINO's official Swin-T checkpoint uses an English text encoder.
+    Known PRD and Fashionpedia terms are therefore normalized before inference,
+    while an unknown English free-form query is retained as a custom prompt.
+    """
+    normalized_query = " ".join(query.strip().lower().split())
+    if not normalized_query:
+        raise ValueError("Localization query cannot be empty.")
+
+    candidates: list[tuple[int, int, LocalizationPrompt]] = []
+    for region_label, grounding_prompt, terms in _PRD_QUERY_PROMPTS:
+        for term in terms:
+            normalized_term = term.lower()
+            if normalized_term in normalized_query:
+                candidates.append(
+                    (
+                        len(normalized_term),
+                        1,
+                        LocalizationPrompt(
+                            region_label=region_label,
+                            grounding_prompt=grounding_prompt,
+                            matched_term=term,
+                        ),
+                    )
+                )
+
+    for category in FASHIONPEDIA_PART_CATEGORIES:
+        english_prompt = category.prompt_terms[0]
+        for term in category.prompt_terms:
+            normalized_term = term.lower()
+            if normalized_term in normalized_query:
+                candidates.append(
+                    (
+                        len(normalized_term),
+                        2,
+                        LocalizationPrompt(
+                            region_label=category.english_name,
+                            grounding_prompt=english_prompt,
+                            matched_term=term,
+                        ),
+                    )
+                )
+
+    if candidates:
+        return max(candidates, key=lambda candidate: candidate[:2])[2]
+    return LocalizationPrompt(
+        region_label="custom",
+        grounding_prompt=normalized_query,
+        matched_term=query.strip(),
+    )
 
 
 def localization_coco_categories() -> list[dict[str, object]]:

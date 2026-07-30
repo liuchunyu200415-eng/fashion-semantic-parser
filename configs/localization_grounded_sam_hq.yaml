@@ -1,0 +1,15 @@
+grounding_dino_repo: external/GroundingDINO
+grounding_dino_config: external/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py
+grounding_dino_weights: models/checkpoints/localization/groundingdino_swint_ogc.pth
+sam_hq_repo: external/sam-hq
+sam_hq_weights: models/checkpoints/localization/sam_hq_vit_b.pth
+sam_hq_model_type: vit_b
+sam_hq_module: auto
+device: cuda
+precision: fp16
+box_threshold: 0.25
+text_threshold: 0.20
+max_regions: 5
+min_mask_area: 16
+hq_token_only: false
+subject_roi_margin: 0.35

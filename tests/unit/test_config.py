@@ -13,4 +13,7 @@ def test_load_settings_reads_default_config() -> None:
         "segmentation_mask2former_deployment.yaml"
     )
     assert settings.segmentation.query_auto_subject_roi is True
+    assert settings.localization.config_path.endswith(
+        "localization_grounded_sam_hq.yaml"
+    )
     assert settings.datasets.fashionpedia_root == "data/raw/fashionpedia"

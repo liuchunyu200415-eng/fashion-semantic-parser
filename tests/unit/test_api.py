@@ -1,7 +1,7 @@
 """Tests for FastAPI segmentation route wiring."""
 
-from fastapi import HTTPException
 import pytest
+from fastapi import HTTPException
 
 from fashion_semantic_parser.api.app import create_app
 from fashion_semantic_parser.common.exceptions import (
@@ -20,6 +20,9 @@ from fashion_semantic_parser.models.segmentation import (
     SegmentationPrediction,
     SegmentationRequest,
     SegmentationSubjectROI,
+)
+from fashion_semantic_parser.service.region_localization import (
+    UnavailableRegionLocalizationService,
 )
 
 
@@ -269,7 +272,10 @@ def test_localize_route_manual_roi_disables_automatic_default() -> None:
 
 def test_localize_route_is_explicitly_unavailable_before_model_setup() -> None:
     """The endpoint must not invent results before its runtime is configured."""
-    app = create_app(segmentation_service=_FakeSegmentationService())
+    app = create_app(
+        segmentation_service=_FakeSegmentationService(),
+        localization_service=UnavailableRegionLocalizationService(),
+    )
 
     with pytest.raises(HTTPException) as captured:
         _localize_endpoint(app)(  # type: ignore[operator]

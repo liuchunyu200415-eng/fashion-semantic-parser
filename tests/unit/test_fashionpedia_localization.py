@@ -12,6 +12,7 @@ from fashion_semantic_parser.dao.localization.fashionpedia import (
 from fashion_semantic_parser.dao.localization.taxonomy import (
     PRD_LOCALIZATION_REGION_COVERAGE,
     map_fashionpedia_part_category,
+    resolve_localization_prompt,
 )
 
 
@@ -49,6 +50,36 @@ def test_prd_coverage_does_not_relabel_sleeves_as_cuffs() -> None:
     assert coverage["shoulder"].status == "partial"
     assert coverage["cuff"].status == "missing"
     assert coverage["cuff"].source_categories == ()
+
+
+@pytest.mark.parametrize(
+    ("query", "label", "prompt"),
+    [
+        ("这件衣服的领口", "neckline", "neckline"),
+        ("请找出袖口", "cuff", "cuff . sleeve cuff"),
+        ("where is the pocket?", "pocket", "pocket"),
+        ("定位拉链", "zipper", "zipper"),
+        ("下摆区域", "hem", "garment hem . lower hem"),
+    ],
+)
+def test_resolve_localization_prompt_normalizes_known_queries(
+    query: str,
+    label: str,
+    prompt: str,
+) -> None:
+    """Known Chinese and English terms should reach the English text encoder."""
+    resolved = resolve_localization_prompt(query)
+
+    assert resolved.region_label == label
+    assert resolved.grounding_prompt == prompt
+
+
+def test_resolve_localization_prompt_preserves_unknown_free_form_text() -> None:
+    """Open-vocabulary English remains available beyond the fixed taxonomy."""
+    resolved = resolve_localization_prompt("silver logo near chest")
+
+    assert resolved.region_label == "custom"
+    assert resolved.grounding_prompt == "silver logo near chest"
 
 
 def test_convert_fashionpedia_parts_preserves_masks_and_prompt_metadata(
