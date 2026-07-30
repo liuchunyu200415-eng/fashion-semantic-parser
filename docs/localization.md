@@ -351,6 +351,125 @@ This is a one-image diagnostic, not an unbiased validation-set accuracy. The
 PNG is the visual acceptance artifact; the JSON determines whether automatic
 ROI improves mask matching and suppresses the large background candidates.
 
+The completed collar example returned four candidates in both modes. Exactly
+one candidate matched at IoU `58.76%`, giving `P50=25%` and `R50=100%`.
+Full-image and automatic-ROI predictions were identical. The matching region
+was also the highest-confidence candidate (`0.2956`), so Top-1 is promising on
+this image, but the result is not sufficient evidence to change deployment
+defaults.
+
+## Candidate Ranking Validation
+
+The dataset predictor loads Grounding DINO and SAM-HQ once, selects validation
+images with exact-category ground truth, and saves up to five candidates per
+image as flat COCO results. This benchmark is conditioned on images where the
+target category is present; it does not measure false positives for queries
+whose target is absent. Start with a 10-image full-image smoke run:
+
+```bash
+cd /root/fashion-semantic-parser
+
+export OMP_NUM_THREADS=1
+export TORCH_CUDA_ARCH_LIST="8.6"
+export HF_ENDPOINT=https://hf-mirror.com
+export PYTHONPATH=$PWD/src:$PWD/external/Mask2Former:$PYTHONPATH
+
+RUN_DIR=outputs/localization/collar_candidate_benchmark
+mkdir -p "$RUN_DIR"
+
+nohup python scripts/predict_localization_dataset.py \
+  --category collar \
+  --query "这件衣服的衣领" \
+  --roi-mode full \
+  --image-limit 10 \
+  --progress-every 1 \
+  --max-regions 5 \
+  --output "$RUN_DIR/collar_full_smoke10_raw.json" \
+  > "$RUN_DIR/collar_full_smoke10.log" 2>&1 &
+
+echo $! | tee "$RUN_DIR/collar_full_smoke10.pid"
+```
+
+Check progress before starting evaluation:
+
+```bash
+RUN_DIR=outputs/localization/collar_candidate_benchmark
+PID="$(cat "$RUN_DIR/collar_full_smoke10.pid")"
+
+if ps -p "$PID" > /dev/null; then
+  echo "状态：10 图候选生成仍在运行"
+elif [ -s "$RUN_DIR/collar_full_smoke10_raw.json" ] && \
+     [ -s "$RUN_DIR/collar_full_smoke10_raw_summary.json" ]; then
+  echo "状态：10 图候选生成已完成"
+else
+  echo "状态：进程结束，但结果不完整"
+fi
+
+tail -n 30 "$RUN_DIR/collar_full_smoke10.log"
+```
+
+One raw inference run supports an offline grid over per-image Top-K and output
+score thresholds. These score filters apply after the model's configured
+Grounding DINO threshold (`0.25`) and do not rerun the GPU models:
+
+```bash
+RUN_DIR=outputs/localization/collar_candidate_benchmark
+
+for top_k in 1 3 5; do
+  for threshold in 0.0 0.28 0.29; do
+    python scripts/evaluate_localization_predictions.py \
+      --predictions "$RUN_DIR/collar_full_smoke10_raw.json" \
+      --category collar \
+      --top-k "$top_k" \
+      --score-threshold "$threshold" \
+      --output \
+        "$RUN_DIR/metrics_top${top_k}_score${threshold}.json" \
+      > /dev/null
+  done
+done
+```
+
+Print a compact comparison:
+
+```bash
+python - <<'PY'
+import json
+from pathlib import Path
+
+root = Path("outputs/localization/collar_candidate_benchmark")
+rows = [json.load(open(path)) for path in root.glob("metrics_top*_score*.json")]
+
+for data in sorted(rows, key=lambda row: (row["top_k"], row["score_threshold"])):
+    coco = data["segm_coco"]
+    direct = data["segm_direct_iou"]
+    print({
+        "top_k": data["top_k"],
+        "score": data["score_threshold"],
+        "kept": data["candidate_count_after_filter"],
+        "AP": None if coco["AP"] is None else round(coco["AP"], 2),
+        "AP50": None if coco["AP50"] is None else round(coco["AP50"], 2),
+        "P50": None if direct["Precision50"] is None else round(
+            direct["Precision50"], 2
+        ),
+        "R50": None if direct["Recall50"] is None else round(
+            direct["Recall50"], 2
+        ),
+        "F1": None if direct["F1_50"] is None else round(direct["F1_50"], 2),
+        "MatchedIoU": None if direct["MatchedMeanIoU"] is None else round(
+            direct["MatchedMeanIoU"], 2
+        ),
+        "AllGTIoU": None if direct["AllGTMeanIoU"] is None else round(
+            direct["AllGTMeanIoU"], 2
+        ),
+    })
+PY
+```
+
+The sidecar summary stores every evaluated image ID, including images where the
+model returned no candidate. Offline filtering therefore preserves misses in
+Recall and All-GT IoU. Run the complete collar subset only after the 10-image
+smoke verifies the environment and estimated runtime.
+
 ## API Contract
 
 The request model accepts an image, query, and optional subject ROI:
@@ -402,7 +521,7 @@ mask constraints remain an evaluation-driven follow-up if text grounding
 produces cross-garment false positives. DINOv2 also remains an optional
 candidate re-ranker rather than a standalone text localizer.
 
-After the full-versus-ROI smoke comparison, the next required work is to
-generate Fashionpedia validation predictions, establish per-part mask IoU and
-recall, and tune `box_threshold`/`text_threshold`. Only then should missing PRD
-regions, fine-tuning, TensorRT, and the `30 ms` target be addressed.
+The next required work is to run the candidate-ranking validation, select
+Top-K and score settings from full-category evidence, then establish per-part
+mask IoU and recall. Only then should missing PRD regions, fine-tuning,
+TensorRT, and the `30 ms` target be addressed.

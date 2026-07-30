@@ -5,6 +5,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 
 def add_src_to_python_path() -> None:
@@ -44,6 +45,10 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional project-relative JSON output path.",
     )
+    parser.add_argument("--box-threshold", type=float, default=None)
+    parser.add_argument("--text-threshold", type=float, default=None)
+    parser.add_argument("--max-regions", type=int, default=None)
+    parser.add_argument("--subject-roi-margin", type=float, default=None)
     return parser.parse_args()
 
 
@@ -71,6 +76,13 @@ def main() -> None:
         else None
     )
     auto_subject_roi = subject_roi is None and not args.full_image
+    settings_overrides = _build_settings_overrides(
+        box_threshold=args.box_threshold,
+        text_threshold=args.text_threshold,
+        max_regions=args.max_regions,
+        subject_roi_margin=args.subject_roi_margin,
+        full_image=args.full_image,
+    )
 
     print(
         "状态：正在加载模型并执行语言引导区域定位...",
@@ -78,7 +90,10 @@ def main() -> None:
         flush=True,
     )
     start_time = time.perf_counter()
-    prediction = GroundedSAMHQRegionLocalizationService(args.config).localize(
+    prediction = GroundedSAMHQRegionLocalizationService(
+        args.config,
+        settings_overrides=settings_overrides,
+    ).localize(
         args.image,
         args.query,
         subject_roi=subject_roi,
@@ -99,6 +114,26 @@ def main() -> None:
         file=sys.stderr,
         flush=True,
     )
+
+
+def _build_settings_overrides(
+    *,
+    box_threshold: float | None,
+    text_threshold: float | None,
+    max_regions: int | None,
+    subject_roi_margin: float | None,
+    full_image: bool,
+) -> dict[str, Any]:
+    """Validate optional experiment overrides without changing deployment YAML."""
+    if subject_roi_margin is not None and full_image:
+        raise ValueError("--subject-roi-margin cannot be used with --full-image.")
+    overrides = {
+        "box_threshold": box_threshold,
+        "text_threshold": text_threshold,
+        "max_regions": max_regions,
+        "subject_roi_margin": subject_roi_margin,
+    }
+    return {key: value for key, value in overrides.items() if value is not None}
 
 
 if __name__ == "__main__":
