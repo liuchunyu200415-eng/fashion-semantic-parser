@@ -71,9 +71,13 @@ python scripts/convert_fashionpedia_parts_to_coco.py \
   --audit-only
 ```
 
-The audit should report `4,016` selected part annotations for the official
-validation annotations and approximately `167,406` for training. The converter
-itself remains the source of truth if the official release differs.
+The official validation audit reports `4,093` valid part masks across `1,150`
+images. This is `77` more than the old PRD 3.1.1 exclusion count because the
+garment converter dropped entire images containing ambiguous jumpsuits before
+counting their parts. The localization converter keeps valid local-part masks
+from those images because main-garment ambiguity does not invalidate the part
+annotation. Run the dedicated training audit to establish its corresponding
+count; the old `167,406` segmentation exclusion count is only a lower bound.
 
 Run a 10-image conversion smoke test before creating full outputs:
 
