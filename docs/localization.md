@@ -76,8 +76,14 @@ images. This is `77` more than the old PRD 3.1.1 exclusion count because the
 garment converter dropped entire images containing ambiguous jumpsuits before
 counting their parts. The localization converter keeps valid local-part masks
 from those images because main-garment ambiguity does not invalidate the part
-annotation. Run the dedicated training audit to establish its corresponding
-count; the old `167,406` segmentation exclusion count is only a lower bound.
+annotation.
+
+The official training audit reports `170,341` selected part annotations across
+`44,898` part-containing images. Of those annotations, `170,332` have valid
+masks and boxes; the converter safely skips the remaining `9`, and all required
+image files are present. The old `167,406` segmentation exclusion count was a
+lower bound produced by the PRD 3.1.1 image-filtering order, not the complete
+PRD 3.1.2 part count.
 
 Run a 10-image conversion smoke test before creating full outputs:
 
