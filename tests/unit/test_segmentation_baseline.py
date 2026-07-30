@@ -13,6 +13,7 @@ from fashion_semantic_parser.models.segmentation import SegmentationSubjectROI
 from fashion_semantic_parser.service.segmentation_baseline import (
     Detectron2SegmentationBaseline,
     SegmentationBaselineSettings,
+    _configure_mask2former_eager_losses,
     _crop_image_to_subject_roi,
     _json_safe_config_value,
     _latency_summary,
@@ -683,9 +684,46 @@ def test_localization_parts_config_uses_supervised_nineteen_class_masks() -> Non
     assert config["category_names"][0] == "hood"
     assert config["category_names"][-1] == "tassel"
     assert config["repeat_factor_threshold"] == 0.01
+    assert config["mask2former_eager_losses"] is True
     assert config["base_lr"] == 0.00001
     assert config["evaluate_after_training"] is False
     SegmentationBaselineSettings.model_validate(config)
+
+
+def test_mask2former_eager_losses_replace_scripted_wrappers() -> None:
+    """The compatibility path must retain upstream eager loss definitions."""
+
+    def matcher_dice() -> str:
+        return "matcher-dice"
+
+    def matcher_ce() -> str:
+        return "matcher-ce"
+
+    def criterion_dice() -> str:
+        return "criterion-dice"
+
+    def criterion_ce() -> str:
+        return "criterion-ce"
+
+    matcher_module = SimpleNamespace(
+        batch_dice_loss=matcher_dice,
+        batch_dice_loss_jit=object(),
+        batch_sigmoid_ce_loss=matcher_ce,
+        batch_sigmoid_ce_loss_jit=object(),
+    )
+    criterion_module = SimpleNamespace(
+        dice_loss=criterion_dice,
+        dice_loss_jit=object(),
+        sigmoid_ce_loss=criterion_ce,
+        sigmoid_ce_loss_jit=object(),
+    )
+
+    _configure_mask2former_eager_losses(matcher_module, criterion_module)
+
+    assert matcher_module.batch_dice_loss_jit is matcher_dice
+    assert matcher_module.batch_sigmoid_ce_loss_jit is matcher_ce
+    assert criterion_module.dice_loss_jit is criterion_dice
+    assert criterion_module.sigmoid_ce_loss_jit is criterion_ce
 
 
 def test_mask2former_mixed_mask_mapper_accepts_rle_and_polygons() -> None:
@@ -738,6 +776,31 @@ def test_mask2former_trainer_uses_target_optimizer_and_scheduler(
     """Mask2Former must not fall back to Detectron2's default SGD trainer."""
     expected_optimizer = object()
     expected_scheduler = object()
+
+    def eager_matcher_dice() -> None:
+        return None
+
+    def eager_matcher_ce() -> None:
+        return None
+
+    def eager_criterion_dice() -> None:
+        return None
+
+    def eager_criterion_ce() -> None:
+        return None
+
+    matcher_module = SimpleNamespace(
+        batch_dice_loss=eager_matcher_dice,
+        batch_dice_loss_jit=object(),
+        batch_sigmoid_ce_loss=eager_matcher_ce,
+        batch_sigmoid_ce_loss_jit=object(),
+    )
+    criterion_module = SimpleNamespace(
+        dice_loss=eager_criterion_dice,
+        dice_loss_jit=object(),
+        sigmoid_ce_loss=eager_criterion_ce,
+        sigmoid_ce_loss_jit=object(),
+    )
     monkeypatch.setattr(
         segmentation_module,
         "_build_mask2former_optimizer",
@@ -749,11 +812,16 @@ def test_mask2former_trainer_uses_target_optimizer_and_scheduler(
         lambda: {
             "COCOInstanceNewBaselineDatasetMapper": object,
             "build_lr_scheduler": lambda cfg, optimizer: expected_scheduler,
+            "criterion_module": criterion_module,
+            "matcher_module": matcher_module,
             "maybe_add_gradient_clipping": object(),
         },
     )
     baseline = Detectron2SegmentationBaseline(
-        SegmentationBaselineSettings(model_family="mask2former")
+        SegmentationBaselineSettings(
+            model_family="mask2former",
+            mask2former_eager_losses=True,
+        )
     )
     trainer_class = baseline._trainer_class(
         {
@@ -766,6 +834,10 @@ def test_mask2former_trainer_uses_target_optimizer_and_scheduler(
 
     assert trainer_class.build_optimizer(object(), object()) is expected_optimizer
     assert trainer_class.build_lr_scheduler(object(), object()) is expected_scheduler
+    assert matcher_module.batch_dice_loss_jit is eager_matcher_dice
+    assert matcher_module.batch_sigmoid_ce_loss_jit is eager_matcher_ce
+    assert criterion_module.dice_loss_jit is eager_criterion_dice
+    assert criterion_module.sigmoid_ce_loss_jit is eager_criterion_ce
 
 
 def test_trainer_class_builds_coco_evaluator() -> None:

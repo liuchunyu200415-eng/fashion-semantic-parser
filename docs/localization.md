@@ -506,6 +506,11 @@ part masks. It transfers the accepted fashion checkpoint's compatible visual
 features, replaces the incompatible eight-class classifier, and uses
 Detectron2's `RepeatFactorTrainingSampler` for categories appearing in fewer
 than `1%` of training images. The eight-class deployment model is not modified.
+This profile also replaces the four upstream TorchScript-wrapped Dice/BCE loss
+functions with their original eager implementations. This leaves the formulas
+and gradients unchanged while avoiding the PyTorch 2.1
+`Global alloc not supported yet` fusion failure observed on a target shape that
+was not selected by the 20-iteration smoke.
 
 Run a 20-iteration infrastructure smoke before starting a longer stage:
 

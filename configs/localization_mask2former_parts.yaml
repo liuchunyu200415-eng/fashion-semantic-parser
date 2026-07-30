@@ -35,6 +35,9 @@ category_names:
 # Conservatively repeat images containing categories present in fewer than 1%
 # of training images. Revisit this only after per-category validation.
 repeat_factor_threshold: 0.01
+# PyTorch 2.1 can fail in the upstream scripted pairwise Dice/BCE functions on
+# certain target shapes. Eager mode calls the same mathematical functions.
+mask2former_eager_losses: true
 ims_per_batch: 4
 base_lr: 0.00001
 max_iter: 10000

@@ -2,6 +2,7 @@
 
 import copy
 import itertools
+import logging
 import math
 from pathlib import Path
 from threading import Lock
@@ -28,6 +29,8 @@ from fashion_semantic_parser.service.segmentation_metrics import (
     _coco_ap_at_iou,
     _coco_matched_mask_iou_metrics,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SegmentationBaselineSettings(BaseModel):
@@ -57,6 +60,7 @@ class SegmentationBaselineSettings(BaseModel):
     min_size_test: int | None = Field(default=None, ge=1)
     max_size_test: int | None = Field(default=None, ge=1)
     detections_per_image: int | None = Field(default=None, ge=1)
+    mask2former_eager_losses: bool = False
     subject_roi_margin: float = Field(default=0.15, ge=0.0, le=1.0)
     precision: Literal["fp32", "fp16"] = "fp32"
     device: str = "cuda"
@@ -462,6 +466,11 @@ class Detectron2SegmentationBaseline:
             return SegmentationTrainer
 
         mask2former = _load_mask2former_modules()
+        if self.settings.mask2former_eager_losses:
+            _configure_mask2former_eager_losses(
+                mask2former["matcher_module"],
+                mask2former["criterion_module"],
+            )
         build_detection_train_loader = detectron2["build_detection_train_loader"]
         mapper_class = mask2former["COCOInstanceNewBaselineDatasetMapper"]
 
@@ -741,6 +750,8 @@ def _load_mask2former_modules() -> dict[str, Any]:
         from mask2former.data.dataset_mappers.coco_instance_new_baseline_dataset_mapper import (  # noqa: E501
             COCOInstanceNewBaselineDatasetMapper,
         )
+        from mask2former.modeling import criterion as criterion_module
+        from mask2former.modeling import matcher as matcher_module
     except ImportError as error:
         raise ModelNotReadyError(
             "Mask2Former is the PRD-aligned target model for 3.1.1, but the "
@@ -753,8 +764,35 @@ def _load_mask2former_modules() -> dict[str, Any]:
         "add_deeplab_config": add_deeplab_config,
         "add_maskformer2_config": add_maskformer2_config,
         "build_lr_scheduler": build_lr_scheduler,
+        "criterion_module": criterion_module,
+        "matcher_module": matcher_module,
         "maybe_add_gradient_clipping": maybe_add_gradient_clipping,
     }
+
+
+def _configure_mask2former_eager_losses(
+    matcher_module: Any,
+    criterion_module: Any,
+) -> None:
+    """Replace scripted Mask2Former losses with equivalent eager functions."""
+    replacements = (
+        (matcher_module, "batch_dice_loss_jit", "batch_dice_loss"),
+        (matcher_module, "batch_sigmoid_ce_loss_jit", "batch_sigmoid_ce_loss"),
+        (criterion_module, "dice_loss_jit", "dice_loss"),
+        (criterion_module, "sigmoid_ce_loss_jit", "sigmoid_ce_loss"),
+    )
+    try:
+        for module, scripted_name, eager_name in replacements:
+            setattr(module, scripted_name, getattr(module, eager_name))
+    except AttributeError as error:
+        raise ModelNotReadyError(
+            "The installed Mask2Former loss modules are incompatible with "
+            "mask2former_eager_losses."
+        ) from error
+    logger.info(
+        "Using eager Mask2Former Dice/BCE losses to avoid TorchScript fusion "
+        "allocation failures."
+    )
 
 
 def _load_torch_module() -> Any:
