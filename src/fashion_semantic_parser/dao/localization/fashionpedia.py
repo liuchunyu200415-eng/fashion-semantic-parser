@@ -1,4 +1,4 @@
-"""Prepare Fashionpedia annotations for PRD 3.1.1 segmentation."""
+"""Prepare Fashionpedia local-part masks for PRD 3.1.2 localization."""
 
 import json
 from collections import Counter, defaultdict
@@ -22,46 +22,46 @@ from fashion_semantic_parser.dao.fashionpedia import (
     safe_image_path,
     source_category_name,
 )
-from fashion_semantic_parser.dao.segmentation.coco import coco_categories
-from fashion_semantic_parser.dao.segmentation.taxonomy import (
-    PRD_SEGMENTATION_CATEGORIES,
-    fashionpedia_category_exclusion_reason,
-    map_fashionpedia_category,
+from fashion_semantic_parser.dao.localization.taxonomy import (
+    FASHIONPEDIA_PART_CATEGORIES,
+    PRD_LOCALIZATION_REGION_COVERAGE,
+    localization_coco_categories,
+    map_fashionpedia_part_category,
 )
 
 
-class FashionpediaPreparationSummary(BaseModel):
-    """Audit and conversion counts for one Fashionpedia split."""
+class FashionpediaPartPreparationSummary(BaseModel):
+    """Audit and conversion counts for one Fashionpedia part split."""
 
     split: str
     source_image_count: int
     source_annotation_count: int
     selected_image_count: int
     selected_annotation_count: int
+    selected_part_annotation_count: int
     output_image_count: int
     output_annotation_count: int
     missing_image_count: int
     dropped_invalid_image_count: int
-    dropped_ambiguous_image_count: int
-    dropped_ambiguous_image_annotation_count: int
     dropped_empty_image_count: int
-    excluded_part_annotation_count: int
-    excluded_unknown_annotation_count: int
-    invalid_annotation_count: int
+    excluded_non_part_annotation_count: int
+    invalid_part_annotation_count: int
     category_counts: dict[str, int]
-    source_category_counts: dict[str, int]
+    region_group_counts: dict[str, int]
+    prd_region_coverage: dict[str, str]
+    uncovered_prd_regions: list[str]
     annotation_path: str
     output_path: str | None = None
 
 
-def audit_fashionpedia_annotations(
+def audit_fashionpedia_part_annotations(
     root: Path,
     split: str,
     limit: int | None = None,
-) -> FashionpediaPreparationSummary:
-    """Audit Fashionpedia mapping without requiring image downloads."""
+) -> FashionpediaPartPreparationSummary:
+    """Audit Fashionpedia local-part masks without requiring image files."""
     annotation_path, image_root = resolve_fashionpedia_split_paths(root, split)
-    _, summary = _prepare_fashionpedia_coco(
+    _, summary = _prepare_fashionpedia_part_coco(
         annotation_path=annotation_path,
         image_root=image_root,
         split=split,
@@ -70,15 +70,15 @@ def audit_fashionpedia_annotations(
     return summary
 
 
-def convert_fashionpedia_to_coco(
+def convert_fashionpedia_parts_to_coco(
     root: Path,
     split: str,
     output_path: Path,
     limit: int | None = None,
-) -> FashionpediaPreparationSummary:
-    """Convert one Fashionpedia split to the project's eight-class COCO schema."""
+) -> FashionpediaPartPreparationSummary:
+    """Convert one Fashionpedia split to a local-part COCO dataset."""
     annotation_path, image_root = resolve_fashionpedia_split_paths(root, split)
-    coco, summary = _prepare_fashionpedia_coco(
+    coco, summary = _prepare_fashionpedia_part_coco(
         annotation_path=annotation_path,
         image_root=image_root,
         split=split,
@@ -87,8 +87,8 @@ def convert_fashionpedia_to_coco(
     if summary.missing_image_count:
         raise FileNotFoundError(
             f"Fashionpedia {split} is missing {summary.missing_image_count} "
-            f"selected image file(s) under {image_root}. Run --audit-only until "
-            "the official image archive has been extracted."
+            f"selected part image file(s) under {image_root}. Run --audit-only "
+            "until the official image archive has been extracted."
         )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,19 +96,20 @@ def convert_fashionpedia_to_coco(
         json.dumps(coco, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    return summary.model_copy(
+    converted_summary: FashionpediaPartPreparationSummary = summary.model_copy(
         update={"output_path": to_project_relative_path(output_path)}
     )
+    return converted_summary
 
 
-def _prepare_fashionpedia_coco(
+def _prepare_fashionpedia_part_coco(
     *,
     annotation_path: Path,
     image_root: Path,
     split: str,
     limit: int | None,
-) -> tuple[dict[str, object], FashionpediaPreparationSummary]:
-    """Build mapped records and detailed audit counts."""
+) -> tuple[dict[str, object], FashionpediaPartPreparationSummary]:
+    """Build local-part records while preserving annotation coverage limits."""
     if limit is not None and limit < 0:
         raise ValueError("limit must be greater than or equal to zero")
 
@@ -135,21 +136,16 @@ def _prepare_fashionpedia_coco(
         if is_integer(image_id):
             annotations_by_image[image_id].append(annotation)
 
-    source_category_counts: Counter[str] = Counter()
-    for annotation in selected_annotations:
-        source_category_counts[_source_category_name(annotation, category_by_id)] += 1
-
     images: list[dict[str, object]] = []
     annotations: list[dict[str, object]] = []
-    target_category_counts: Counter[str] = Counter()
+    category_counts: Counter[str] = Counter()
+    region_group_counts: Counter[str] = Counter()
+    selected_part_annotation_count = 0
     missing_image_count = 0
     dropped_invalid_image_count = 0
-    dropped_ambiguous_image_count = 0
-    dropped_ambiguous_image_annotation_count = 0
     dropped_empty_image_count = 0
-    excluded_part_annotation_count = 0
-    excluded_unknown_annotation_count = 0
-    invalid_annotation_count = 0
+    excluded_non_part_annotation_count = 0
+    invalid_part_annotation_count = 0
 
     for source_image in selected_images:
         source_image_id = source_image.get("id")
@@ -165,35 +161,24 @@ def _prepare_fashionpedia_coco(
             dropped_invalid_image_count += 1
             continue
 
-        source_rows = annotations_by_image.get(source_image_id, [])
-        if _contains_ambiguous_main_apparel(source_rows, category_by_id):
-            dropped_ambiguous_image_count += 1
-            dropped_ambiguous_image_annotation_count += len(source_rows)
-            continue
-
         converted_rows: list[dict[str, object]] = []
-        for source_annotation in source_rows:
-            source_category_id = source_annotation.get("category_id")
-            category_name = _source_category_name(
+        for source_annotation in annotations_by_image.get(source_image_id, []):
+            source_category_name_value = source_category_name(
                 source_annotation,
                 category_by_id,
             )
-            exclusion_reason = fashionpedia_category_exclusion_reason(category_name)
-            if exclusion_reason == "garment_part":
-                excluded_part_annotation_count += 1
-                continue
-
-            category = map_fashionpedia_category(category_name)
+            category = map_fashionpedia_part_category(source_category_name_value)
             if category is None:
-                excluded_unknown_annotation_count += 1
+                excluded_non_part_annotation_count += 1
                 continue
 
+            selected_part_annotation_count += 1
             segmentation = normalize_coco_segmentation(
                 source_annotation.get("segmentation")
             )
             bbox = normalize_coco_bbox_xywh(source_annotation.get("bbox"))
             if segmentation is None or bbox is None:
-                invalid_annotation_count += 1
+                invalid_part_annotation_count += 1
                 continue
 
             converted_rows.append(
@@ -203,9 +188,13 @@ def _prepare_fashionpedia_coco(
                     "bbox": bbox,
                     "area": annotation_area(source_annotation.get("area"), bbox),
                     "iscrowd": int(source_annotation.get("iscrowd") == 1),
+                    "attribute_ids": _attribute_ids(
+                        source_annotation.get("attribute_ids")
+                    ),
                     "source_annotation_id": source_annotation.get("id"),
-                    "source_category_id": source_category_id,
+                    "source_category_id": source_annotation.get("category_id"),
                     "target_category_name": category.english_name,
+                    "region_group": category.region_group,
                 }
             )
 
@@ -234,6 +223,7 @@ def _prepare_fashionpedia_coco(
 
         for converted_row in converted_rows:
             category_name = str(converted_row.pop("target_category_name"))
+            region_group = str(converted_row["region_group"])
             converted_row.update(
                 {
                     "id": len(annotations) + 1,
@@ -241,63 +231,59 @@ def _prepare_fashionpedia_coco(
                 }
             )
             annotations.append(converted_row)
-            target_category_counts[category_name] += 1
+            category_counts[category_name] += 1
+            region_group_counts[region_group] += 1
 
+    coverage: dict[str, str] = {
+        region.english_name: region.status
+        for region in PRD_LOCALIZATION_REGION_COVERAGE
+    }
     coco: dict[str, object] = {
         "info": {
-            "description": "Fashionpedia mapped to PRD 3.1.1 segmentation",
+            "description": "Fashionpedia parts for PRD 3.1.2 localization",
             "source": "https://fashionpedia.github.io/",
+            "coverage_note": (
+                "Direct part masks do not cover cuff, hem, waist, or general "
+                "pattern regions."
+            ),
         },
         "images": images,
         "annotations": annotations,
-        "categories": coco_categories(PRD_SEGMENTATION_CATEGORIES),
+        "categories": localization_coco_categories(),
         "licenses": source.get("licenses", []),
     }
-    summary = FashionpediaPreparationSummary(
+    summary = FashionpediaPartPreparationSummary(
         split=split,
         source_image_count=len(source_images),
         source_annotation_count=len(source_annotations),
         selected_image_count=len(selected_images),
         selected_annotation_count=len(selected_annotations),
+        selected_part_annotation_count=selected_part_annotation_count,
         output_image_count=len(images),
         output_annotation_count=len(annotations),
         missing_image_count=missing_image_count,
         dropped_invalid_image_count=dropped_invalid_image_count,
-        dropped_ambiguous_image_count=dropped_ambiguous_image_count,
-        dropped_ambiguous_image_annotation_count=(
-            dropped_ambiguous_image_annotation_count
-        ),
         dropped_empty_image_count=dropped_empty_image_count,
-        excluded_part_annotation_count=excluded_part_annotation_count,
-        excluded_unknown_annotation_count=excluded_unknown_annotation_count,
-        invalid_annotation_count=invalid_annotation_count,
+        excluded_non_part_annotation_count=excluded_non_part_annotation_count,
+        invalid_part_annotation_count=invalid_part_annotation_count,
         category_counts={
-            category.english_name: target_category_counts[category.english_name]
-            for category in PRD_SEGMENTATION_CATEGORIES
+            category.english_name: category_counts[category.english_name]
+            for category in FASHIONPEDIA_PART_CATEGORIES
         },
-        source_category_counts=dict(sorted(source_category_counts.items())),
+        region_group_counts=dict(sorted(region_group_counts.items())),
+        prd_region_coverage=coverage,
+        uncovered_prd_regions=[
+            region.english_name
+            for region in PRD_LOCALIZATION_REGION_COVERAGE
+            if region.status == "missing"
+        ],
         annotation_path=to_project_relative_path(annotation_path),
     )
     return coco, summary
 
 
-def _source_category_name(
-    annotation: dict[str, Any],
-    category_by_id: dict[int, dict[str, Any]],
-) -> str:
-    """Resolve one source category name or a stable unknown marker."""
-    return source_category_name(annotation, category_by_id)
-
-
-def _contains_ambiguous_main_apparel(
-    annotations: list[dict[str, Any]],
-    category_by_id: dict[int, dict[str, Any]],
-) -> bool:
-    """Keep excluded main apparel from becoming unlabeled background."""
-    return any(
-        fashionpedia_category_exclusion_reason(
-            _source_category_name(annotation, category_by_id)
-        )
-        == "ambiguous_main_apparel"
-        for annotation in annotations
-    )
+def _attribute_ids(value: object) -> list[int]:
+    """Preserve valid Fashionpedia attribute IDs for later 3.1.3 reuse."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if is_integer(item)]

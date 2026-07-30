@@ -1,5 +1,9 @@
 """Business services for the fashion semantic parser."""
 
+from fashion_semantic_parser.service.region_localization import (
+    RegionLocalizationRuntime,
+    UnavailableRegionLocalizationService,
+)
 from fashion_semantic_parser.service.segmentation_baseline import (
     Detectron2SegmentationBaseline,
     SegmentationBaselineSettings,
@@ -18,6 +22,8 @@ __all__ = [
     "Detectron2PersonROIDetector",
     "GarmentSegmentationService",
     "PersonROIDetectorSettings",
+    "RegionLocalizationRuntime",
     "SegmentationBaselineSettings",
     "SegmentationRuntime",
+    "UnavailableRegionLocalizationService",
 ]

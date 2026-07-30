@@ -7,6 +7,10 @@ from fashion_semantic_parser.common.exceptions import (
     InvalidImageInputError,
 )
 from fashion_semantic_parser.config import Settings, load_settings
+from fashion_semantic_parser.models.localization import (
+    RegionLocalizationPrediction,
+    RegionLocalizationRequest,
+)
 from fashion_semantic_parser.models.schemas import (
     MultimodalQueryRequest,
     MultimodalQueryResponse,
@@ -16,6 +20,10 @@ from fashion_semantic_parser.models.segmentation import (
     SegmentationRequest,
 )
 from fashion_semantic_parser.service.parser_service import FashionParserService
+from fashion_semantic_parser.service.region_localization import (
+    RegionLocalizationRuntime,
+    UnavailableRegionLocalizationService,
+)
 from fashion_semantic_parser.service.segmentation_runtime import (
     GarmentSegmentationService,
     SegmentationRuntime,
@@ -26,6 +34,7 @@ def create_app(
     *,
     settings: Settings | None = None,
     segmentation_service: SegmentationRuntime | None = None,
+    localization_service: RegionLocalizationRuntime | None = None,
     parser_service: FashionParserService | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
@@ -50,6 +59,8 @@ def create_app(
             segmentation_service,
             default_auto_subject_roi=query_auto_subject_roi,
         )
+    if localization_service is None:
+        localization_service = UnavailableRegionLocalizationService()
 
     @app.get("/health")
     def health_check() -> dict[str, str]:
@@ -76,6 +87,24 @@ def create_app(
                 request.image_path,
                 subject_roi=request.subject_roi,
                 auto_subject_roi=request.auto_subject_roi,
+            )
+        except FashionParserError as error:
+            raise _http_error(error) from error
+
+    @app.post("/v1/localize", response_model=RegionLocalizationPrediction)
+    def localize_fashion_region(
+        request: RegionLocalizationRequest,
+    ) -> RegionLocalizationPrediction:
+        """Return the mask and box for a natural-language fashion-part query."""
+        auto_subject_roi = request.auto_subject_roi
+        if auto_subject_roi is None:
+            auto_subject_roi = request.subject_roi is None
+        try:
+            return localization_service.localize(
+                request.image_path,
+                request.query,
+                subject_roi=request.subject_roi,
+                auto_subject_roi=auto_subject_roi,
             )
         except FashionParserError as error:
             raise _http_error(error) from error
