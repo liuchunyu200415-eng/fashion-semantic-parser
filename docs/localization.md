@@ -470,6 +470,27 @@ model returned no candidate. Offline filtering therefore preserves misses in
 Recall and All-GT IoU. Run the complete collar subset only after the 10-image
 smoke verifies the environment and estimated runtime.
 
+### Collar Proposal-Recall Diagnosis
+
+The first 10-image collar smoke produced 24 candidates but only two
+ground-truth matches at IoU `0.50`: Top-1 reached `P50=20`, `R50=20`, and
+`F1=20`. Top-3 and Top-5 did not improve recall. Matched mean IoU was `71.72`,
+while All-GT mean IoU was only `14.34`. Five images had no candidate above
+`7.63` IoU, and three more had a best candidate between `28.62` and `34.17`
+IoU. This identifies proposal/mask recall as the current bottleneck rather
+than post-inference Top-K filtering.
+
+The next smoke separates two factors without changing the deployment YAML:
+
+1. lower the Grounding DINO box threshold from `0.25` to `0.15`
+2. compare the default `collar` prompt with a contextual prompt,
+   `shirt collar . clothing collar`
+
+`--grounding-prompt` changes only the English text sent to Grounding DINO. The
+original query still determines the returned API label and evaluation
+category. These overrides are experimental and are recorded in each run
+summary.
+
 ## API Contract
 
 The request model accepts an image, query, and optional subject ROI:

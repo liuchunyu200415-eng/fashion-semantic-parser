@@ -49,6 +49,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--text-threshold", type=float, default=None)
     parser.add_argument("--max-regions", type=int, default=None)
     parser.add_argument("--subject-roi-margin", type=float, default=None)
+    parser.add_argument(
+        "--grounding-prompt",
+        default=None,
+        help=(
+            "Optional English Grounding DINO prompt override. The original "
+            "query still determines the returned region label."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -93,6 +101,7 @@ def main() -> None:
     prediction = GroundedSAMHQRegionLocalizationService(
         args.config,
         settings_overrides=settings_overrides,
+        grounding_prompt_override=args.grounding_prompt,
     ).localize(
         args.image,
         args.query,
@@ -101,6 +110,7 @@ def main() -> None:
     )
     elapsed_seconds = time.perf_counter() - start_time
     payload = prediction.model_dump(mode="json")
+    payload["grounding_prompt_override"] = args.grounding_prompt
     payload["elapsed_seconds_including_model_load"] = elapsed_seconds
     serialized = json.dumps(payload, ensure_ascii=False, indent=2)
     if args.output:

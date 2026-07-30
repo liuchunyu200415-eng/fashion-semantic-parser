@@ -56,10 +56,12 @@ def _service(
     *,
     detector: _FakeSubjectROIDetector | None = None,
     margin: float = 0.0,
+    grounding_prompt_override: str | None = None,
 ) -> GroundedSAMHQRegionLocalizationService:
     return GroundedSAMHQRegionLocalizationService(
         predictor=predictor,
         subject_roi_detector=detector,
+        grounding_prompt_override=grounding_prompt_override,
         settings=GroundedSAMHQSettings(
             device="cpu",
             precision="fp32",
@@ -162,6 +164,41 @@ def test_localization_falls_back_to_full_image_without_person(
     assert predictor.calls == [((20, 30, 3), "pocket")]
     assert result.subject_roi is None
     assert result.subject_roi_source == "full_image_fallback"
+
+
+def test_localization_can_override_grounding_prompt_without_changing_label(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prompt experiments should retain the query-derived API category."""
+    image_path = tmp_path / "image.jpg"
+    cv2.imwrite(str(image_path), np.zeros((20, 30, 3), dtype=np.uint8))
+    monkeypatch.setattr(
+        "fashion_semantic_parser.service.region_localization.resolve_project_path",
+        lambda _: image_path,
+    )
+    predictor = _FakeGroundedPredictor()
+
+    result = _service(
+        predictor,
+        grounding_prompt_override=" shirt collar .  clothing collar ",
+    ).localize(
+        "data/image.jpg",
+        "这件衣服的衣领",
+        auto_subject_roi=False,
+    )
+
+    assert predictor.calls == [((20, 30, 3), "shirt collar . clothing collar")]
+    assert result.regions[0].region_label == "collar"
+
+
+def test_localization_rejects_empty_grounding_prompt_override() -> None:
+    """An explicit prompt override must carry usable grounding text."""
+    with pytest.raises(ValueError, match="cannot be empty"):
+        _service(
+            _FakeGroundedPredictor(),
+            grounding_prompt_override="   ",
+        )
 
 
 def test_localization_rejects_wrong_sam_mask_shape(

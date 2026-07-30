@@ -51,6 +51,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--text-threshold", type=float, default=None)
     parser.add_argument("--max-regions", type=int, default=None)
     parser.add_argument("--subject-roi-margin", type=float, default=None)
+    parser.add_argument(
+        "--grounding-prompt",
+        default=None,
+        help=(
+            "Optional English Grounding DINO prompt override. The query still "
+            "selects the exact evaluation category."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -96,6 +104,7 @@ def main() -> None:
     service = GroundedSAMHQRegionLocalizationService(
         args.config,
         settings_overrides=settings_overrides,
+        grounding_prompt_override=args.grounding_prompt,
     )
 
     predictions: list[dict[str, Any]] = []
@@ -137,6 +146,7 @@ def main() -> None:
         "category": args.category,
         "category_id": category_id,
         "query": args.query,
+        "grounding_prompt_override": args.grounding_prompt,
         "roi_mode": args.roi_mode,
         "settings_overrides": settings_overrides,
         "image_ids": [int(image["id"]) for image in images],

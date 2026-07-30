@@ -83,8 +83,15 @@ class GroundedSAMHQRegionLocalizationService:
         subject_roi_detector_factory: SubjectROIDetectorFactory | None = None,
         settings: GroundedSAMHQSettings | None = None,
         settings_overrides: Mapping[str, Any] | None = None,
+        grounding_prompt_override: str | None = None,
     ) -> None:
         """Create a service that loads both foundation models on first use."""
+        if grounding_prompt_override is not None:
+            grounding_prompt_override = " ".join(
+                grounding_prompt_override.strip().split()
+            )
+            if not grounding_prompt_override:
+                raise ValueError("Grounding prompt override cannot be empty.")
         self.config_path = config_path
         self._predictor = predictor
         self._predictor_factory = predictor_factory
@@ -97,6 +104,7 @@ class GroundedSAMHQRegionLocalizationService:
         self._settings = settings
         self._settings_lock = Lock()
         self._settings_overrides = dict(settings_overrides or {})
+        self._grounding_prompt_override = grounding_prompt_override
 
     def localize(
         self,
@@ -140,6 +148,12 @@ class GroundedSAMHQRegionLocalizationService:
                 margin=settings.subject_roi_margin,
             )
             prompt = resolve_localization_prompt(query)
+            if self._grounding_prompt_override is not None:
+                prompt = prompt.model_copy(
+                    update={
+                        "grounding_prompt": self._grounding_prompt_override,
+                    }
+                )
             candidates = self._get_predictor().predict(
                 crop,
                 prompt.grounding_prompt,
