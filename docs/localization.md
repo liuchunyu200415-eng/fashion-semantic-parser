@@ -139,6 +139,7 @@ cd /root/fashion-semantic-parser
 export OMP_NUM_THREADS=1
 export TORCH_CUDA_ARCH_LIST="8.6"
 export CUDA_HOME=/usr/local/cuda
+export HF_ENDPOINT=https://hf-mirror.com
 export PYTHONPATH=$PWD/src:$PWD/external/Mask2Former:$PYTHONPATH
 
 mkdir -p external models/checkpoints/localization
@@ -147,17 +148,47 @@ test -d external/GroundingDINO/.git || \
   git clone https://github.com/IDEA-Research/GroundingDINO.git \
   external/GroundingDINO
 
+python -m pip install \
+  "transformers==4.35.2" \
+  segment-anything-hq \
+  gdown
+
 python -m pip install --no-build-isolation -e external/GroundingDINO
-python -m pip install segment-anything-hq
 
-curl -L --fail --retry 3 \
-  https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth \
-  -o models/checkpoints/localization/groundingdino_swint_ogc.pth
+test -s models/checkpoints/localization/groundingdino_swint_ogc.pth || \
+  curl -L --fail --retry 3 \
+    https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth \
+    -o models/checkpoints/localization/groundingdino_swint_ogc.pth
 
-curl -L --fail --retry 3 \
-  https://huggingface.co/lkeab/hq-sam/resolve/main/sam_hq_vit_b.pth \
-  -o models/checkpoints/localization/sam_hq_vit_b.pth
+SAM_HQ_WEIGHTS=models/checkpoints/localization/sam_hq_vit_b.pth
+if [ ! -s "$SAM_HQ_WEIGHTS" ]; then
+  rm -f "${SAM_HQ_WEIGHTS}.part"
+  python -m gdown --fuzzy \
+    "https://drive.google.com/file/d/11yExZLOve38kRZPfRx_MRxfIAKmfMY47/view?usp=sharing" \
+    -O "${SAM_HQ_WEIGHTS}.part"
+  echo \
+    "14a9d662cd6f5a9c2dba6d40ab0058d88d287e4a18fd6fdc6ad5fb1a3fdeaa57  ${SAM_HQ_WEIGHTS}.part" \
+    | sha256sum -c -
+  mv "${SAM_HQ_WEIGHTS}.part" "$SAM_HQ_WEIGHTS"
+fi
+
+python - <<'PY'
+from transformers import AutoTokenizer, BertModel
+
+print("状态：正在缓存 Grounding DINO 的 bert-base-uncased 文本编码器...")
+AutoTokenizer.from_pretrained("bert-base-uncased")
+BertModel.from_pretrained("bert-base-uncased")
+print("状态：bert-base-uncased 已缓存")
+PY
 ```
+
+Grounding DINO does not constrain its `transformers` dependency. Pinning
+`4.35.2` prevents newer releases from disabling model support for the
+project's PyTorch `2.1.2` environment. The mirror endpoint is also exported
+before pre-caching `bert-base-uncased`, which Grounding DINO otherwise tries to
+download during the first request. The SAM-HQ ViT-B file is downloaded from
+the official Google Drive link and accepted only after its published SHA256
+checksum passes.
 
 Run the readiness check before starting inference:
 
@@ -166,8 +197,9 @@ python scripts/check_localization_env.py
 ```
 
 A ready instance reports an empty `recommendations` list. The checker verifies
-the converted train/validation COCO files, CUDA, both official imports, model
-configuration, and both checkpoints.
+the converted train/validation COCO files, CUDA, a PyTorch-compatible
+Transformers BERT implementation, both official imports, model configuration,
+and both checkpoints.
 
 ## First Real-Image Smoke Test
 

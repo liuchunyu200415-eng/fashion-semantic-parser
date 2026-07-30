@@ -85,6 +85,7 @@ def main() -> None:
         },
         "paths": paths,
         "torch": _torch_status(),
+        "transformers": _transformers_status(),
         "detectron2": _module_status("detectron2"),
         "grounding_dino": _module_status("groundingdino.util.inference"),
         "sam_hq": _sam_hq_status(settings.sam_hq_module),
@@ -165,6 +166,24 @@ def _module_status(module_name: str) -> dict[str, Any]:
     }
 
 
+def _transformers_status() -> dict[str, Any]:
+    """Check that Transformers can expose its PyTorch BERT implementation."""
+    status = _module_status("transformers")
+    if not status.get("installed"):
+        return status
+
+    try:
+        transformers = importlib.import_module("transformers")
+        transformers_utils = importlib.import_module("transformers.utils")
+        status["torch_available"] = bool(transformers_utils.is_torch_available())
+        getattr(transformers, "BertModel")
+        status["bert_model_available"] = True
+    except (AttributeError, ImportError, NameError, OSError, RuntimeError) as error:
+        status["bert_model_available"] = False
+        status["error"] = str(error)
+    return status
+
+
 def _sam_hq_status(module_name: str) -> dict[str, Any]:
     """Prefer the explicit pip package, then the official source module."""
     candidates = (
@@ -210,6 +229,19 @@ def _recommendations(report: dict[str, Any]) -> list[str]:
     if not report.get("grounding_dino", {}).get("installed"):
         recommendations.append(
             "Install the official GroundingDINO checkout with its CUDA extension."
+        )
+    transformers_status = report.get("transformers", {})
+    if not transformers_status.get("installed"):
+        recommendations.append(
+            "Install transformers==4.35.2 for Grounding DINO's BERT encoder."
+        )
+    elif not transformers_status.get("torch_available") or not transformers_status.get(
+        "bert_model_available"
+    ):
+        version = transformers_status.get("version", "unknown")
+        recommendations.append(
+            "Install transformers==4.35.2; the current Transformers "
+            f"{version} cannot expose its PyTorch BERT model."
         )
     if not report.get("detectron2", {}).get("installed"):
         recommendations.append(
