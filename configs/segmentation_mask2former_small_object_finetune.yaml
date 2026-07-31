@@ -1,0 +1,32 @@
+# PRD 3.1.1 small-object fine-tuning experiment.
+#
+# The third source reuses Fashionpedia images containing a COCO-small shoes,
+# bag, or accessory mask. Keeping the same 4.3 factor gives those records one
+# additional Fashionpedia-weighted appearance without copying image files.
+model_family: mask2former
+train_json: data/processed/autodl/segmentation/deepfashion2_train.json
+additional_train_jsons:
+  - data/processed/autodl/segmentation/fashionpedia_train.json
+  - data/processed/autodl/segmentation/fashionpedia_train_small_objects.json
+train_source_repeat_factors:
+  - 1.0
+  - 4.3
+  - 4.3
+val_json: data/processed/autodl/segmentation/fashionpedia_validation.json
+image_root: .
+output_dir: outputs/segmentation/mixed/mask2former_r50_small_object_finetune
+config_source: local
+config_file: external/Mask2Former/configs/coco/instance-segmentation/maskformer2_R50_bs16_50ep.yaml
+weights: outputs/segmentation/mixed/mask2former_r50_consolidation/model_0001999.pth
+num_classes: 8
+ims_per_batch: 4
+base_lr: 0.0000025
+max_iter: 1000
+checkpoint_period: 500
+eval_period: 0
+num_workers: 2
+score_threshold: 0.0
+precision: fp16
+device: cuda
+resume: false
+evaluate_after_training: false

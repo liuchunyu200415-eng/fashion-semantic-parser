@@ -11,6 +11,10 @@ from fashion_semantic_parser.dao.segmentation.fashionpedia import (
     audit_fashionpedia_annotations,
     convert_fashionpedia_to_coco,
 )
+from fashion_semantic_parser.dao.segmentation.small_objects import (
+    SmallObjectSubsetSummary,
+    build_small_object_coco_subset,
+)
 from fashion_semantic_parser.dao.segmentation.taxonomy import (
     FASHIONPEDIA_AMBIGUOUS_CATEGORIES,
     FASHIONPEDIA_GARMENT_PART_CATEGORIES,
@@ -27,7 +31,9 @@ __all__ = [
     "FASHIONPEDIA_GARMENT_PART_CATEGORIES",
     "FashionpediaPreparationSummary",
     "PRD_SEGMENTATION_CATEGORIES",
+    "SmallObjectSubsetSummary",
     "audit_fashionpedia_annotations",
+    "build_small_object_coco_subset",
     "coco_categories",
     "convert_fashionpedia_to_coco",
     "convert_deepfashion2_to_coco",

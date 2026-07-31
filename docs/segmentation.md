@@ -634,6 +634,37 @@ global-`0.6` baseline. Automatic person ROI is enabled per request with
 `"auto_subject_roi": true`; ROI-based dataset evaluation is a separate A/B path
 because it adds a person detector and changes the evaluated image crop.
 
+### Small-object fine-tuning subset
+
+After the inference-only A/B tests, build a targeted training source from the
+converted Fashionpedia train COCO file. An image is selected when it contains a
+shoes, bag, or accessory mask below the COCO-small area limit (`32 x 32`). All
+annotations on each selected image are retained, and the original image path is
+reused, so contextual garments remain supervised and no image files are copied.
+
+Audit the subset before writing it:
+
+```bash
+python scripts/build_small_object_training_subset.py --audit-only
+```
+
+Then generate the COCO JSON and run the isolated fine-tuning profile:
+
+```bash
+python scripts/build_small_object_training_subset.py
+
+python scripts/train_segmentation_baseline.py \
+  --config configs/segmentation_mask2former_small_object_finetune.yaml \
+  --skip-final-eval
+```
+
+The fine-tuning profile starts from the accepted mixed `model_0001999.pth`,
+keeps both original training corpora, and adds the targeted subset as a third
+weighted source. Its learning rate is `2.5e-6`, with checkpoints at 500 and
+1,000 iterations. Evaluate both Fashionpedia and DeepFashion2 checkpoints
+separately before replacing the accepted model. This stage changes sampling
+only; Copy-Paste remains a later isolated ablation so its effect is measurable.
+
 ```bash
 python scripts/evaluate_segmentation_baseline.py \
   --config configs/segmentation_mask2former_deployment.yaml \

@@ -668,6 +668,23 @@ def test_mask2former_small_object_config_preserves_baseline_checkpoint() -> None
     SegmentationBaselineSettings.model_validate(config)
 
 
+def test_small_object_finetune_config_adds_targeted_training_source() -> None:
+    """Fine-tuning should repeat targeted records without dropping either corpus."""
+    config_path = Path("configs/segmentation_mask2former_small_object_finetune.yaml")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert config["weights"].endswith("model_0001999.pth")
+    assert config["additional_train_jsons"] == [
+        "data/processed/autodl/segmentation/fashionpedia_train.json",
+        "data/processed/autodl/segmentation/fashionpedia_train_small_objects.json",
+    ]
+    assert config["train_source_repeat_factors"] == [1.0, 4.3, 4.3]
+    assert config["base_lr"] == 0.0000025
+    assert config["max_iter"] == 1000
+    assert config["evaluate_after_training"] is False
+    SegmentationBaselineSettings.model_validate(config)
+
+
 def test_mask2former_fashionpedia_config_is_isolated_transfer_stage() -> None:
     """Transfer training should stay isolated until mixed consolidation."""
     config_path = Path("configs/segmentation_mask2former_fashionpedia.yaml")
