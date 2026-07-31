@@ -1,5 +1,6 @@
 """Tests for saved-prediction mask IoU evaluation helpers."""
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -10,6 +11,7 @@ from scripts.evaluate_segmentation_predictions import (
     _coco_class_names,
     _filter_predictions,
     _parse_category_thresholds,
+    _resolve_path,
 )
 
 
@@ -97,3 +99,10 @@ def test_coco_ap_summary_converts_fractions_to_percentages() -> None:
     assert metrics["APs"] != metrics["APs"]
     assert metrics["APm"] == pytest.approx(20.0)
     assert metrics["APl"] == pytest.approx(50.0)
+
+
+def test_output_path_allows_external_evaluation_directory(tmp_path: Path) -> None:
+    """Saved-prediction metrics may be written beside external run artifacts."""
+    output_path = tmp_path / "metrics.json"
+
+    assert _resolve_path(output_path, pytest.fail) == output_path

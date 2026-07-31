@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         default=None,
-        help="Optional project-relative output JSON path.",
+        help="Optional project-relative or absolute output JSON path.",
     )
     return parser.parse_args()
 
@@ -108,7 +108,7 @@ def main() -> None:
     print(output_json)
 
     if args.output:
-        output_path = resolve_project_path(args.output)
+        output_path = _resolve_path(args.output, resolve_project_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(output_json + "\n", encoding="utf-8")
 
