@@ -355,6 +355,7 @@ def test_segmentation_baseline_settings_defaults() -> None:
     assert settings.min_size_test is None
     assert settings.max_size_test is None
     assert settings.detections_per_image is None
+    assert settings.category_score_thresholds == {}
     assert settings.precision == "fp32"
     assert settings.resume is False
     assert settings.evaluate_after_training is True
@@ -409,6 +410,18 @@ def test_custom_segmentation_taxonomy_must_match_model_head() -> None:
             num_classes=2,
             category_names=["collar", "collar"],
         )
+    with pytest.raises(ValueError, match="unknown categories"):
+        SegmentationBaselineSettings(category_score_thresholds={"shoe": 0.3})
+
+
+def test_category_thresholds_lower_model_output_floor() -> None:
+    """The model must retain small-class candidates for category filtering."""
+    settings = SegmentationBaselineSettings(
+        score_threshold=0.6,
+        category_score_thresholds={"shoes": 0.4, "bag": 0.3},
+    )
+
+    assert settings.model_score_threshold() == 0.3
 
 
 def test_mixed_training_configures_weighted_source_sampler() -> None:
@@ -636,6 +649,23 @@ def test_mask2former_deployment_config_records_validated_profile() -> None:
     assert "detections_per_image" not in config
     assert config["precision"] == "fp16"
     assert config["device"] == "cuda"
+
+
+def test_mask2former_small_object_config_preserves_baseline_checkpoint() -> None:
+    """Small-object experiments should be isolated from the accepted profile."""
+    config_path = Path("configs/segmentation_mask2former_small_objects.yaml")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert config["weights"].endswith("model_0001999.pth")
+    assert config["score_threshold"] == 0.6
+    assert config["category_score_thresholds"] == {
+        "shoes": 0.4,
+        "bag": 0.3,
+        "accessory": 0.3,
+    }
+    assert config["min_size_test"] == 640
+    assert config["max_size_test"] == 1067
+    SegmentationBaselineSettings.model_validate(config)
 
 
 def test_mask2former_fashionpedia_config_is_isolated_transfer_stage() -> None:
@@ -1032,6 +1062,21 @@ def test_convert_detectron2_instances_filters_low_scores() -> None:
     assert len(prediction.instances) == 1
     assert prediction.instances[0].category_label == "dress"
     assert prediction.instances[0].confidence == 0.91
+
+
+def test_convert_detectron2_instances_uses_category_score_thresholds() -> None:
+    """Small categories may retain candidates below the global threshold."""
+    prediction = convert_detectron2_instances(
+        instances=_FakeTwoScoreInstances(),
+        image_path="data/raw/example.jpg",
+        score_threshold=0.6,
+        category_score_thresholds={"top": 0.05},
+    )
+
+    assert [instance.category_label for instance in prediction.instances] == [
+        "top",
+        "dress",
+    ]
 
 
 def test_convert_detectron2_instances_maps_crop_coordinates_to_full_image() -> None:

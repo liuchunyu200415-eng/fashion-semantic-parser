@@ -32,6 +32,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--score-threshold", type=float, default=0.1)
     parser.add_argument(
+        "--category-score-threshold",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="Repeat for category-specific deployment thresholds.",
+    )
+    parser.add_argument(
         "--output",
         default=None,
         help="Optional project-relative output JSON path.",
@@ -60,9 +67,16 @@ def main() -> None:
     validation_path = _resolve_path(args.val_json, resolve_project_path)
     prediction_path = _resolve_path(args.predictions, resolve_project_path)
     predictions = _read_prediction_list(prediction_path)
+    coco_ground_truth = COCO(str(validation_path))
+    category_thresholds = _parse_category_thresholds(args.category_score_threshold)
+    category_thresholds_by_id = _category_thresholds_by_id(
+        coco_ground_truth,
+        category_thresholds,
+    )
     filtered_predictions = _filter_predictions(
         predictions,
         score_threshold=args.score_threshold,
+        category_score_thresholds=category_thresholds_by_id,
     )
     if not filtered_predictions:
         raise ValueError(
@@ -70,7 +84,6 @@ def main() -> None:
             f"{args.score_threshold}."
         )
 
-    coco_ground_truth = COCO(str(validation_path))
     coco_predictions = coco_ground_truth.loadRes(filtered_predictions)
     coco_eval = COCOeval(coco_ground_truth, coco_predictions, "segm")
     coco_eval.evaluate()
@@ -85,6 +98,7 @@ def main() -> None:
         "validation_json": str(validation_path),
         "predictions_json": str(prediction_path),
         "score_threshold": args.score_threshold,
+        "category_score_thresholds": category_thresholds,
         "prediction_count_before_filter": len(predictions),
         "prediction_count_after_filter": len(filtered_predictions),
         "segm_coco": _coco_ap_summary(coco_eval.stats),
@@ -113,15 +127,58 @@ def _read_prediction_list(path: Path) -> list[dict[str, Any]]:
 def _filter_predictions(
     predictions: list[dict[str, Any]],
     score_threshold: float,
+    category_score_thresholds: dict[int, float] | None = None,
 ) -> list[dict[str, Any]]:
     """Keep predictions at or above the selected deployment score threshold."""
     if not 0.0 <= score_threshold <= 1.0:
         raise ValueError("--score-threshold must be between 0 and 1.")
+    category_score_thresholds = category_score_thresholds or {}
     return [
         prediction
         for prediction in predictions
-        if float(prediction.get("score", 0.0)) >= score_threshold
+        if float(prediction.get("score", 0.0))
+        >= category_score_thresholds.get(
+            int(prediction.get("category_id", -1)),
+            score_threshold,
+        )
     ]
+
+
+def _parse_category_thresholds(values: list[str]) -> dict[str, float]:
+    """Parse repeated NAME=VALUE category threshold arguments."""
+    thresholds: dict[str, float] = {}
+    for value in values:
+        name, separator, raw_threshold = value.partition("=")
+        if not separator or not name.strip():
+            raise ValueError("--category-score-threshold must use NAME=VALUE syntax.")
+        try:
+            threshold = float(raw_threshold)
+        except ValueError as error:
+            raise ValueError(f"Invalid category threshold value: {value}") from error
+        if not 0.0 <= threshold <= 1.0:
+            raise ValueError("Category score thresholds must be between 0 and 1.")
+        thresholds[name.strip()] = threshold
+    return thresholds
+
+
+def _category_thresholds_by_id(
+    coco_ground_truth: Any,
+    thresholds: dict[str, float],
+) -> dict[int, float]:
+    """Resolve category-name thresholds against a COCO taxonomy."""
+    categories = coco_ground_truth.loadCats(coco_ground_truth.getCatIds())
+    category_ids_by_name = {
+        str(category["name"]): int(category["id"]) for category in categories
+    }
+    unknown_names = set(thresholds) - set(category_ids_by_name)
+    if unknown_names:
+        raise ValueError(
+            "Unknown COCO categories in score thresholds: "
+            + ", ".join(sorted(unknown_names))
+        )
+    return {
+        category_ids_by_name[name]: threshold for name, threshold in thresholds.items()
+    }
 
 
 def _coco_class_names(coco_ground_truth: Any, category_ids: list[int]) -> list[str]:

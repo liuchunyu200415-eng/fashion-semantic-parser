@@ -603,6 +603,37 @@ while `AllGTMeanIoU-small`, `Recall50-small`, and
 `AllGTIoU85Rate-small` also expose missed small objects. These direct size
 metrics are distinct from COCO `APs`, `APm`, and `APl`.
 
+### Small-object deployment experiment
+
+`configs/segmentation_mask2former_small_objects.yaml` preserves the accepted
+mixed checkpoint and adds three isolated inference changes: `640/1067` input,
+the existing expanded person-ROI crop, and lower score thresholds for shoes
+(`0.4`), bag (`0.3`), and accessory (`0.3`). Other garment classes remain at
+`0.6`. The Mask2Former model-side threshold is automatically lowered to the
+minimum configured category threshold so candidates remain available for
+category-aware filtering.
+
+This profile is an operating-point experiment, not a replacement for formal
+COCO AP. Re-run full model evaluation at score threshold `0.0` for AP, then
+apply the category thresholds to saved predictions for direct-IoU comparison:
+
+```bash
+python scripts/evaluate_segmentation_predictions.py \
+  --val-json data/processed/autodl/segmentation/fashionpedia_validation.json \
+  --predictions outputs/segmentation/mixed/eval_2k_fashionpedia_640_fp16/inference/coco_instances_results.json \
+  --score-threshold 0.6 \
+  --category-score-threshold shoes=0.4 \
+  --category-score-threshold bag=0.3 \
+  --category-score-threshold accessory=0.3 \
+  --output outputs/segmentation/mixed/eval_2k_fashionpedia_640_fp16/direct_mask_iou_small_profile.json
+```
+
+Compare `Recall50-small`, `AllGTMeanIoU-small`,
+`AllGTIoU85Rate-small`, and `Precision50` against the accepted `512/853`,
+global-`0.6` baseline. Automatic person ROI is enabled per request with
+`"auto_subject_roi": true`; ROI-based dataset evaluation is a separate A/B path
+because it adds a person detector and changes the evaluated image crop.
+
 ```bash
 python scripts/evaluate_segmentation_baseline.py \
   --config configs/segmentation_mask2former_deployment.yaml \

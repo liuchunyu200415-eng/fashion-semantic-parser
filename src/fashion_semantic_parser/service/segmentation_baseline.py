@@ -57,6 +57,7 @@ class SegmentationBaselineSettings(BaseModel):
     eval_period: int = Field(default=0, ge=0)
     num_workers: int = Field(default=2, ge=0)
     score_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    category_score_thresholds: dict[str, float] = Field(default_factory=dict)
     min_size_test: int | None = Field(default=None, ge=1)
     max_size_test: int | None = Field(default=None, ge=1)
     detections_per_image: int | None = Field(default=None, ge=1)
@@ -98,6 +99,21 @@ class SegmentationBaselineSettings(BaseModel):
             raise ValueError("Category names cannot be empty.")
         if len(set(category_names)) != len(category_names):
             raise ValueError("Category names must be unique.")
+        unknown_threshold_names = set(self.category_score_thresholds) - set(
+            category_names
+        )
+        if unknown_threshold_names:
+            raise ValueError(
+                "category_score_thresholds contains unknown categories: "
+                + ", ".join(sorted(unknown_threshold_names))
+            )
+        if any(
+            not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0
+            for threshold in self.category_score_thresholds.values()
+        ):
+            raise ValueError(
+                "Category score thresholds must be finite values between 0 and 1."
+            )
         return self
 
     def resolved_category_names(self) -> tuple[str, ...]:
@@ -105,6 +121,10 @@ class SegmentationBaselineSettings(BaseModel):
         if self.category_names is not None:
             return tuple(self.category_names)
         return tuple(category.english_name for category in PRD_SEGMENTATION_CATEGORIES)
+
+    def model_score_threshold(self) -> float:
+        """Return the lowest threshold needed before category-aware filtering."""
+        return min([self.score_threshold, *self.category_score_thresholds.values()])
 
 
 class Detectron2SegmentationBaseline:
@@ -259,12 +279,13 @@ class Detectron2SegmentationBaseline:
             )
         instances = _filter_detectron2_instances_by_score(
             outputs["instances"],
-            self.settings.score_threshold,
+            self.settings.model_score_threshold(),
         ).to("cpu")
         return convert_detectron2_instances(
             instances=instances,
             image_path=image_path,
             score_threshold=self.settings.score_threshold,
+            category_score_thresholds=self.settings.category_score_thresholds,
             coordinate_offset=coordinate_offset,
             category_names=self.settings.resolved_category_names(),
         )
@@ -313,12 +334,13 @@ class Detectron2SegmentationBaseline:
             _synchronize_torch_device(torch, self.settings.device)
             instances = _filter_detectron2_instances_by_score(
                 outputs["instances"],
-                self.settings.score_threshold,
+                self.settings.model_score_threshold(),
             ).to("cpu")
             convert_detectron2_instances(
                 instances=instances,
                 image_path=image_path,
                 score_threshold=self.settings.score_threshold,
+                category_score_thresholds=self.settings.category_score_thresholds,
                 category_names=self.settings.resolved_category_names(),
             )
 
@@ -341,12 +363,13 @@ class Detectron2SegmentationBaseline:
             predictor_end_time = time.perf_counter()
             instances = _filter_detectron2_instances_by_score(
                 outputs["instances"],
-                self.settings.score_threshold,
+                self.settings.model_score_threshold(),
             ).to("cpu")
             convert_detectron2_instances(
                 instances=instances,
                 image_path=image_path,
                 score_threshold=self.settings.score_threshold,
+                category_score_thresholds=self.settings.category_score_thresholds,
                 category_names=self.settings.resolved_category_names(),
             )
             pipeline_end_time = time.perf_counter()
@@ -361,6 +384,7 @@ class Detectron2SegmentationBaseline:
             "warmup_runs": warmup_runs,
             "measured_runs": measured_runs,
             "score_threshold": self.settings.score_threshold,
+            "category_score_thresholds": self.settings.category_score_thresholds,
             "precision": precision,
             "input_size": {
                 "min_size_test": _json_safe_config_value(cfg.INPUT.MIN_SIZE_TEST),
@@ -407,23 +431,22 @@ class Detectron2SegmentationBaseline:
 
     def _apply_model_head_settings(self, cfg: Any) -> None:
         """Apply class-count and score-threshold settings across model families."""
+        model_score_threshold = self.settings.model_score_threshold()
         if self.settings.detections_per_image is not None:
             cfg.TEST.DETECTIONS_PER_IMAGE = self.settings.detections_per_image
         if hasattr(cfg.MODEL, "ROI_HEADS"):
             cfg.MODEL.ROI_HEADS.NUM_CLASSES = self.settings.num_classes
-            cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = self.settings.score_threshold
+            cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = model_score_threshold
         if hasattr(cfg.MODEL, "SEM_SEG_HEAD"):
             cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES = self.settings.num_classes
         if hasattr(cfg.MODEL, "PANOPTIC_FPN"):
             cfg.MODEL.PANOPTIC_FPN.COMBINE.INSTANCES_CONFIDENCE_THRESH = (
-                self.settings.score_threshold
+                model_score_threshold
             )
         if hasattr(cfg.MODEL, "MASK_FORMER"):
             cfg.MODEL.MASK_FORMER.TEST.INSTANCE_ON = True
             if hasattr(cfg.MODEL.MASK_FORMER.TEST, "OBJECT_MASK_THRESHOLD"):
-                cfg.MODEL.MASK_FORMER.TEST.OBJECT_MASK_THRESHOLD = (
-                    self.settings.score_threshold
-                )
+                cfg.MODEL.MASK_FORMER.TEST.OBJECT_MASK_THRESHOLD = model_score_threshold
 
     def _apply_inference_size_settings(self, cfg: Any) -> None:
         """Override test-time resize limits without changing training transforms."""
@@ -591,11 +614,17 @@ def convert_detectron2_instances(
     instances: Any,
     image_path: Path,
     score_threshold: float = 0.0,
+    category_score_thresholds: dict[str, float] | None = None,
     coordinate_offset: tuple[float, float] = (0.0, 0.0),
     category_names: Sequence[str] | None = None,
 ) -> SegmentationPrediction:
     """Convert Detectron2 Instances to project prediction schema."""
-    instances = _filter_detectron2_instances_by_score(instances, score_threshold)
+    category_score_thresholds = category_score_thresholds or {}
+    model_score_threshold = min([score_threshold, *category_score_thresholds.values()])
+    instances = _filter_detectron2_instances_by_score(
+        instances,
+        model_score_threshold,
+    )
     scores = _tensor_to_list(instances.scores)
     classes = _tensor_to_list(instances.pred_classes)
     mask_list = _masks_to_arrays(instances.pred_masks)
@@ -610,19 +639,24 @@ def convert_detectron2_instances(
         )
 
     for index, class_index in enumerate(classes):
-        if float(scores[index]) < score_threshold:
-            continue
         category_index = int(class_index)
         if not 0 <= category_index < len(resolved_category_names):
             raise ValueError(
                 f"Predicted class index {category_index} is outside the "
                 f"configured {len(resolved_category_names)} categories."
             )
+        category_name = resolved_category_names[category_index]
+        category_threshold = category_score_thresholds.get(
+            category_name,
+            score_threshold,
+        )
+        if float(scores[index]) < category_threshold:
+            continue
         x_min, y_min, x_max, y_max = boxes[index]
         predictions.append(
             SegmentationInstance(
                 category_id=category_index + 1,
-                category_label=resolved_category_names[category_index],
+                category_label=category_name,
                 confidence=float(scores[index]),
                 box=SegmentationBoundingBox(
                     x_min=float(x_min) + x_offset,
