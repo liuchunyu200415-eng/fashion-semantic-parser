@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--metrics-output",
         default=None,
-        help="Optional project-relative path for the final metrics JSON.",
+        help="Optional project-relative or absolute path for the final metrics JSON.",
     )
     return parser.parse_args()
 
@@ -75,11 +75,16 @@ def main() -> None:
         {key: value for key, value in overrides.items() if value is not None}
     )
     settings = SegmentationBaselineSettings.model_validate(raw_config)
+    metrics_output_path = (
+        _resolve_path(args.metrics_output, resolve_project_path)
+        if args.metrics_output
+        else None
+    )
     results = Detectron2SegmentationBaseline(settings).evaluate()
     metrics_json = json.dumps(results, ensure_ascii=False, indent=2)
-    if args.metrics_output:
+    if metrics_output_path is not None:
         _write_metrics_output(
-            resolve_project_path(args.metrics_output),
+            metrics_output_path,
             metrics_json,
         )
     print(metrics_json)
@@ -98,6 +103,12 @@ def _write_metrics_output(output_path: Path, metrics_json: str) -> None:
     """Persist evaluation metrics separately from verbose framework logs."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(metrics_json + "\n", encoding="utf-8")
+
+
+def _resolve_path(path: str | Path, resolver: Any) -> Path:
+    """Use an absolute path directly and resolve a project-relative path."""
+    candidate = Path(path)
+    return candidate if candidate.is_absolute() else resolver(candidate)
 
 
 if __name__ == "__main__":
