@@ -611,8 +611,11 @@ mask constraints remain an evaluation-driven follow-up if text grounding
 produces cross-garment false positives. DINOv2 also remains an optional
 candidate re-ranker rather than a standalone text localizer.
 
-The next required work is to validate the supervised 19-class Smoke run, train
-and evaluate staged checkpoints on Fashionpedia parts, and compare each class
-against the frozen Grounded SAM-HQ baseline. Missing PRD regions require new
-or pseudo annotations after the directly supervised classes are stable.
+The supervised 19-class run has now reached 10,000 iterations without a
+traceback, OOM, NaN, or recurrence of the JIT allocation failure. Checkpoints
+at 7,000 and 10,000 iterations are retained for formal validation. The next
+required work is to evaluate both checkpoints at score threshold `0.0`, select
+the model from overall and per-class AP, then run thresholded direct-IoU,
+visual, and `/v1/localize` functional acceptance. Missing PRD regions require
+new or pseudo annotations after the directly supervised classes are stable.
 Runtime optimization and the `30 ms` target follow accuracy acceptance.

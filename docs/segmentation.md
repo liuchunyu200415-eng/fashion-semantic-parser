@@ -665,6 +665,25 @@ weighted source. Its learning rate is `2.5e-6`, with checkpoints at 500 and
 separately before replacing the accepted model. This stage changes sampling
 only; Copy-Paste remains a later isolated ablation so its effect is measurable.
 
+### Small-object experiment handoff
+
+PRD 3.1.1 optimization was paused after the 1,000-iteration small-object
+checkpoint so the downstream PRD flow could proceed. On Fashionpedia at the
+`640/1067` profile, `model_0000999.pth` reached mask AP `46.44`, AP-small
+`3.35`, and class AP `35.87/28.53/18.72` for shoes, bag, and accessory. At the
+selected category thresholds, small-object All-GT mean IoU increased from
+`23.45` to `26.41`, Recall50 from `33.70` to `38.09`, and GT-at-85 from `2.04`
+to `2.66`. A paired 500-image DeepFashion2 check passed the preservation gate:
+aggregate mask AP changed from `47.61` to `47.77`; pants improved by `1.82`
+AP, while dress had the largest class decrease at `-1.58` AP.
+
+The complete DeepFashion2 validation run was externally interrupted before
+metrics were written. Therefore the small-object checkpoint remains an
+experimental candidate and does not replace the accepted mixed
+`model_0001999.pth` deployment checkpoint. Full cross-domain validation,
+Copy-Paste, super-resolution, and runtime optimization are deferred until the
+remaining PRD modules are connected.
+
 ```bash
 python scripts/evaluate_segmentation_baseline.py \
   --config configs/segmentation_mask2former_deployment.yaml \
