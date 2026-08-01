@@ -22,6 +22,8 @@ from fashion_semantic_parser.models.segmentation import (
 from fashion_semantic_parser.service.parser_service import FashionParserService
 from fashion_semantic_parser.service.region_localization import (
     GroundedSAMHQRegionLocalizationService,
+    HybridRegionLocalizationService,
+    Mask2FormerPartLocalizationService,
     RegionLocalizationRuntime,
 )
 from fashion_semantic_parser.service.segmentation_runtime import (
@@ -49,6 +51,24 @@ def create_app(
         segmentation_service = GarmentSegmentationService(
             app_settings.segmentation.config_path
         )
+    if localization_service is None:
+        app_settings = app_settings or load_settings()
+        localization_settings = app_settings.localization
+        if localization_settings.backend == "grounded_sam_hq":
+            localization_service = GroundedSAMHQRegionLocalizationService(
+                localization_settings.fallback_config_path
+            )
+        elif localization_settings.backend == "mask2former_parts":
+            localization_service = Mask2FormerPartLocalizationService(
+                localization_settings.config_path
+            )
+        else:
+            localization_service = HybridRegionLocalizationService(
+                Mask2FormerPartLocalizationService(localization_settings.config_path),
+                GroundedSAMHQRegionLocalizationService(
+                    localization_settings.fallback_config_path
+                ),
+            )
     if parser_service is None:
         query_auto_subject_roi = (
             app_settings.segmentation.query_auto_subject_roi
@@ -57,12 +77,8 @@ def create_app(
         )
         parser_service = FashionParserService(
             segmentation_service,
+            localization_service=localization_service,
             default_auto_subject_roi=query_auto_subject_roi,
-        )
-    if localization_service is None:
-        app_settings = app_settings or load_settings()
-        localization_service = GroundedSAMHQRegionLocalizationService(
-            app_settings.localization.config_path
         )
 
     @app.get("/health")

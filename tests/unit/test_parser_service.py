@@ -2,6 +2,11 @@
 
 import pytest
 
+from fashion_semantic_parser.models.localization import (
+    LocalizationBoundingBox,
+    LocalizedRegion,
+    RegionLocalizationPrediction,
+)
 from fashion_semantic_parser.models.schemas import MultimodalQueryRequest
 from fashion_semantic_parser.models.segmentation import (
     SegmentationBoundingBox,
@@ -42,6 +47,38 @@ class _FakeSegmentationService:
         )
 
 
+class _FakeLocalizationService:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, SegmentationSubjectROI | None, bool]] = []
+
+    def localize(
+        self,
+        image_path: str,
+        query: str,
+        subject_roi: SegmentationSubjectROI | None = None,
+        auto_subject_roi: bool = True,
+    ) -> RegionLocalizationPrediction:
+        self.calls.append((image_path, query, subject_roi, auto_subject_roi))
+        return RegionLocalizationPrediction(
+            image_path=image_path,
+            query=query,
+            regions=[
+                LocalizedRegion(
+                    region_label="collar",
+                    matched_text="衣领",
+                    confidence=0.88,
+                    box=LocalizationBoundingBox(
+                        x_min=20.2,
+                        y_min=30.8,
+                        x_max=60.1,
+                        y_max=80.9,
+                    ),
+                    mask=[[20.2, 30.8, 60.1, 30.8, 60.1, 80.9]],
+                )
+            ],
+        )
+
+
 def test_query_returns_integrated_segmentation_result() -> None:
     """The existing query route should no longer be a fixed not-ready stub."""
     segmentation_service = _FakeSegmentationService()
@@ -62,6 +99,51 @@ def test_query_returns_integrated_segmentation_result() -> None:
     assert response.segmentation is not None
     assert response.segmentation.instances[0].mask
     assert segmentation_service.calls == [("data/example.jpg", None, True)]
+
+
+def test_query_routes_known_part_language_through_localization() -> None:
+    """The main query path should compose segmentation and 3.1.2 localization."""
+    segmentation_service = _FakeSegmentationService()
+    localization_service = _FakeLocalizationService()
+    service = FashionParserService(
+        segmentation_service,
+        localization_service=localization_service,
+    )
+
+    response = service.answer_query(
+        MultimodalQueryRequest(
+            image_path="data/example.jpg",
+            query="这件衣服的衣领在哪里？",
+        )
+    )
+
+    assert "localization completed" in response.answer
+    assert response.regions[0].label == "collar"
+    assert response.localization is not None
+    assert response.localization.regions[0].mask
+    assert response.segmentation is not None
+    assert localization_service.calls == [
+        ("data/example.jpg", "这件衣服的衣领在哪里？", None, False)
+    ]
+
+
+def test_query_does_not_localize_general_garment_questions() -> None:
+    """General garment queries should retain the accepted 3.1.1 response path."""
+    localization_service = _FakeLocalizationService()
+    service = FashionParserService(
+        _FakeSegmentationService(),
+        localization_service=localization_service,
+    )
+
+    response = service.answer_query(
+        MultimodalQueryRequest(
+            image_path="data/example.jpg",
+            query="图中有哪些服饰？",
+        )
+    )
+
+    assert response.localization is None
+    assert localization_service.calls == []
 
 
 def test_query_can_explicitly_disable_automatic_subject_roi() -> None:

@@ -1,7 +1,7 @@
 """Application configuration loading."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -44,7 +44,9 @@ class SegmentationServiceSettings(BaseModel):
 class LocalizationServiceSettings(BaseModel):
     """Language-guided local-region inference service settings."""
 
-    config_path: str = "configs/localization_grounded_sam_hq.yaml"
+    backend: Literal["grounded_sam_hq", "mask2former_parts", "hybrid"] = "hybrid"
+    config_path: str = "configs/localization_mask2former_parts_deployment.yaml"
+    fallback_config_path: str = "configs/localization_grounded_sam_hq.yaml"
 
 
 class DatasetSettings(BaseModel):

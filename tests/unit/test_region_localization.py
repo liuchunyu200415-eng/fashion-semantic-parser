@@ -7,7 +7,13 @@ import numpy as np
 import pytest
 
 from fashion_semantic_parser.common.exceptions import ModelNotReadyError
-from fashion_semantic_parser.models.segmentation import SegmentationSubjectROI
+from fashion_semantic_parser.models.localization import RegionLocalizationPrediction
+from fashion_semantic_parser.models.segmentation import (
+    SegmentationBoundingBox,
+    SegmentationInstance,
+    SegmentationPrediction,
+    SegmentationSubjectROI,
+)
 from fashion_semantic_parser.service.grounded_sam_hq import (
     GroundedMaskCandidate,
     GroundedSAMHQSettings,
@@ -15,6 +21,8 @@ from fashion_semantic_parser.service.grounded_sam_hq import (
 )
 from fashion_semantic_parser.service.region_localization import (
     GroundedSAMHQRegionLocalizationService,
+    HybridRegionLocalizationService,
+    Mask2FormerPartLocalizationService,
 )
 
 
@@ -49,6 +57,67 @@ class _FakeSubjectROIDetector:
     def detect(self, image_path: Path) -> SegmentationSubjectROI | None:
         self.calls.append(image_path)
         return self.roi
+
+
+class _FakePartSegmentationService:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, SegmentationSubjectROI | None, bool]] = []
+
+    def segment(
+        self,
+        image_path: str,
+        subject_roi: SegmentationSubjectROI | None = None,
+        auto_subject_roi: bool = False,
+    ) -> SegmentationPrediction:
+        self.calls.append((image_path, subject_roi, auto_subject_roi))
+        return SegmentationPrediction(
+            image_path=image_path,
+            instances=[
+                _part_instance("collar", 2, 0.91),
+                _part_instance("pocket", 6, 0.83),
+                _part_instance("ruffle", 17, 0.72),
+            ],
+            subject_roi=subject_roi,
+            subject_roi_source="manual" if subject_roi is not None else None,
+        )
+
+
+class _FakeFallbackLocalizationService:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, SegmentationSubjectROI | None, bool]] = []
+
+    def localize(
+        self,
+        image_path: str,
+        query: str,
+        subject_roi: SegmentationSubjectROI | None = None,
+        auto_subject_roi: bool = True,
+    ) -> RegionLocalizationPrediction:
+        self.calls.append((image_path, query, subject_roi, auto_subject_roi))
+        return RegionLocalizationPrediction(
+            image_path=image_path,
+            query=query,
+            regions=[],
+        )
+
+
+def _part_instance(
+    label: str,
+    category_id: int,
+    confidence: float,
+) -> SegmentationInstance:
+    return SegmentationInstance(
+        category_id=category_id,
+        category_label=label,
+        confidence=confidence,
+        box=SegmentationBoundingBox(
+            x_min=10.0,
+            y_min=20.0,
+            x_max=40.0,
+            y_max=60.0,
+        ),
+        mask=[[10.0, 20.0, 40.0, 20.0, 40.0, 60.0, 10.0, 60.0]],
+    )
 
 
 def _service(
@@ -239,6 +308,73 @@ def test_localization_rejects_wrong_sam_mask_shape(
             "pocket",
             auto_subject_roi=False,
         )
+
+
+def test_supervised_part_localization_filters_predictions_by_query() -> None:
+    """Known part queries should retain only the matching supervised class."""
+    segmentation = _FakePartSegmentationService()
+    service = Mask2FormerPartLocalizationService(
+        segmentation_service=segmentation,
+    )
+    subject_roi = SegmentationSubjectROI(
+        x_min=1.0,
+        y_min=2.0,
+        x_max=100.0,
+        y_max=200.0,
+    )
+
+    result = service.localize(
+        "data/example.jpg",
+        "这件衣服的衣领",
+        subject_roi=subject_roi,
+        auto_subject_roi=False,
+    )
+
+    assert segmentation.calls == [("data/example.jpg", subject_roi, False)]
+    assert [region.region_label for region in result.regions] == ["collar"]
+    assert result.regions[0].mask
+    assert result.subject_roi == subject_roi
+
+
+def test_supervised_part_localization_expands_generic_decoration_query() -> None:
+    """Generic decoration language should retain every supervised decoration."""
+    service = Mask2FormerPartLocalizationService(
+        segmentation_service=_FakePartSegmentationService(),
+    )
+
+    result = service.localize(
+        "data/example.jpg",
+        "衣服上有什么装饰？",
+        auto_subject_roi=False,
+    )
+
+    assert [region.region_label for region in result.regions] == ["ruffle"]
+
+
+def test_hybrid_localization_routes_only_uncovered_queries_to_fallback() -> None:
+    """Missing direct supervision should use Grounded SAM without double loading."""
+    segmentation = _FakePartSegmentationService()
+    supervised = Mask2FormerPartLocalizationService(
+        segmentation_service=segmentation,
+    )
+    fallback = _FakeFallbackLocalizationService()
+    service = HybridRegionLocalizationService(supervised, fallback)
+
+    collar = service.localize(
+        "data/example.jpg",
+        "衣领",
+        auto_subject_roi=False,
+    )
+    cuff = service.localize(
+        "data/example.jpg",
+        "袖口",
+        auto_subject_roi=False,
+    )
+
+    assert [region.region_label for region in collar.regions] == ["collar"]
+    assert cuff.regions == []
+    assert len(segmentation.calls) == 1
+    assert fallback.calls == [("data/example.jpg", "袖口", None, False)]
 
 
 def test_grounding_results_are_clamped_ranked_and_limited() -> None:

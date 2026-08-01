@@ -1,0 +1,41 @@
+# PRD 3.1.2 supervised part-localization deployment profile.
+#
+# The score threshold is provisional for end-to-end functional acceptance.
+# Formal threshold calibration remains a separate evaluation step.
+model_family: mask2former
+train_json: data/processed/autodl/localization/fashionpedia_parts_train.json
+val_json: data/processed/autodl/localization/fashionpedia_parts_validation.json
+image_root: .
+output_dir: outputs/localization/mask2former_parts_r50_deployment
+config_source: local
+config_file: external/Mask2Former/configs/coco/instance-segmentation/maskformer2_R50_bs16_50ep.yaml
+weights: models/checkpoints/localization/mask2former_parts_r50_10000.pth
+num_classes: 19
+category_names:
+  - hood
+  - collar
+  - lapel
+  - epaulette
+  - sleeve
+  - pocket
+  - neckline
+  - buckle
+  - zipper
+  - applique
+  - bead
+  - bow
+  - flower
+  - fringe
+  - ribbon
+  - rivet
+  - ruffle
+  - sequin
+  - tassel
+score_threshold: 0.25
+min_size_test: 800
+max_size_test: 1333
+detections_per_image: 100
+subject_roi_margin: 0.35
+precision: fp16
+device: cuda
+evaluate_after_training: false

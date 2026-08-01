@@ -737,6 +737,20 @@ def test_localization_parts_config_uses_supervised_nineteen_class_masks() -> Non
     SegmentationBaselineSettings.model_validate(config)
 
 
+def test_localization_parts_deployment_uses_selected_checkpoint() -> None:
+    """The API profile should freeze the selected 10,000-iteration model."""
+    config_path = Path("configs/localization_mask2former_parts_deployment.yaml")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert config["weights"].endswith("mask2former_parts_r50_10000.pth")
+    assert config["num_classes"] == 19
+    assert len(config["category_names"]) == 19
+    assert config["score_threshold"] == 0.25
+    assert config["subject_roi_margin"] == 0.35
+    assert config["precision"] == "fp16"
+    SegmentationBaselineSettings.model_validate(config)
+
+
 def test_mask2former_eager_losses_replace_scripted_wrappers() -> None:
     """The compatibility path must retain upstream eager loss definitions."""
 

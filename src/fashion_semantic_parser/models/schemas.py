@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel, Field, model_validator
 
+from fashion_semantic_parser.models.localization import RegionLocalizationPrediction
 from fashion_semantic_parser.models.segmentation import (
     SegmentationPrediction,
     SegmentationSubjectROI,
@@ -57,3 +58,4 @@ class MultimodalQueryResponse(BaseModel):
     regions: list[RegionPrediction] = Field(default_factory=list)
     references: list[str] = Field(default_factory=list)
     segmentation: SegmentationPrediction | None = None
+    localization: RegionLocalizationPrediction | None = None

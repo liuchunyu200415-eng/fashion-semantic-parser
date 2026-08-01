@@ -2,6 +2,8 @@
 
 from fashion_semantic_parser.service.region_localization import (
     GroundedSAMHQRegionLocalizationService,
+    HybridRegionLocalizationService,
+    Mask2FormerPartLocalizationService,
     RegionLocalizationRuntime,
     UnavailableRegionLocalizationService,
 )
@@ -23,6 +25,8 @@ __all__ = [
     "Detectron2PersonROIDetector",
     "GarmentSegmentationService",
     "GroundedSAMHQRegionLocalizationService",
+    "HybridRegionLocalizationService",
+    "Mask2FormerPartLocalizationService",
     "PersonROIDetectorSettings",
     "RegionLocalizationRuntime",
     "SegmentationBaselineSettings",

@@ -15,6 +15,7 @@ from fashion_semantic_parser.common.exceptions import (
 )
 from fashion_semantic_parser.common.paths import resolve_project_path
 from fashion_semantic_parser.dao.localization.taxonomy import (
+    FASHIONPEDIA_PART_CATEGORIES,
     LocalizationPrompt,
     resolve_localization_prompt,
 )
@@ -34,6 +35,10 @@ from fashion_semantic_parser.service.grounded_sam_hq import (
     GroundedSAMHQSettings,
     load_grounded_sam_hq_settings,
     validate_grounded_sam_hq_assets,
+)
+from fashion_semantic_parser.service.segmentation_runtime import (
+    GarmentSegmentationService,
+    SegmentationRuntime,
 )
 from fashion_semantic_parser.service.subject_roi import (
     Detectron2PersonROIDetector,
@@ -237,6 +242,116 @@ class GroundedSAMHQRegionLocalizationService:
         return resolved_path
 
 
+_SUPERVISED_PART_LABELS = frozenset(
+    category.english_name for category in FASHIONPEDIA_PART_CATEGORIES
+)
+_SUPERVISED_DECORATION_LABELS = frozenset(
+    category.english_name
+    for category in FASHIONPEDIA_PART_CATEGORIES
+    if category.region_group == "decoration"
+)
+
+
+class Mask2FormerPartLocalizationService:
+    """Use the supervised 19-class Mask2Former for known Fashionpedia parts."""
+
+    def __init__(
+        self,
+        config_path: str = "configs/localization_mask2former_parts_deployment.yaml",
+        *,
+        segmentation_service: SegmentationRuntime | None = None,
+    ) -> None:
+        """Create a lazy supervised part-localization runtime."""
+        self.config_path = config_path
+        self.segmentation_service = segmentation_service or GarmentSegmentationService(
+            config_path
+        )
+
+    def supports_query(self, query: str) -> bool:
+        """Return whether the query maps to directly supervised part labels."""
+        prompt = _resolve_prompt_or_error(query)
+        return bool(_supervised_labels_for_prompt(prompt))
+
+    def localize(
+        self,
+        image_path: str,
+        query: str,
+        subject_roi: SegmentationSubjectROI | None = None,
+        auto_subject_roi: bool = True,
+    ) -> RegionLocalizationPrediction:
+        """Predict and retain only classes aligned with the natural-language query."""
+        prompt = _resolve_prompt_or_error(query)
+        target_labels = _supervised_labels_for_prompt(prompt)
+        if not target_labels:
+            raise ModelNotReadyError(
+                f"No directly supervised Mask2Former category covers query: {query}"
+            )
+
+        prediction = self.segmentation_service.segment(
+            image_path,
+            subject_roi=subject_roi,
+            auto_subject_roi=auto_subject_roi,
+        )
+        regions = [
+            LocalizedRegion(
+                region_label=instance.category_label,
+                matched_text=prompt.matched_term,
+                confidence=instance.confidence,
+                box=LocalizationBoundingBox(
+                    x_min=instance.box.x_min,
+                    y_min=instance.box.y_min,
+                    x_max=instance.box.x_max,
+                    y_max=instance.box.y_max,
+                ),
+                mask=instance.mask,
+            )
+            for instance in prediction.instances
+            if instance.category_label in target_labels
+        ]
+        return RegionLocalizationPrediction(
+            image_path=image_path,
+            query=query,
+            regions=regions,
+            subject_roi=prediction.subject_roi,
+            subject_roi_source=prediction.subject_roi_source,
+        )
+
+
+class HybridRegionLocalizationService:
+    """Prefer supervised part masks and retain Grounded SAM for uncovered queries."""
+
+    def __init__(
+        self,
+        supervised_service: Mask2FormerPartLocalizationService,
+        fallback_service: RegionLocalizationRuntime,
+    ) -> None:
+        """Combine an exact-category runtime with an open-vocabulary fallback."""
+        self.supervised_service = supervised_service
+        self.fallback_service = fallback_service
+
+    def localize(
+        self,
+        image_path: str,
+        query: str,
+        subject_roi: SegmentationSubjectROI | None = None,
+        auto_subject_roi: bool = True,
+    ) -> RegionLocalizationPrediction:
+        """Route directly supervised queries without loading both heavy paths."""
+        if self.supervised_service.supports_query(query):
+            return self.supervised_service.localize(
+                image_path,
+                query,
+                subject_roi=subject_roi,
+                auto_subject_roi=auto_subject_roi,
+            )
+        return self.fallback_service.localize(
+            image_path,
+            query,
+            subject_roi=subject_roi,
+            auto_subject_roi=auto_subject_roi,
+        )
+
+
 class UnavailableRegionLocalizationService:
     """Explicit fallback for deployments that disable localization."""
 
@@ -250,9 +365,30 @@ class UnavailableRegionLocalizationService:
         """Reject inference instead of returning an invented localization."""
         raise ModelNotReadyError(
             "PRD 3.1.2 language-guided localization is not configured. "
-            "Install the official Grounding DINO + SAM-HQ runtime and weights "
+            "Install a supervised or Grounding DINO + SAM-HQ runtime and weights "
             "before calling /v1/localize."
         )
+
+
+def _resolve_prompt_or_error(query: str) -> LocalizationPrompt:
+    """Resolve a query while keeping input errors in the service domain."""
+    try:
+        return resolve_localization_prompt(query)
+    except ValueError as error:
+        raise InvalidImageInputError(str(error)) from error
+
+
+def _supervised_labels_for_prompt(
+    prompt: LocalizationPrompt,
+) -> frozenset[str]:
+    """Map one normalized query to the labels with direct Mask supervision."""
+    if prompt.region_label in _SUPERVISED_PART_LABELS:
+        return frozenset((prompt.region_label,))
+    if prompt.region_label == "shoulder":
+        return frozenset(("epaulette",))
+    if prompt.region_label == "decoration":
+        return _SUPERVISED_DECORATION_LABELS
+    return frozenset()
 
 
 def _build_default_subject_roi_detector(

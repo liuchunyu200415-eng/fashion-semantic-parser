@@ -611,11 +611,40 @@ mask constraints remain an evaluation-driven follow-up if text grounding
 produces cross-garment false positives. DINOv2 also remains an optional
 candidate re-ranker rather than a standalone text localizer.
 
-The supervised 19-class run has now reached 10,000 iterations without a
-traceback, OOM, NaN, or recurrence of the JIT allocation failure. Checkpoints
-at 7,000 and 10,000 iterations are retained for formal validation. The next
-required work is to evaluate both checkpoints at score threshold `0.0`, select
-the model from overall and per-class AP, then run thresholded direct-IoU,
-visual, and `/v1/localize` functional acceptance. Missing PRD regions require
-new or pseudo annotations after the directly supervised classes are stable.
-Runtime optimization and the `30 ms` target follow accuracy acceptance.
+The supervised 19-class run reached 10,000 iterations without a traceback,
+OOM, NaN, or recurrence of the JIT allocation failure. Formal validation at
+score threshold `0.0` selected the 10,000-iteration checkpoint: mask AP is
+`8.88`, AP50 is `16.95`, AP75 is `7.81`, AP85 is `4.13`, and AP90 is `1.94`.
+Collar, lapel, sleeve, pocket, and neckline AP are `19.87`, `19.03`, `61.04`,
+`13.06`, and `9.08`. This is the end-to-end flow baseline, not an accuracy
+acceptance result.
+
+### Hybrid Deployment
+
+`configs/localization_mask2former_parts_deployment.yaml` points to the selected
+checkpoint through a stable project path. On AutoDL, create the link once:
+
+```bash
+cd /root/fashion-semantic-parser
+
+mkdir -p models/checkpoints/localization
+ln -sfn \
+  /root/autodl-tmp/fashionpedia/outputs/localization_parts_stage1_01000/model_0009999.pth \
+  models/checkpoints/localization/mask2former_parts_r50_10000.pth
+
+ls -Llh models/checkpoints/localization/mask2former_parts_r50_10000.pth
+```
+
+The default application backend is `hybrid`:
+
+1. directly supervised Fashionpedia part queries use Mask2Former
+2. generic decoration queries retain all predicted decoration subclasses
+3. shoulder queries use epaulette as explicitly partial supervision
+4. cuff, hem, waist, pattern, and custom queries use Grounding DINO + SAM-HQ
+5. `/v1/query` invokes localization only for known local-region language and
+   keeps the 3.1.1 garment result in the same response
+
+The deployment score threshold `0.25` is provisional for functional testing.
+Thresholded direct-IoU and visual acceptance remain later accuracy work.
+Missing PRD regions require new or pseudo annotations rather than relabeling
+full sleeves or garment masks as unsupported parts.

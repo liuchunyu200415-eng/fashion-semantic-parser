@@ -178,6 +178,29 @@ def test_query_route_can_disable_configured_automatic_subject_roi() -> None:
     assert service.calls == [("data/example.jpg", None, False)]
 
 
+def test_query_route_composes_injected_localization_service() -> None:
+    """Known part language should reach the same runtime as /v1/localize."""
+    segmentation_service = _FakeSegmentationService()
+    localization_service = _FakeLocalizationService()
+    app = create_app(
+        segmentation_service=segmentation_service,
+        localization_service=localization_service,
+    )
+
+    response = _query_endpoint(app)(  # type: ignore[operator]
+        MultimodalQueryRequest(
+            image_path="data/example.jpg",
+            query="这件衣服的领口在哪里？",
+        )
+    )
+
+    assert response.localization is not None
+    assert response.localization.regions[0].mask
+    assert localization_service.calls == [
+        ("data/example.jpg", "这件衣服的领口在哪里？", None, False)
+    ]
+
+
 def test_segment_request_rejects_manual_and_automatic_roi_together() -> None:
     """One request cannot select two competing ROI sources."""
     with pytest.raises(ValueError, match="cannot be used together"):
