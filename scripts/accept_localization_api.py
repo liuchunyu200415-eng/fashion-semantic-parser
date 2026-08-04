@@ -48,6 +48,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--derived-image", required=True)
     parser.add_argument("--timeout-seconds", type=float, default=300.0)
     parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--responses-dir",
+        default=None,
+        help="Optional directory for saving each complete query API response.",
+    )
     return parser.parse_args()
 
 
@@ -56,15 +61,23 @@ def main() -> None:
     args = parse_args()
     add_src_to_python_path()
 
-    from fashion_semantic_parser.common.paths import resolve_project_path
+    from fashion_semantic_parser.common.paths import (
+        resolve_project_path,
+        to_project_relative_path,
+    )
 
     if args.timeout_seconds <= 0.0:
         raise ValueError("--timeout-seconds must be positive.")
     validation_path = resolve_project_path(args.val_json)
     derived_image_path = resolve_project_path(args.derived_image)
     output_path = resolve_project_path(args.output)
+    responses_dir = (
+        resolve_project_path(args.responses_dir) if args.responses_dir else None
+    )
     if not derived_image_path.is_file():
         raise FileNotFoundError(f"Derived-region image not found: {args.derived_image}")
+    if responses_dir is not None:
+        responses_dir.mkdir(parents=True, exist_ok=True)
 
     validation = _read_json(validation_path)
     cases = build_acceptance_cases(validation, args.derived_image)
@@ -88,6 +101,15 @@ def main() -> None:
             response,
             elapsed_seconds=elapsed_seconds,
         )
+        if responses_dir is not None:
+            response_path = responses_dir / (
+                f"{index:02d}_{case['target_region']}.json"
+            )
+            response_path.write_text(
+                json.dumps(response, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            row["response_json"] = to_project_relative_path(response_path)
         rows.append(row)
         print(
             f"[{index}/{total}] region={row['target_region']} "

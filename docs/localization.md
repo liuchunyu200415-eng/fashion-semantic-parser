@@ -685,7 +685,8 @@ python scripts/accept_localization_api.py \
   --base-url http://127.0.0.1:8002 \
   --val-json data/processed/autodl/localization/fashionpedia_parts_validation.json \
   --derived-image "$DERIVED_IMAGE" \
-  --output outputs/localization/hybrid_api_smoke/acceptance_report.json
+  --output outputs/localization/hybrid_api_smoke/acceptance_report.json \
+  --responses-dir outputs/localization/hybrid_api_smoke/acceptance_responses
 ```
 
 The script prints one progress line per request and exits nonzero if any expected
@@ -705,3 +706,16 @@ requests took `11.51 s` in total. This result closes the first end-to-end
 functional slice, but it is deliberately recorded separately from formal
 dataset accuracy: the examples are selected acceptance cases, and cuff, hem,
 waist, and pattern do not have direct Fashionpedia ground-truth masks.
+
+Render the saved eight-request result as one visual acceptance sheet:
+
+```bash
+python scripts/visualize_localization_api_acceptance.py \
+  --report outputs/localization/hybrid_api_smoke/acceptance_report.json \
+  --output outputs/localization/hybrid_api_smoke/acceptance_overview.png
+```
+
+The overview contains an original and localized panel for each PRD example
+region, including the returned mask, box, person ROI source, region count, and
+request time. It is intended for visual functional review, not dataset-level
+accuracy reporting.
