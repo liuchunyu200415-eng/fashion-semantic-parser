@@ -471,6 +471,7 @@ def test_hybrid_localization_derives_both_outer_cuff_ends() -> None:
                 instances=[
                     _rect_part_instance("sleeve", 5, 0.9, (10, 30, 30, 80)),
                     _rect_part_instance("sleeve", 5, 0.8, (70, 30, 90, 80)),
+                    _rect_part_instance("sleeve", 5, 0.3, (40, 40, 60, 90)),
                 ],
                 subject_roi=subject_roi,
                 subject_roi_source="manual",
@@ -503,6 +504,40 @@ def test_hybrid_localization_derives_both_outer_cuff_ends() -> None:
     assert left_center < 20.0
     assert right_center > 80.0
     assert fallback.calls == []
+
+
+def test_hybrid_localization_falls_back_for_low_confidence_sleeves() -> None:
+    """Weak sleeve candidates should not become unsupported cuff predictions."""
+
+    class _WeakSleeveSegmentationService(_FakePartSegmentationService):
+        def segment(
+            self,
+            image_path: str,
+            subject_roi: SegmentationSubjectROI | None = None,
+            auto_subject_roi: bool = False,
+        ) -> SegmentationPrediction:
+            self.calls.append((image_path, subject_roi, auto_subject_roi))
+            return SegmentationPrediction(
+                image_path=image_path,
+                instances=[_rect_part_instance("sleeve", 5, 0.3, (10, 30, 30, 80))],
+            )
+
+    fallback = _FakeFallbackLocalizationService()
+    service = HybridRegionLocalizationService(
+        Mask2FormerPartLocalizationService(
+            segmentation_service=_WeakSleeveSegmentationService()
+        ),
+        fallback,
+    )
+
+    result = service.localize(
+        "data/example.jpg",
+        "袖口",
+        auto_subject_roi=False,
+    )
+
+    assert result.regions == []
+    assert fallback.calls == [("data/example.jpg", "袖口", None, False)]
 
 
 def test_grounding_results_are_clamped_ranked_and_limited() -> None:

@@ -430,10 +430,25 @@ def _derive_cuffs_from_sleeves(
     prompt: LocalizationPrompt,
     subject_roi: SegmentationSubjectROI | None,
     distal_fraction: float = 0.18,
+    min_sleeve_confidence: float = 0.5,
+    max_cuffs: int = 2,
 ) -> list[LocalizedRegion]:
     """Approximate each cuff from the distal end of a supervised sleeve mask."""
     if not 0.0 < distal_fraction < 0.5:
         raise ValueError("distal_fraction must be between 0 and 0.5")
+    if not 0.0 <= min_sleeve_confidence <= 1.0:
+        raise ValueError("min_sleeve_confidence must be between 0 and 1")
+    if max_cuffs < 1:
+        raise ValueError("max_cuffs must be positive")
+    sleeve_regions = sorted(
+        (
+            region
+            for region in sleeve_regions
+            if region.confidence >= min_sleeve_confidence
+        ),
+        key=lambda region: region.confidence,
+        reverse=True,
+    )[:max_cuffs]
     if not sleeve_regions:
         return []
 
