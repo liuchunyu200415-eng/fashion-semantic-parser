@@ -715,7 +715,12 @@ the first strict rerun, collar, pocket, and ruffle reached `95.1%`, `94.3%`, and
 Fashionpedia annotation. Shoulder reached only `3.9%` against an epaulette mask,
 which exposed a semantic mismatch in the test rather than a valid full-shoulder
 metric. The epaulette is now a partial visual reference, and the derived
-shoulder bands are narrower and closer to the garment's upper edge.
+shoulder bands are narrower and closer to the garment's upper edge. The final
+corrected run passed all eight representative requests in `8.52 s`; all eight
+used detected person ROIs. Collar, pocket, and ruffle retained their direct-IoU
+evidence, while shoulder, cuff, hem, waist, and pattern are explicitly recorded
+as visual-only acceptance. This closes the first end-to-end functional slice,
+not the dataset-level `92%` accuracy or `30 ms` latency targets.
 
 Render the saved eight-request result as one visual acceptance sheet:
 
