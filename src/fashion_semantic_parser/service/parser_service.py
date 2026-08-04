@@ -126,18 +126,25 @@ class FashionParserService:
             None,
         )
         if callable(localize_with_garment_prediction):
-            return localize_with_garment_prediction(
+            localization = localize_with_garment_prediction(
                 request.image_path,
                 request.query,
                 segmentation,
                 subject_roi=segmentation.subject_roi,
                 auto_subject_roi=False,
             )
-        return self.localization_service.localize(
-            request.image_path,
-            request.query,
-            subject_roi=segmentation.subject_roi,
-            auto_subject_roi=False,
+        else:
+            localization = self.localization_service.localize(
+                request.image_path,
+                request.query,
+                subject_roi=segmentation.subject_roi,
+                auto_subject_roi=False,
+            )
+        return localization.model_copy(
+            update={
+                "subject_roi": segmentation.subject_roi,
+                "subject_roi_source": segmentation.subject_roi_source,
+            }
         )
 
 

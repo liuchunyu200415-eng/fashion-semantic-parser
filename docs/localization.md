@@ -657,7 +657,8 @@ The default application backend is `hybrid`:
    appearance candidate remains
 8. custom queries use Grounding DINO + SAM-HQ
 9. `/v1/query` invokes localization only for known local-region language and
-   keeps the 3.1.1 garment result in the same response
+   keeps the 3.1.1 garment result in the same response; reused ROI coordinates
+   retain their original `detected`, `full_image_fallback`, or `manual` source
 
 The deployment score threshold `0.25` is provisional for functional testing.
 Thresholded direct-IoU and visual acceptance remain later accuracy work.

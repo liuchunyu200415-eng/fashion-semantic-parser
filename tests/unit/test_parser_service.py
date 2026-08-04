@@ -13,6 +13,7 @@ from fashion_semantic_parser.models.segmentation import (
     SegmentationInstance,
     SegmentationPrediction,
     SegmentationSubjectROI,
+    SubjectROISource,
 )
 from fashion_semantic_parser.service.parser_service import FashionParserService
 
@@ -76,6 +77,35 @@ class _FakeLocalizationService:
                     mask=[[20.2, 30.8, 60.1, 30.8, 60.1, 80.9]],
                 )
             ],
+        )
+
+
+class _ROIProvenanceSegmentationService(_FakeSegmentationService):
+    def __init__(
+        self,
+        subject_roi: SegmentationSubjectROI | None,
+        subject_roi_source: SubjectROISource,
+    ) -> None:
+        super().__init__()
+        self.subject_roi = subject_roi
+        self.subject_roi_source = subject_roi_source
+
+    def segment(
+        self,
+        image_path: str,
+        subject_roi: SegmentationSubjectROI | None = None,
+        auto_subject_roi: bool = False,
+    ) -> SegmentationPrediction:
+        prediction = super().segment(
+            image_path,
+            subject_roi=subject_roi,
+            auto_subject_roi=auto_subject_roi,
+        )
+        return prediction.model_copy(
+            update={
+                "subject_roi": self.subject_roi,
+                "subject_roi_source": self.subject_roi_source,
+            }
         )
 
 
@@ -169,6 +199,54 @@ def test_query_reuses_segmentation_for_garment_aware_localization() -> None:
     assert len(localization_service.garment_predictions) == 1
     assert localization_service.garment_predictions[0] is response.segmentation
     assert segmentation_service.calls == [("data/example.jpg", None, True)]
+
+
+def test_query_preserves_detected_roi_provenance_in_localization() -> None:
+    """An internally reused automatic ROI must not be relabelled as manual."""
+    subject_roi = SegmentationSubjectROI(
+        x_min=10.0,
+        y_min=20.0,
+        x_max=200.0,
+        y_max=300.0,
+    )
+    localization_service = _FakeLocalizationService()
+    service = FashionParserService(
+        _ROIProvenanceSegmentationService(subject_roi, "detected"),
+        localization_service=localization_service,
+    )
+
+    response = service.answer_query(
+        MultimodalQueryRequest(
+            image_path="data/example.jpg",
+            query="衣领在哪里？",
+        )
+    )
+
+    assert response.localization is not None
+    assert response.localization.subject_roi == subject_roi
+    assert response.localization.subject_roi_source == "detected"
+    assert localization_service.calls == [
+        ("data/example.jpg", "衣领在哪里？", subject_roi, False)
+    ]
+
+
+def test_query_preserves_full_image_fallback_roi_provenance() -> None:
+    """An explicit automatic fallback should survive query composition."""
+    service = FashionParserService(
+        _ROIProvenanceSegmentationService(None, "full_image_fallback"),
+        localization_service=_FakeLocalizationService(),
+    )
+
+    response = service.answer_query(
+        MultimodalQueryRequest(
+            image_path="data/example.jpg",
+            query="衣领在哪里？",
+        )
+    )
+
+    assert response.localization is not None
+    assert response.localization.subject_roi is None
+    assert response.localization.subject_roi_source == "full_image_fallback"
 
 
 def test_query_does_not_localize_general_garment_questions() -> None:
