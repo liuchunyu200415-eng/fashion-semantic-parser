@@ -499,10 +499,7 @@ def test_hybrid_localization_derives_both_outer_cuff_ends() -> None:
     )
 
     assert len(result.regions) == 2
-    left_center = (result.regions[0].box.x_min + result.regions[0].box.x_max) / 2.0
-    right_center = (result.regions[1].box.x_min + result.regions[1].box.x_max) / 2.0
-    assert left_center < 20.0
-    assert right_center > 80.0
+    assert all(region.box.y_min >= 75.0 for region in result.regions)
     assert fallback.calls == []
 
 

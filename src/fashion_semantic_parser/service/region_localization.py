@@ -429,7 +429,7 @@ def _derive_cuffs_from_sleeves(
     *,
     prompt: LocalizationPrompt,
     subject_roi: SegmentationSubjectROI | None,
-    distal_fraction: float = 0.18,
+    distal_fraction: float = 0.08,
     min_sleeve_confidence: float = 0.5,
     max_cuffs: int = 2,
 ) -> list[LocalizedRegion]:
@@ -474,7 +474,7 @@ def _derive_cuffs_from_sleeves(
         body_center = sleeve_centers.mean(axis=0)
 
     cuffs = []
-    for region, sleeve_center in zip(sleeve_regions, sleeve_centers):
+    for region in sleeve_regions:
         sleeve_mask, coordinate_offset = _localized_region_to_local_mask(region)
         if sleeve_mask is None:
             continue
@@ -485,14 +485,25 @@ def _derive_cuffs_from_sleeves(
                 y_values.astype(np.float64) + coordinate_offset[1],
             )
         )
-        direction = sleeve_center - body_center
-        if float(np.linalg.norm(direction)) < 1e-6:
-            centered = global_points - global_points.mean(axis=0)
-            _, _, axes = np.linalg.svd(centered, full_matrices=False)
-            direction = axes[0]
-            if direction[1] < 0:
+        point_center = global_points.mean(axis=0)
+        centered = global_points - point_center
+        _, _, axes = np.linalg.svd(centered, full_matrices=False)
+        direction = axes[0]
+        axis_projections = centered @ direction
+        negative_end = point_center + direction * float(axis_projections.min())
+        positive_end = point_center + direction * float(axis_projections.max())
+        if subject_roi is None and len(sleeve_regions) == 1:
+            if negative_end[1] > positive_end[1]:
                 direction = -direction
-        direction /= max(float(np.linalg.norm(direction)), 1e-6)
+        else:
+            negative_distance = float(np.linalg.norm(negative_end - body_center))
+            positive_distance = float(np.linalg.norm(positive_end - body_center))
+            if negative_distance > positive_distance:
+                direction = -direction
+            elif (
+                math.isclose(negative_distance, positive_distance) and direction[1] < 0
+            ):
+                direction = -direction
         projections = global_points @ direction
         threshold = float(np.quantile(projections, 1.0 - distal_fraction))
         distal_points = global_points[projections >= threshold]
