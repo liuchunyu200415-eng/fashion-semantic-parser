@@ -721,9 +721,9 @@ def _derive_shoulders_from_garments(
     *,
     prompt: LocalizationPrompt,
     min_garment_confidence: float = 0.5,
-    vertical_start_fraction: float = 0.04,
-    vertical_end_fraction: float = 0.22,
-    outer_fraction: float = 0.30,
+    vertical_start_fraction: float = 0.02,
+    vertical_end_fraction: float = 0.14,
+    outer_fraction: float = 0.22,
 ) -> list[LocalizedRegion]:
     """Approximate two shoulder areas from the upper sides of one garment mask."""
     if not 0.0 <= min_garment_confidence <= 1.0:

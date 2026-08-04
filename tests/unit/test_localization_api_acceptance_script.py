@@ -75,7 +75,9 @@ def test_acceptance_builds_four_direct_and_four_derived_cases() -> None:
     ]
     assert cases[0]["image_id"] == 2
     assert cases[0]["ground_truth"]["annotation_id"] == 2
+    assert cases[0]["ground_truth_role"] == "exact"
     assert cases[2]["expected_labels"] == ["epaulette", "shoulder"]
+    assert cases[2]["ground_truth_role"] == "partial_reference"
     assert cases[-1]["expected_source_contains"] == "derived from top appearance"
 
 
@@ -126,6 +128,7 @@ def test_direct_quality_failure_rejects_the_aggregate_report() -> None:
         "expected_labels": ["ruffle"],
         "expected_source_contains": None,
         "case_source": "largest_ruffle_annotation",
+        "ground_truth_role": "exact",
         "ground_truth": {
             "annotation_id": 1,
             "category_label": "ruffle",
@@ -165,6 +168,50 @@ def test_direct_quality_failure_rejects_the_aggregate_report() -> None:
     assert row["best_mask_iou"] < 10.0
     assert report["all_direct_mask_iou_passed"] is False
     assert report["accepted"] is False
+
+
+def test_partial_epaulette_reference_does_not_score_full_shoulder_iou() -> None:
+    """An epaulette mask is a visual reference, not full-shoulder ground truth."""
+    case = {
+        "target_region": "shoulder",
+        "query": "肩部在哪里？",
+        "image_id": 1,
+        "image_path": "data/example.jpg",
+        "expected_labels": ["epaulette", "shoulder"],
+        "expected_source_contains": None,
+        "case_source": "largest_epaulette_annotation",
+        "ground_truth_role": "partial_reference",
+        "ground_truth": {
+            "annotation_id": 1,
+            "category_label": "epaulette",
+            "segmentation": [[10, 10, 20, 10, 20, 15, 10, 15]],
+            "bbox": [10, 10, 10, 5],
+            "image_width": 100,
+            "image_height": 100,
+        },
+    }
+    response = {
+        "segmentation": {"instances": []},
+        "localization": {
+            "subject_roi_source": "detected",
+            "subject_roi": {"x_min": 0, "y_min": 0, "x_max": 99, "y_max": 99},
+            "regions": [
+                {
+                    "region_label": "shoulder",
+                    "matched_text": "肩部 derived from outerwear mask",
+                    "mask": [[5, 5, 30, 5, 30, 25, 5, 25]],
+                    "box": {"x_min": 5, "y_min": 5, "x_max": 30, "y_max": 25},
+                }
+            ],
+        },
+    }
+
+    row = summarize_query_response(case, response, elapsed_seconds=1.0)
+
+    assert row["expected_detected"] is True
+    assert row["quality_checked"] is False
+    assert row["quality_passed"] is True
+    assert row["best_mask_iou"] is None
 
 
 def test_acceptance_report_requires_every_functional_check() -> None:

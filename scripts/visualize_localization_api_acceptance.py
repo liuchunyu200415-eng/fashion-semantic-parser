@@ -200,9 +200,16 @@ def _build_case_card(
         1,
         cv2.LINE_AA,
     )
+    ground_truth_label = "No direct ground truth"
+    if ground_truth is not None:
+        ground_truth_label = (
+            "Ground truth"
+            if row.get("ground_truth_role") == "exact"
+            else "Partial reference: epaulette"
+        )
     cv2.putText(
         card,
-        "Ground truth" if ground_truth is not None else "No direct ground truth",
+        ground_truth_label,
         (panel_width + 12, CARD_HEADER_HEIGHT + 17),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.48,

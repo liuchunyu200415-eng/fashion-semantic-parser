@@ -512,8 +512,8 @@ def test_hybrid_localization_derives_shoulders_from_garment_after_epaulette_miss
         region.matched_text.endswith("derived from outerwear mask")
         for region in result.regions
     )
-    assert all(region.box.y_max < 50.0 for region in result.regions)
-    assert all(region.box.x_max - region.box.x_min <= 30.0 for region in result.regions)
+    assert all(region.box.y_max < 40.0 for region in result.regions)
+    assert all(region.box.x_max - region.box.x_min <= 24.0 for region in result.regions)
     assert result.subject_roi_source == "detected"
     assert fallback.calls == []
 

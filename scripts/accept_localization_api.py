@@ -12,15 +12,16 @@ import cv2
 import numpy as np
 
 DIRECT_CASES = (
-    ("collar", "collar", "这件衣服的衣领在哪里？", ("collar",)),
-    ("pocket", "pocket", "这件衣服的口袋在哪里？", ("pocket",)),
+    ("collar", "collar", "这件衣服的衣领在哪里？", ("collar",), "exact"),
+    ("pocket", "pocket", "这件衣服的口袋在哪里？", ("pocket",), "exact"),
     (
         "shoulder",
         "epaulette",
         "这件衣服的肩部在哪里？",
         ("epaulette", "shoulder"),
+        "partial_reference",
     ),
-    ("decoration", "ruffle", "荷叶边在哪里？", ("ruffle",)),
+    ("decoration", "ruffle", "荷叶边在哪里？", ("ruffle",), "exact"),
 )
 DERIVED_CASES = (
     ("cuff", "这件上衣的袖口在哪里？", "derived from sleeve"),
@@ -159,7 +160,13 @@ def build_acceptance_cases(
 
     cases = []
     annotations = validation.get("annotations", [])
-    for target_region, source_category, query, expected_labels in DIRECT_CASES:
+    for (
+        target_region,
+        source_category,
+        query,
+        expected_labels,
+        ground_truth_role,
+    ) in DIRECT_CASES:
         category_id = category_ids.get(source_category)
         if category_id is None:
             raise ValueError(f"Validation JSON is missing category: {source_category}")
@@ -183,6 +190,7 @@ def build_acceptance_cases(
                 "expected_labels": list(expected_labels),
                 "expected_source_contains": None,
                 "case_source": f"largest_{source_category}_annotation",
+                "ground_truth_role": ground_truth_role,
                 "ground_truth": {
                     "annotation_id": int(selected["id"]),
                     "category_label": source_category,
@@ -204,6 +212,7 @@ def build_acceptance_cases(
                 "expected_labels": [target_region],
                 "expected_source_contains": expected_source,
                 "case_source": "derived_region_image",
+                "ground_truth_role": None,
                 "ground_truth": None,
             }
         )
@@ -239,7 +248,9 @@ def summarize_query_response(
         for region in matching_regions
     )
     ground_truth = case.get("ground_truth")
-    quality_checked = isinstance(ground_truth, dict)
+    quality_checked = (
+        isinstance(ground_truth, dict) and case.get("ground_truth_role") == "exact"
+    )
     best_mask_iou = (
         _best_direct_mask_iou(matching_regions, ground_truth)
         if quality_checked

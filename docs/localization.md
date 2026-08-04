@@ -694,23 +694,28 @@ python scripts/accept_localization_api.py \
 
 The script prints one progress line per request and exits nonzero if any expected
 label, derived source, valid automatic ROI state, segmentation payload, mask,
-or box is missing. For collar, pocket, shoulder/epaulette, and ruffle, the
-selected Fashionpedia ground-truth mask is also compared with the matching API
-prediction and requires mask IoU at least `0.50`. A valid automatic ROI state
-is either `detected` with a person box or an explicit `full_image_fallback`
-without one; the stricter all-detected value remains in the report as a
-diagnostic. The four unlabelled derived regions remain visual checks and are
-not converted into accuracy evidence.
+or box is missing. For collar, pocket, and ruffle, the selected Fashionpedia
+ground-truth mask is also compared with the matching API prediction and
+requires mask IoU at least `0.50`. Fashionpedia's epaulette mask covers only a
+shoulder decoration, so it is displayed as a partial reference and is not used
+as full-shoulder IoU ground truth. A valid automatic ROI state is either
+`detected` with a person box or an explicit `full_image_fallback` without one;
+the stricter all-detected value remains in the report as a diagnostic. Shoulder
+and the four unlabelled derived regions remain visual checks and are not
+converted into accuracy evidence.
 
 The first AutoDL run returned `accepted=true` under the old structural checks:
 all eight labels were present and every response had a detected person ROI,
 segmentation payload, non-empty mask, and valid box. Visual review then found
-that shoulder covered almost the entire person and ruffle covered nearly the
-entire skirt. That `8/8 PASS` result is therefore rejected. The stricter runner
-and three-panel visualization were introduced to keep label/schema success
-separate from spatial correctness. A fresh AutoDL run is required to record the
-new direct-IoU result after the shoulder fix; decoration remains an explicit
-optimization target until that evidence is available.
+that shoulder covered almost the entire person. That `8/8 PASS` result is
+therefore rejected. The stricter runner and three-panel visualization were
+introduced to keep label/schema success separate from spatial correctness. In
+the first strict rerun, collar, pocket, and ruffle reached `95.1%`, `94.3%`, and
+`92.0%` mask IoU. The apparent whole-skirt ruffle result matches the selected
+Fashionpedia annotation. Shoulder reached only `3.9%` against an epaulette mask,
+which exposed a semantic mismatch in the test rather than a valid full-shoulder
+metric. The epaulette is now a partial visual reference, and the derived
+shoulder bands are narrower and closer to the garment's upper edge.
 
 Render the saved eight-request result as one visual acceptance sheet:
 
@@ -720,8 +725,9 @@ python scripts/visualize_localization_api_acceptance.py \
   --output outputs/localization/hybrid_api_smoke/acceptance_overview.png
 ```
 
-The overview contains Original / Ground truth / Prediction panels for directly
-labelled cases and marks their best mask IoU. Derived cases show `visual only`
-because no direct Fashionpedia mask exists. Every card also includes the person
-ROI source, region count, and request time. It is intended for visual functional
-review, not dataset-level accuracy reporting.
+The overview contains Original / Ground truth / Prediction panels for exactly
+labelled cases and marks their best mask IoU. Shoulder displays the epaulette as
+a `Partial reference`, while shoulder and other derived cases show `visual only`
+because no equivalent direct Fashionpedia mask exists. Every card also includes
+the person ROI source, region count, and request time. It is intended for visual
+functional review, not dataset-level accuracy reporting.
