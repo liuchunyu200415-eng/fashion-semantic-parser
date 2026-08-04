@@ -651,8 +651,9 @@ The default application backend is `hybrid`:
    `6%`-height band; explicit parent garments are honored, upper garments use
    an anatomy-informed torso position, and pants or skirts use their top edge
 7. pattern queries inspect the selected 3.1.1 garment mask for compact internal
-   color outliers, reject garment borders and broad illumination changes, and
-   use Grounding DINO + SAM-HQ when no stable appearance candidate remains
+   color outliers, reject garment borders, broad illumination changes, and
+   large upper-body occlusions, then use Grounding DINO + SAM-HQ when no stable
+   appearance candidate remains
 8. custom queries use Grounding DINO + SAM-HQ
 9. `/v1/query` invokes localization only for known local-region language and
    keeps the 3.1.1 garment result in the same response

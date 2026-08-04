@@ -1026,7 +1026,7 @@ def _salient_pattern_mask(
     garment_mask: np.ndarray,
     *,
     min_component_fraction: float = 0.0005,
-    max_component_fraction: float = 0.20,
+    max_component_fraction: float = 0.08,
     max_components: int = 16,
 ) -> np.ndarray | None:
     """Extract compact color outliers while rejecting borders and broad shading."""
@@ -1071,6 +1071,14 @@ def _salient_pattern_mask(
     for component_id in range(1, component_count):
         area = int(stats[component_id, cv2.CC_STAT_AREA])
         if not min_area <= area <= max_area:
+            continue
+        component_top = int(stats[component_id, cv2.CC_STAT_TOP])
+        component_width = int(stats[component_id, cv2.CC_STAT_WIDTH])
+        is_upper_spread = component_top < garment_mask.shape[0] * 0.15 and (
+            area > garment_area * 0.015
+            or component_width > garment_mask.shape[1] * 0.35
+        )
+        if is_upper_spread:
             continue
         component_mask = labels == component_id
         mean_distance = float(color_distance[component_mask].mean())

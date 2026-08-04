@@ -788,7 +788,8 @@ def test_hybrid_localization_derives_pattern_from_garment_appearance(
     """Compact color outliers inside a garment should become one pattern mask."""
     image = np.full((120, 120, 3), (30, 30, 30), dtype="uint8")
     image[10:110, 10:110] = (210, 225, 235)
-    image[35:50, 30:45] = (170, 40, 220)
+    image[12:22, 25:78] = (25, 25, 25)
+    image[38:53, 30:45] = (170, 40, 220)
     image[65:82, 70:90] = (170, 40, 220)
     image_path = tmp_path / "pattern.jpg"
     assert cv2.imwrite(str(image_path), image)
@@ -819,6 +820,7 @@ def test_hybrid_localization_derives_pattern_from_garment_appearance(
     assert result.regions[0].matched_text.endswith("derived from top appearance")
     assert result.regions[0].box.x_min <= 32.0
     assert result.regions[0].box.x_max >= 88.0
+    assert result.regions[0].box.y_min >= 37.0
     assert len(result.regions[0].mask) == 2
     assert fallback.calls == []
 
