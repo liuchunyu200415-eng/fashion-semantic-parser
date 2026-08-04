@@ -593,6 +593,35 @@ def test_hybrid_localization_derives_hem_from_supported_garment_mask() -> None:
     assert fallback.calls == []
 
 
+def test_hybrid_localization_suppresses_duplicate_hem_garments() -> None:
+    """Nearly identical cross-class garment masks should yield one hem."""
+    prediction = SegmentationPrediction(
+        image_path="data/example.jpg",
+        instances=[
+            _rect_part_instance("top", 1, 0.92, (10, 20, 90, 100)),
+            _rect_part_instance("dress", 5, 0.90, (11, 21, 91, 101)),
+        ],
+    )
+    fallback = _FakeFallbackLocalizationService()
+    service = HybridRegionLocalizationService(
+        Mask2FormerPartLocalizationService(
+            segmentation_service=_FakePartSegmentationService()
+        ),
+        fallback,
+    )
+
+    result = service.localize_with_garment_prediction(
+        "data/example.jpg",
+        "下摆",
+        prediction,
+        auto_subject_roi=False,
+    )
+
+    assert len(result.regions) == 1
+    assert result.regions[0].matched_text.endswith("derived from top mask")
+    assert fallback.calls == []
+
+
 def test_hybrid_localization_reuses_existing_garment_prediction_for_hem() -> None:
     """The main query path should not rerun an already completed 3.1.1 model."""
     garments = _FakeGarmentSegmentationService()

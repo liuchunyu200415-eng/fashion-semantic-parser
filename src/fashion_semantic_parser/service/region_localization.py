@@ -660,7 +660,7 @@ def _derive_hems_from_garments(
     if not 0.0 < band_fraction < 0.5:
         raise ValueError("band_fraction must be between 0 and 0.5")
 
-    candidates = sorted(
+    eligible_instances = sorted(
         (
             instance
             for instance in garment_instances
@@ -669,7 +669,16 @@ def _derive_hems_from_garments(
         ),
         key=lambda instance: instance.confidence,
         reverse=True,
-    )[:max_hems]
+    )
+    candidates = []
+    for instance in eligible_instances:
+        if any(
+            _segmentation_box_iou(instance, retained) >= 0.85 for retained in candidates
+        ):
+            continue
+        candidates.append(instance)
+        if len(candidates) == max_hems:
+            break
     hems = []
     for instance in candidates:
         garment_region = _segmentation_instance_to_localized_region(instance)
@@ -680,14 +689,21 @@ def _derive_hems_from_garments(
             continue
         height, width = garment_mask.shape
         band_height = max(3, int(math.ceil(height * band_fraction)))
-        x_min = int(math.floor(width * 0.05))
-        x_max = int(math.ceil(width * 0.95))
-        hem_mask = np.zeros_like(garment_mask, dtype=bool)
+        x_min = int(math.floor(width * 0.20))
+        x_max = int(math.ceil(width * 0.80))
+        column_bottoms = {}
         for x_value in range(x_min, x_max):
             column_y = np.flatnonzero(garment_mask[:, x_value])
-            if not len(column_y):
+            if len(column_y):
+                column_bottoms[x_value] = int(column_y.max())
+        if not column_bottoms:
+            continue
+        target_bottom = float(np.median(list(column_bottoms.values())))
+        bottom_tolerance = max(band_height * 2, int(math.ceil(height * 0.08)))
+        hem_mask = np.zeros_like(garment_mask, dtype=bool)
+        for x_value, column_bottom in column_bottoms.items():
+            if abs(column_bottom - target_bottom) > bottom_tolerance:
                 continue
-            column_bottom = int(column_y.max())
             column_top = max(0, column_bottom - band_height + 1)
             hem_mask[column_top : column_bottom + 1, x_value] = garment_mask[
                 column_top : column_bottom + 1,
@@ -719,6 +735,26 @@ def _derive_hems_from_garments(
             )
         )
     return hems
+
+
+def _segmentation_box_iou(
+    first: SegmentationInstance,
+    second: SegmentationInstance,
+) -> float:
+    """Return bounding-box IoU for category-agnostic duplicate suppression."""
+    x_min = max(first.box.x_min, second.box.x_min)
+    y_min = max(first.box.y_min, second.box.y_min)
+    x_max = min(first.box.x_max, second.box.x_max)
+    y_max = min(first.box.y_max, second.box.y_max)
+    intersection = max(0.0, x_max - x_min) * max(0.0, y_max - y_min)
+    first_area = (first.box.x_max - first.box.x_min) * (
+        first.box.y_max - first.box.y_min
+    )
+    second_area = (second.box.x_max - second.box.x_min) * (
+        second.box.y_max - second.box.y_min
+    )
+    union = first_area + second_area - intersection
+    return intersection / union if union > 0.0 else 0.0
 
 
 def _segmentation_instance_to_localized_region(
