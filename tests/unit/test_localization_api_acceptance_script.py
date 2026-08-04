@@ -1,18 +1,50 @@
 """Tests for repeatable PRD 3.1.2 query API acceptance."""
 
 from scripts.accept_localization_api import (
+    _best_direct_mask_iou,
     build_acceptance_cases,
     build_acceptance_report,
     summarize_query_response,
 )
 
 
+def test_direct_mask_iou_rejects_a_large_wrong_region() -> None:
+    """A label match must not hide a mask that mostly covers the wrong area."""
+    ground_truth = {
+        "image_width": 100,
+        "image_height": 100,
+        "segmentation": [[10, 10, 30, 10, 30, 30, 10, 30]],
+    }
+    matching_regions = [
+        {"mask": [[0, 0, 99, 0, 99, 99, 0, 99]]},
+    ]
+
+    iou = _best_direct_mask_iou(matching_regions, ground_truth)
+
+    assert iou is not None
+    assert iou < 0.10
+
+
+def test_direct_mask_iou_accepts_matching_polygon() -> None:
+    """A direct prediction matching the selected GT should clear IoU 0.50."""
+    polygon = [10, 10, 30, 10, 30, 30, 10, 30]
+    ground_truth = {
+        "image_width": 100,
+        "image_height": 100,
+        "segmentation": [polygon],
+    }
+
+    iou = _best_direct_mask_iou([{"mask": [polygon]}], ground_truth)
+
+    assert iou == 1.0
+
+
 def test_acceptance_builds_four_direct_and_four_derived_cases() -> None:
     """The manifest should cover every required PRD localization region."""
     validation = {
         "images": [
-            {"id": 1, "file_name": "data/one.jpg"},
-            {"id": 2, "file_name": "data/two.jpg"},
+            {"id": 1, "file_name": "data/one.jpg", "width": 100, "height": 120},
+            {"id": 2, "file_name": "data/two.jpg", "width": 100, "height": 120},
         ],
         "categories": [
             {"id": 1, "name": "collar"},
@@ -21,11 +53,11 @@ def test_acceptance_builds_four_direct_and_four_derived_cases() -> None:
             {"id": 4, "name": "ruffle"},
         ],
         "annotations": [
-            {"image_id": 1, "category_id": 1, "area": 10},
-            {"image_id": 2, "category_id": 1, "area": 20},
-            {"image_id": 1, "category_id": 2, "area": 30},
-            {"image_id": 1, "category_id": 3, "area": 40},
-            {"image_id": 1, "category_id": 4, "area": 50},
+            {"id": 1, "image_id": 1, "category_id": 1, "area": 10},
+            {"id": 2, "image_id": 2, "category_id": 1, "area": 20},
+            {"id": 3, "image_id": 1, "category_id": 2, "area": 30},
+            {"id": 4, "image_id": 1, "category_id": 3, "area": 40},
+            {"id": 5, "image_id": 1, "category_id": 4, "area": 50},
         ],
     }
 
@@ -42,6 +74,7 @@ def test_acceptance_builds_four_direct_and_four_derived_cases() -> None:
         "pattern",
     ]
     assert cases[0]["image_id"] == 2
+    assert cases[0]["ground_truth"]["annotation_id"] == 2
     assert cases[2]["expected_labels"] == ["epaulette", "shoulder"]
     assert cases[-1]["expected_source_contains"] == "derived from top appearance"
 
@@ -81,6 +114,57 @@ def test_acceptance_response_checks_source_roi_masks_boxes_and_segmentation() ->
     assert row["all_boxes_valid"] is True
     assert row["segmentation_present"] is True
     assert row["elapsed_seconds"] == 1.25
+
+
+def test_direct_quality_failure_rejects_the_aggregate_report() -> None:
+    """A direct label hit with a spatially wrong mask must fail acceptance."""
+    case = {
+        "target_region": "decoration",
+        "query": "荷叶边在哪里？",
+        "image_id": 1,
+        "image_path": "data/example.jpg",
+        "expected_labels": ["ruffle"],
+        "expected_source_contains": None,
+        "case_source": "largest_ruffle_annotation",
+        "ground_truth": {
+            "annotation_id": 1,
+            "category_label": "ruffle",
+            "segmentation": [[10, 10, 30, 10, 30, 30, 10, 30]],
+            "bbox": [10, 10, 20, 20],
+            "image_width": 100,
+            "image_height": 100,
+        },
+    }
+    response = {
+        "segmentation": {"instances": []},
+        "localization": {
+            "subject_roi_source": "detected",
+            "subject_roi": {"x_min": 0, "y_min": 0, "x_max": 99, "y_max": 99},
+            "regions": [
+                {
+                    "region_label": "ruffle",
+                    "matched_text": "荷叶边",
+                    "mask": [[0, 0, 99, 0, 99, 99, 0, 99]],
+                    "box": {"x_min": 0, "y_min": 0, "x_max": 99, "y_max": 99},
+                }
+            ],
+        },
+    }
+
+    row = summarize_query_response(case, response, elapsed_seconds=1.0)
+    report = build_acceptance_report(
+        base_url="http://127.0.0.1:8002",
+        validation_json="validation.json",
+        derived_image="data/derived.jpg",
+        rows=[row],
+    )
+
+    assert row["expected_detected"] is True
+    assert row["quality_checked"] is True
+    assert row["quality_passed"] is False
+    assert row["best_mask_iou"] < 10.0
+    assert report["all_direct_mask_iou_passed"] is False
+    assert report["accepted"] is False
 
 
 def test_acceptance_report_requires_every_functional_check() -> None:

@@ -15,8 +15,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.visualize_localization_comparison import (
+    GROUND_TRUTH_COLOR,
     PREDICTION_COLORS,
+    _blend_masks,
+    _draw_box_and_label,
     _draw_prediction,
+    _polygons_to_mask,
     _prediction_masks,
 )
 
@@ -42,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--report", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--columns", type=int, default=2)
-    parser.add_argument("--card-width", type=int, default=720)
+    parser.add_argument("--card-width", type=int, default=960)
     parser.add_argument("--alpha", type=float, default=0.45)
     return parser.parse_args()
 
@@ -56,8 +60,8 @@ def main() -> None:
 
     if args.columns < 1:
         raise ValueError("--columns must be positive")
-    if args.card_width < 480:
-        raise ValueError("--card-width must be at least 480")
+    if args.card_width < 720:
+        raise ValueError("--card-width must be at least 720")
     if not 0.0 <= args.alpha <= 1.0:
         raise ValueError("--alpha must be between 0 and 1")
 
@@ -101,9 +105,15 @@ def main() -> None:
             color=PREDICTION_COLORS[(index - 1) % len(PREDICTION_COLORS)],
             alpha=args.alpha,
         )
+        ground_truth = _draw_ground_truth_panel(
+            image,
+            row.get("ground_truth"),
+            alpha=args.alpha,
+        )
         cards.append(
             _build_case_card(
                 image,
+                ground_truth,
                 overlay,
                 row,
                 index=index,
@@ -143,6 +153,7 @@ def main() -> None:
 
 def _build_case_card(
     original: np.ndarray,
+    ground_truth: np.ndarray | None,
     prediction: np.ndarray,
     row: dict[str, Any],
     *,
@@ -150,7 +161,7 @@ def _build_case_card(
     card_width: int,
 ) -> np.ndarray:
     """Build one stable Original/Localized acceptance card."""
-    panel_width = card_width // 2
+    panel_width = card_width // 3
     card_height = CARD_HEADER_HEIGHT + PANEL_LABEL_HEIGHT + CARD_IMAGE_HEIGHT
     card = np.full((card_height, card_width, 3), 18, dtype=np.uint8)
     passed = _row_passed(row)
@@ -160,9 +171,14 @@ def _build_case_card(
     roi_source = str(row.get("subject_roi_source", "missing"))
     region_count = int(row.get("region_count", 0))
     elapsed = float(row.get("elapsed_seconds", 0.0))
+    quality_text = (
+        f"IoU: {float(row['best_mask_iou']):.1f}%"
+        if row.get("quality_checked") and row.get("best_mask_iou") is not None
+        else "visual only"
+    )
     title = (
         f"{index}. {region}  |  {status}  |  ROI: {roi_source}  |  "
-        f"regions: {region_count}  |  {elapsed:.2f}s"
+        f"regions: {region_count}  |  {quality_text}  |  {elapsed:.2f}s"
     )
     cv2.putText(
         card,
@@ -186,8 +202,18 @@ def _build_case_card(
     )
     cv2.putText(
         card,
-        "Localized mask + box + subject ROI",
+        "Ground truth" if ground_truth is not None else "No direct ground truth",
         (panel_width + 12, CARD_HEADER_HEIGHT + 17),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.48,
+        (210, 210, 210),
+        1,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        card,
+        "Localized mask + box + subject ROI",
+        (panel_width * 2 + 12, CARD_HEADER_HEIGHT + 17),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.48,
         (210, 210, 210),
@@ -199,17 +225,27 @@ def _build_case_card(
         image_top : image_top + CARD_IMAGE_HEIGHT,
         :panel_width,
     ] = _fit_to_canvas(original, panel_width, CARD_IMAGE_HEIGHT)
+    if ground_truth is not None:
+        card[
+            image_top : image_top + CARD_IMAGE_HEIGHT,
+            panel_width : panel_width * 2,
+        ] = _fit_to_canvas(ground_truth, panel_width, CARD_IMAGE_HEIGHT)
     card[
         image_top : image_top + CARD_IMAGE_HEIGHT,
-        panel_width:,
-    ] = _fit_to_canvas(prediction, card_width - panel_width, CARD_IMAGE_HEIGHT)
-    cv2.line(
-        card,
-        (panel_width, CARD_HEADER_HEIGHT),
-        (panel_width, card_height - 1),
-        (60, 60, 60),
-        1,
+        panel_width * 2 :,
+    ] = _fit_to_canvas(
+        prediction,
+        card_width - panel_width * 2,
+        CARD_IMAGE_HEIGHT,
     )
+    for divider_x in (panel_width, panel_width * 2):
+        cv2.line(
+            card,
+            (divider_x, CARD_HEADER_HEIGHT),
+            (divider_x, card_height - 1),
+            (60, 60, 60),
+            1,
+        )
     return cast(np.ndarray, card)
 
 
@@ -288,11 +324,47 @@ def _row_passed(row: dict[str, Any]) -> bool:
     return bool(
         row.get("expected_detected")
         and row.get("source_matched")
+        and (not row.get("quality_checked", False) or row.get("quality_passed", False))
         and roi_valid
         and row.get("segmentation_present")
         and row.get("all_masks_present")
         and row.get("all_boxes_valid")
     )
+
+
+def _draw_ground_truth_panel(
+    image: np.ndarray,
+    ground_truth: Any,
+    *,
+    alpha: float,
+) -> np.ndarray | None:
+    """Draw one selected direct ground-truth mask and box when available."""
+    if not isinstance(ground_truth, dict):
+        return None
+    segmentation = ground_truth.get("segmentation")
+    if not isinstance(segmentation, list):
+        return None
+    mask = _polygons_to_mask(
+        segmentation,
+        height=image.shape[0],
+        width=image.shape[1],
+    )
+    result = _blend_masks(image, [mask], GROUND_TRUTH_COLOR, alpha)
+    bbox = ground_truth.get("bbox")
+    if isinstance(bbox, list) and len(bbox) == 4:
+        x_min, y_min, width, height = (float(value) for value in bbox)
+        _draw_box_and_label(
+            result,
+            {
+                "x_min": x_min,
+                "y_min": y_min,
+                "x_max": x_min + width,
+                "y_max": y_min + height,
+            },
+            str(ground_truth.get("category_label", "ground truth")),
+            GROUND_TRUTH_COLOR,
+        )
+    return result
 
 
 def _read_json(path: Path) -> dict[str, Any]:

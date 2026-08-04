@@ -640,7 +640,10 @@ The default application backend is `hybrid`:
 1. directly supervised Fashionpedia part queries use Mask2Former and fall back
    to Grounding DINO + SAM-HQ when the supervised result is empty
 2. generic decoration queries retain all predicted decoration subclasses
-3. shoulder queries use epaulette as explicitly partial supervision
+3. shoulder queries use epaulette as explicitly partial supervision; after an
+   epaulette miss, they derive two compact upper-side regions from the current
+   `top`, `outerwear`, or `dress` mask instead of accepting a whole-person
+   open-vocabulary mask
 4. cuff queries retain at most two sleeve masks with confidence at least `0.5`,
    estimate each sleeve's principal axis, and use the distal `8%`; Grounding
    DINO + SAM-HQ remains the fallback when no qualifying sleeve is detected
@@ -691,21 +694,23 @@ python scripts/accept_localization_api.py \
 
 The script prints one progress line per request and exits nonzero if any expected
 label, derived source, valid automatic ROI state, segmentation payload, mask,
-or box is missing. A valid automatic ROI state is either `detected` with a
-person box or an explicit `full_image_fallback` without one; the stricter
-all-detected value remains in the report as a diagnostic. Shoulder accepts
-either supervised `epaulette` partial coverage or a fallback `shoulder` result
-while preserving the returned source. This is functional API acceptance only;
-it does not convert the four unlabelled derived regions into accuracy evidence.
+or box is missing. For collar, pocket, shoulder/epaulette, and ruffle, the
+selected Fashionpedia ground-truth mask is also compared with the matching API
+prediction and requires mask IoU at least `0.50`. A valid automatic ROI state
+is either `detected` with a person box or an explicit `full_image_fallback`
+without one; the stricter all-detected value remains in the report as a
+diagnostic. The four unlabelled derived regions remain visual checks and are
+not converted into accuracy evidence.
 
-The completed AutoDL acceptance run returned `accepted=true` for all eight
-representative requests. Collar, pocket, shoulder, decoration, cuff, hem,
-waist, and pattern were all present; every request retained a detected person
-ROI, a segmentation payload, non-empty masks, and valid boxes. The eight
-requests took `11.51 s` in total. This result closes the first end-to-end
-functional slice, but it is deliberately recorded separately from formal
-dataset accuracy: the examples are selected acceptance cases, and cuff, hem,
-waist, and pattern do not have direct Fashionpedia ground-truth masks.
+The first AutoDL run returned `accepted=true` under the old structural checks:
+all eight labels were present and every response had a detected person ROI,
+segmentation payload, non-empty mask, and valid box. Visual review then found
+that shoulder covered almost the entire person and ruffle covered nearly the
+entire skirt. That `8/8 PASS` result is therefore rejected. The stricter runner
+and three-panel visualization were introduced to keep label/schema success
+separate from spatial correctness. A fresh AutoDL run is required to record the
+new direct-IoU result after the shoulder fix; decoration remains an explicit
+optimization target until that evidence is available.
 
 Render the saved eight-request result as one visual acceptance sheet:
 
@@ -715,7 +720,8 @@ python scripts/visualize_localization_api_acceptance.py \
   --output outputs/localization/hybrid_api_smoke/acceptance_overview.png
 ```
 
-The overview contains an original and localized panel for each PRD example
-region, including the returned mask, box, person ROI source, region count, and
-request time. It is intended for visual functional review, not dataset-level
-accuracy reporting.
+The overview contains Original / Ground truth / Prediction panels for directly
+labelled cases and marks their best mask IoU. Derived cases show `visual only`
+because no direct Fashionpedia mask exists. Every card also includes the person
+ROI source, region count, and request time. It is intended for visual functional
+review, not dataset-level accuracy reporting.

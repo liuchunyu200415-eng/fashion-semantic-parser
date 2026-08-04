@@ -46,15 +46,16 @@ def test_case_card_has_stable_dimensions() -> None:
 
     card = _build_case_card(
         original,
+        None,
         prediction,
         row,
         index=1,
-        card_width=720,
+        card_width=960,
     )
 
     assert card.shape == (
         CARD_HEADER_HEIGHT + PANEL_LABEL_HEIGHT + CARD_IMAGE_HEIGHT,
-        720,
+        960,
         3,
     )
 

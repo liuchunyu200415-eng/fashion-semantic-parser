@@ -8,6 +8,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+import cv2
+import numpy as np
+
 DIRECT_CASES = (
     ("collar", "collar", "这件衣服的衣领在哪里？", ("collar",)),
     ("pocket", "pocket", "这件衣服的口袋在哪里？", ("pocket",)),
@@ -47,6 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val-json", required=True)
     parser.add_argument("--derived-image", required=True)
     parser.add_argument("--timeout-seconds", type=float, default=300.0)
+    parser.add_argument("--direct-min-iou", type=float, default=0.50)
     parser.add_argument("--output", required=True)
     parser.add_argument(
         "--responses-dir",
@@ -68,6 +72,8 @@ def main() -> None:
 
     if args.timeout_seconds <= 0.0:
         raise ValueError("--timeout-seconds must be positive.")
+    if not 0.0 <= args.direct_min_iou <= 1.0:
+        raise ValueError("--direct-min-iou must be between 0 and 1.")
     validation_path = resolve_project_path(args.val_json)
     derived_image_path = resolve_project_path(args.derived_image)
     output_path = resolve_project_path(args.output)
@@ -100,6 +106,7 @@ def main() -> None:
             case,
             response,
             elapsed_seconds=elapsed_seconds,
+            direct_min_iou=args.direct_min_iou,
         )
         if responses_dir is not None:
             response_path = responses_dir / (
@@ -114,6 +121,7 @@ def main() -> None:
         print(
             f"[{index}/{total}] region={row['target_region']} "
             f"hit={row['expected_detected']} source={row['source_matched']} "
+            f"iou={_format_iou(row['best_mask_iou'])} "
             f"regions={row['region_count']} elapsed={elapsed_seconds:.2f}s",
             flush=True,
         )
@@ -122,6 +130,7 @@ def main() -> None:
         base_url=args.base_url,
         validation_json=str(validation_path),
         derived_image=args.derived_image,
+        direct_min_iou=args.direct_min_iou,
         rows=rows,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -144,10 +153,7 @@ def build_acceptance_cases(
         for category in validation.get("categories", [])
     }
     category_ids = {name: category_id for category_id, name in categories.items()}
-    images = {
-        int(image["id"]): str(image["file_name"])
-        for image in validation.get("images", [])
-    }
+    images = {int(image["id"]): image for image in validation.get("images", [])}
     if not categories or not images:
         raise ValueError("Validation JSON must define categories and images.")
 
@@ -167,15 +173,24 @@ def build_acceptance_cases(
             raise ValueError(f"No validation annotation for: {source_category}")
         selected = max(candidates, key=_annotation_area)
         image_id = int(selected["image_id"])
+        image = images[image_id]
         cases.append(
             {
                 "target_region": target_region,
                 "query": query,
                 "image_id": image_id,
-                "image_path": images[image_id],
+                "image_path": str(image["file_name"]),
                 "expected_labels": list(expected_labels),
                 "expected_source_contains": None,
                 "case_source": f"largest_{source_category}_annotation",
+                "ground_truth": {
+                    "annotation_id": int(selected["id"]),
+                    "category_label": source_category,
+                    "segmentation": selected.get("segmentation"),
+                    "bbox": selected.get("bbox"),
+                    "image_width": int(image["width"]),
+                    "image_height": int(image["height"]),
+                },
             }
         )
 
@@ -189,6 +204,7 @@ def build_acceptance_cases(
                 "expected_labels": [target_region],
                 "expected_source_contains": expected_source,
                 "case_source": "derived_region_image",
+                "ground_truth": None,
             }
         )
     return cases
@@ -199,6 +215,7 @@ def summarize_query_response(
     response: Any,
     *,
     elapsed_seconds: float,
+    direct_min_iou: float = 0.50,
 ) -> dict[str, Any]:
     """Validate one localization query response and return compact details."""
     if not isinstance(response, dict):
@@ -221,11 +238,26 @@ def summarize_query_response(
         expected_source in str(region.get("matched_text", ""))
         for region in matching_regions
     )
+    ground_truth = case.get("ground_truth")
+    quality_checked = isinstance(ground_truth, dict)
+    best_mask_iou = (
+        _best_direct_mask_iou(matching_regions, ground_truth)
+        if quality_checked
+        else None
+    )
+    quality_passed = (
+        best_mask_iou is not None and best_mask_iou >= direct_min_iou
+        if quality_checked
+        else True
+    )
     segmentation = response.get("segmentation")
     return {
         **case,
         "expected_detected": bool(matching_regions),
         "source_matched": source_matched,
+        "quality_checked": quality_checked,
+        "quality_passed": quality_passed,
+        "best_mask_iou": (best_mask_iou * 100.0 if best_mask_iou is not None else None),
         "subject_roi_source": localization.get("subject_roi_source"),
         "subject_roi_present": isinstance(localization.get("subject_roi"), dict),
         "segmentation_present": isinstance(segmentation, dict),
@@ -246,6 +278,7 @@ def build_acceptance_report(
     validation_json: str,
     derived_image: str,
     rows: list[dict[str, Any]],
+    direct_min_iou: float = 0.50,
 ) -> dict[str, Any]:
     """Aggregate all localization requests into one functional decision."""
     all_subject_rois_detected = all(
@@ -255,6 +288,10 @@ def build_acceptance_report(
     checks = {
         "all_expected_detected": all(row["expected_detected"] for row in rows),
         "all_sources_matched": all(row["source_matched"] for row in rows),
+        "all_direct_mask_iou_passed": all(
+            not row.get("quality_checked", False) or row.get("quality_passed", False)
+            for row in rows
+        ),
         "all_roi_modes_valid": all(_valid_automatic_roi_state(row) for row in rows),
         "all_segmentations_present": all(row["segmentation_present"] for row in rows),
         "all_masks_present": all(row["all_masks_present"] for row in rows),
@@ -265,6 +302,7 @@ def build_acceptance_report(
         "endpoint": "/v1/query",
         "validation_json": validation_json,
         "derived_image": derived_image,
+        "direct_min_iou": direct_min_iou,
         "request_count": len(rows),
         "total_elapsed_seconds": sum(row["elapsed_seconds"] for row in rows),
         "all_subject_rois_detected": all_subject_rois_detected,
@@ -301,6 +339,73 @@ def _annotation_area(annotation: dict[str, Any]) -> float:
     return 0.0
 
 
+def _best_direct_mask_iou(
+    matching_regions: list[dict[str, Any]],
+    ground_truth: dict[str, Any],
+) -> float | None:
+    """Return the best mask IoU against one selected direct annotation."""
+    height = int(ground_truth.get("image_height", 0))
+    width = int(ground_truth.get("image_width", 0))
+    if height <= 0 or width <= 0:
+        return None
+    ground_truth_mask = _segmentation_to_mask(
+        ground_truth.get("segmentation"),
+        height=height,
+        width=width,
+    )
+    if ground_truth_mask is None or not ground_truth_mask.any():
+        return None
+    best_iou = 0.0
+    for region in matching_regions:
+        prediction_mask = _segmentation_to_mask(
+            region.get("mask"),
+            height=height,
+            width=width,
+        )
+        if prediction_mask is None or not prediction_mask.any():
+            continue
+        union = np.logical_or(prediction_mask, ground_truth_mask).sum()
+        if not union:
+            continue
+        intersection = np.logical_and(prediction_mask, ground_truth_mask).sum()
+        best_iou = max(best_iou, float(intersection / union))
+    return best_iou
+
+
+def _segmentation_to_mask(
+    segmentation: Any,
+    *,
+    height: int,
+    width: int,
+) -> np.ndarray | None:
+    """Decode polygon or COCO RLE segmentation into one binary mask."""
+    if isinstance(segmentation, list):
+        mask = np.zeros((height, width), dtype=np.uint8)
+        polygons = []
+        for polygon in segmentation:
+            if not isinstance(polygon, list) or len(polygon) < 6 or len(polygon) % 2:
+                continue
+            points = np.asarray(polygon, dtype=np.float32).reshape(-1, 2)
+            points[:, 0] = np.clip(points[:, 0], 0, max(width - 1, 0))
+            points[:, 1] = np.clip(points[:, 1], 0, max(height - 1, 0))
+            polygons.append(np.rint(points).astype(np.int32))
+        if not polygons:
+            return None
+        cv2.fillPoly(mask, polygons, 1)
+        return mask.astype(bool)
+    if isinstance(segmentation, dict):
+        from pycocotools import mask as mask_utils  # type: ignore[import-untyped]
+
+        rle = segmentation
+        if isinstance(segmentation.get("counts"), list):
+            rle = mask_utils.frPyObjects(segmentation, height, width)
+        decoded = np.asarray(mask_utils.decode(rle), dtype=bool)
+        if decoded.ndim == 3:
+            decoded = np.any(decoded, axis=2)
+        return decoded
+    return None
+
+
 def _valid_box(box: Any) -> bool:
     """Return whether an API xyxy box has positive area."""
     if not isinstance(box, dict):
@@ -311,6 +416,11 @@ def _valid_box(box: Any) -> bool:
         ) > float(box["y_min"])
     except (KeyError, TypeError, ValueError):
         return False
+
+
+def _format_iou(value: Any) -> str:
+    """Format direct IoU while marking unlabelled derived cases explicitly."""
+    return "visual-only" if value is None else f"{float(value):.1f}%"
 
 
 def _post_json(url: str, payload: dict[str, Any], timeout_seconds: float) -> Any:

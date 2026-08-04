@@ -265,6 +265,7 @@ _WAIST_GARMENT_QUERY_TERMS = _HEM_GARMENT_QUERY_TERMS + (
 )
 _PATTERN_GARMENT_LABELS = _WAIST_GARMENT_LABELS
 _PATTERN_GARMENT_QUERY_TERMS = _WAIST_GARMENT_QUERY_TERMS
+_SHOULDER_GARMENT_LABELS = frozenset(("top", "outerwear", "dress"))
 
 
 class Mask2FormerPartLocalizationService:
@@ -400,6 +401,34 @@ class HybridRegionLocalizationService:
             )
             if supervised_prediction.regions:
                 return supervised_prediction
+        if prompt.region_label == "shoulder":
+            effective_garment_prediction = garment_prediction
+            if (
+                effective_garment_prediction is None
+                and self.garment_segmentation_service is not None
+            ):
+                effective_garment_prediction = (
+                    self.garment_segmentation_service.segment(
+                        image_path,
+                        subject_roi=subject_roi,
+                        auto_subject_roi=auto_subject_roi,
+                    )
+                )
+            if effective_garment_prediction is not None:
+                shoulder_regions = _derive_shoulders_from_garments(
+                    effective_garment_prediction.instances,
+                    prompt=prompt,
+                )
+                if shoulder_regions:
+                    return RegionLocalizationPrediction(
+                        image_path=image_path,
+                        query=query,
+                        regions=shoulder_regions,
+                        subject_roi=effective_garment_prediction.subject_roi,
+                        subject_roi_source=(
+                            effective_garment_prediction.subject_roi_source
+                        ),
+                    )
         if prompt.region_label == "cuff":
             sleeve_prediction = self.supervised_service.localize(
                 image_path,
@@ -685,6 +714,101 @@ def _derive_cuffs_from_sleeves(
             )
         )
     return cuffs
+
+
+def _derive_shoulders_from_garments(
+    garment_instances: list[SegmentationInstance],
+    *,
+    prompt: LocalizationPrompt,
+    min_garment_confidence: float = 0.5,
+    vertical_start_fraction: float = 0.04,
+    vertical_end_fraction: float = 0.22,
+    outer_fraction: float = 0.30,
+) -> list[LocalizedRegion]:
+    """Approximate two shoulder areas from the upper sides of one garment mask."""
+    if not 0.0 <= min_garment_confidence <= 1.0:
+        raise ValueError("min_garment_confidence must be between 0 and 1")
+    if not 0.0 <= vertical_start_fraction < vertical_end_fraction <= 0.5:
+        raise ValueError("shoulder vertical fractions are invalid")
+    if not 0.0 < outer_fraction < 0.5:
+        raise ValueError("outer_fraction must be between 0 and 0.5")
+
+    eligible_instances = sorted(
+        (
+            instance
+            for instance in garment_instances
+            if instance.category_label in _SHOULDER_GARMENT_LABELS
+            and instance.confidence >= min_garment_confidence
+        ),
+        key=lambda instance: instance.confidence,
+        reverse=True,
+    )
+    for instance in eligible_instances:
+        garment_region = _segmentation_instance_to_localized_region(instance)
+        garment_mask, coordinate_offset = _localized_region_to_local_mask(
+            garment_region
+        )
+        if garment_mask is None:
+            continue
+        height, _ = garment_mask.shape
+        y_min = max(0, int(math.floor(height * vertical_start_fraction)))
+        y_max = min(height, int(math.ceil(height * vertical_end_fraction)))
+        if y_max <= y_min:
+            continue
+
+        shoulder_masks = [np.zeros_like(garment_mask, dtype=bool) for _ in range(2)]
+        for y_value in range(y_min, y_max):
+            row_x = np.flatnonzero(garment_mask[y_value])
+            if len(row_x) < 4:
+                continue
+            row_min = int(row_x.min())
+            row_max = int(row_x.max()) + 1
+            row_width = row_max - row_min
+            side_width = max(2, int(math.ceil(row_width * outer_fraction)))
+            left_max = min(row_max, row_min + side_width)
+            right_min = max(row_min, row_max - side_width)
+            shoulder_masks[0][y_value, row_min:left_max] = garment_mask[
+                y_value, row_min:left_max
+            ]
+            shoulder_masks[1][y_value, right_min:row_max] = garment_mask[
+                y_value, right_min:row_max
+            ]
+
+        shoulders = []
+        for shoulder_mask in shoulder_masks:
+            shoulder_mask = cv2.morphologyEx(
+                shoulder_mask.astype("uint8"),
+                cv2.MORPH_CLOSE,
+                np.ones((3, 3), dtype="uint8"),
+            ).astype(bool)
+            polygons = _mask_to_polygons(
+                shoulder_mask,
+                coordinate_offset=coordinate_offset,
+            )
+            if not polygons:
+                continue
+            y_values, x_values = np.nonzero(shoulder_mask)
+            x_offset, y_offset = coordinate_offset
+            shoulders.append(
+                LocalizedRegion(
+                    region_label="shoulder",
+                    matched_text=(
+                        f"{prompt.matched_term} derived from "
+                        f"{instance.category_label} mask"
+                    ),
+                    confidence=max(0.0, min(1.0, instance.confidence * 0.8)),
+                    box=LocalizationBoundingBox(
+                        x_min=float(x_values.min()) + x_offset,
+                        y_min=float(y_values.min()) + y_offset,
+                        x_max=float(x_values.max() + 1) + x_offset,
+                        y_max=float(y_values.max() + 1) + y_offset,
+                    ),
+                    mask=polygons,
+                )
+            )
+        if shoulders:
+            return shoulders
+    return []
 
 
 def _localized_region_to_local_mask(

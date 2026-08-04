@@ -463,6 +463,61 @@ def test_hybrid_localization_falls_back_when_supervised_part_is_empty() -> None:
     assert fallback.calls == [("data/example.jpg", "肩部", None, False)]
 
 
+def test_hybrid_localization_derives_shoulders_from_garment_after_epaulette_miss() -> (
+    None
+):
+    """A missed epaulette should produce compact garment-derived shoulders."""
+
+    class _NoEpauletteSegmentationService(_FakePartSegmentationService):
+        def segment(
+            self,
+            image_path: str,
+            subject_roi: SegmentationSubjectROI | None = None,
+            auto_subject_roi: bool = False,
+        ) -> SegmentationPrediction:
+            self.calls.append((image_path, subject_roi, auto_subject_roi))
+            return SegmentationPrediction(image_path=image_path, instances=[])
+
+    fallback = _FakeFallbackLocalizationService()
+    service = HybridRegionLocalizationService(
+        Mask2FormerPartLocalizationService(
+            segmentation_service=_NoEpauletteSegmentationService()
+        ),
+        fallback,
+    )
+    prediction = SegmentationPrediction(
+        image_path="data/example.jpg",
+        instances=[_rect_part_instance("outerwear", 4, 0.9, (10, 20, 110, 140))],
+        subject_roi=SegmentationSubjectROI(
+            x_min=0,
+            y_min=0,
+            x_max=120,
+            y_max=180,
+        ),
+        subject_roi_source="detected",
+    )
+
+    result = service.localize_with_garment_prediction(
+        "data/example.jpg",
+        "肩部在哪里？",
+        prediction,
+        auto_subject_roi=False,
+    )
+
+    assert [region.region_label for region in result.regions] == [
+        "shoulder",
+        "shoulder",
+    ]
+    assert all(
+        region.matched_text.endswith("derived from outerwear mask")
+        for region in result.regions
+    )
+    assert all(region.box.y_max < 50.0 for region in result.regions)
+    assert all(region.box.x_max - region.box.x_min <= 30.0 for region in result.regions)
+    assert result.subject_roi_source == "detected"
+    assert fallback.calls == []
+
+
 def test_hybrid_localization_falls_back_when_no_sleeve_is_detected() -> None:
     """An empty supervised sleeve result should preserve open-vocabulary fallback."""
 
