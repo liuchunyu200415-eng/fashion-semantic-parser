@@ -650,13 +650,16 @@ The default application backend is `hybrid`:
 6. waist queries reuse the current 3.1.1 garment mask and return one central
    `6%`-height band; explicit parent garments are honored, upper garments use
    an anatomy-informed torso position, and pants or skirts use their top edge
-7. pattern and custom queries use Grounding DINO + SAM-HQ
-8. `/v1/query` invokes localization only for known local-region language and
+7. pattern queries inspect the selected 3.1.1 garment mask for compact internal
+   color outliers, reject garment borders and broad illumination changes, and
+   use Grounding DINO + SAM-HQ when no stable appearance candidate remains
+8. custom queries use Grounding DINO + SAM-HQ
+9. `/v1/query` invokes localization only for known local-region language and
    keeps the 3.1.1 garment result in the same response
 
 The deployment score threshold `0.25` is provisional for functional testing.
 Thresholded direct-IoU and visual acceptance remain later accuracy work.
-The cuff, hem, and waist derivations are explicit geometric approximations
-rather than direct part supervision. Pattern localization still requires new or
-pseudo annotations rather than relabeling full garment masks as unsupported
-parts.
+The cuff, hem, and waist derivations are explicit geometric approximations, and
+pattern extraction is an appearance heuristic. None has direct Fashionpedia
+part supervision; labelled or pseudo-labelled evaluation data is still needed
+before reporting accuracy for these regions.

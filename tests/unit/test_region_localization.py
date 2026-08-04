@@ -781,6 +781,82 @@ def test_hybrid_localization_falls_back_when_no_waist_garment_is_available() -> 
     assert fallback.calls == [("data/example.jpg", "腰部", None, False)]
 
 
+def test_hybrid_localization_derives_pattern_from_garment_appearance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Compact color outliers inside a garment should become one pattern mask."""
+    image = np.full((120, 120, 3), (30, 30, 30), dtype="uint8")
+    image[10:110, 10:110] = (210, 225, 235)
+    image[35:50, 30:45] = (170, 40, 220)
+    image[65:82, 70:90] = (170, 40, 220)
+    image_path = tmp_path / "pattern.jpg"
+    assert cv2.imwrite(str(image_path), image)
+    monkeypatch.setattr(
+        "fashion_semantic_parser.service.region_localization.resolve_project_path",
+        lambda _: image_path,
+    )
+    fallback = _FakeFallbackLocalizationService()
+    service = HybridRegionLocalizationService(
+        Mask2FormerPartLocalizationService(
+            segmentation_service=_FakePartSegmentationService()
+        ),
+        fallback,
+    )
+
+    result = service.localize_with_garment_prediction(
+        "data/example.jpg",
+        "这件上衣的图案在哪里？",
+        SegmentationPrediction(
+            image_path="data/example.jpg",
+            instances=[_rect_part_instance("top", 1, 0.90, (10, 10, 110, 110))],
+        ),
+        auto_subject_roi=False,
+    )
+
+    assert len(result.regions) == 1
+    assert result.regions[0].region_label == "pattern"
+    assert result.regions[0].matched_text.endswith("derived from top appearance")
+    assert result.regions[0].box.x_min <= 32.0
+    assert result.regions[0].box.x_max >= 88.0
+    assert len(result.regions[0].mask) == 2
+    assert fallback.calls == []
+
+
+def test_hybrid_localization_falls_back_for_uniform_garment_pattern(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A uniform garment should not fabricate a color-pattern region."""
+    image = np.full((120, 120, 3), (210, 225, 235), dtype="uint8")
+    image_path = tmp_path / "uniform.jpg"
+    assert cv2.imwrite(str(image_path), image)
+    monkeypatch.setattr(
+        "fashion_semantic_parser.service.region_localization.resolve_project_path",
+        lambda _: image_path,
+    )
+    fallback = _FakeFallbackLocalizationService()
+    service = HybridRegionLocalizationService(
+        Mask2FormerPartLocalizationService(
+            segmentation_service=_FakePartSegmentationService()
+        ),
+        fallback,
+    )
+
+    result = service.localize_with_garment_prediction(
+        "data/example.jpg",
+        "图案",
+        SegmentationPrediction(
+            image_path="data/example.jpg",
+            instances=[_rect_part_instance("top", 1, 0.90, (10, 10, 110, 110))],
+        ),
+        auto_subject_roi=False,
+    )
+
+    assert result.regions == []
+    assert fallback.calls == [("data/example.jpg", "图案", None, False)]
+
+
 def test_grounding_results_are_clamped_ranked_and_limited() -> None:
     """External detections should be normalized before SAM receives them."""
 

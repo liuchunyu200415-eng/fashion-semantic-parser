@@ -263,6 +263,8 @@ _WAIST_GARMENT_LABELS = frozenset(("top", "pants", "skirt", "outerwear", "dress"
 _WAIST_GARMENT_QUERY_TERMS = _HEM_GARMENT_QUERY_TERMS + (
     ("pants", ("裤子", "长裤", "短裤", "pants", "trousers", "shorts")),
 )
+_PATTERN_GARMENT_LABELS = _WAIST_GARMENT_LABELS
+_PATTERN_GARMENT_QUERY_TERMS = _WAIST_GARMENT_QUERY_TERMS
 
 
 class Mask2FormerPartLocalizationService:
@@ -469,6 +471,36 @@ class HybridRegionLocalizationService:
                         image_path=image_path,
                         query=query,
                         regions=waist_regions,
+                        subject_roi=effective_garment_prediction.subject_roi,
+                        subject_roi_source=(
+                            effective_garment_prediction.subject_roi_source
+                        ),
+                    )
+        if prompt.region_label == "pattern":
+            effective_garment_prediction = garment_prediction
+            if (
+                effective_garment_prediction is None
+                and self.garment_segmentation_service is not None
+            ):
+                effective_garment_prediction = (
+                    self.garment_segmentation_service.segment(
+                        image_path,
+                        subject_roi=subject_roi,
+                        auto_subject_roi=auto_subject_roi,
+                    )
+                )
+            if effective_garment_prediction is not None:
+                pattern_regions = _derive_patterns_from_garments(
+                    image_path,
+                    effective_garment_prediction.instances,
+                    prompt=prompt,
+                    query=query,
+                )
+                if pattern_regions:
+                    return RegionLocalizationPrediction(
+                        image_path=image_path,
+                        query=query,
+                        regions=pattern_regions,
                         subject_roi=effective_garment_prediction.subject_roi,
                         subject_roi_source=(
                             effective_garment_prediction.subject_roi_source
@@ -876,6 +908,179 @@ def _waist_center_y(category_label: str, garment_height: int) -> float:
         "outerwear": 0.55,
     }[category_label]
     return garment_height * relative_center
+
+
+def _derive_patterns_from_garments(
+    image_path: str,
+    garment_instances: list[SegmentationInstance],
+    *,
+    prompt: LocalizationPrompt,
+    query: str,
+    min_garment_confidence: float = 0.5,
+) -> list[LocalizedRegion]:
+    """Find salient internal color regions within one selected garment mask."""
+    if not 0.0 <= min_garment_confidence <= 1.0:
+        raise ValueError("min_garment_confidence must be between 0 and 1")
+    try:
+        resolved_image_path = resolve_project_path(image_path)
+    except ValueError as error:
+        raise InvalidImageInputError(str(error)) from error
+    image = cv2.imread(str(resolved_image_path))
+    if image is None:
+        raise InvalidImageInputError(f"Unable to read image: {image_path}")
+
+    requested_labels = _pattern_garment_labels_for_query(query)
+    eligible_instances = sorted(
+        (
+            instance
+            for instance in garment_instances
+            if instance.category_label in requested_labels
+            and instance.confidence >= min_garment_confidence
+        ),
+        key=lambda instance: instance.confidence,
+        reverse=True,
+    )
+    for instance in eligible_instances:
+        garment_region = _segmentation_instance_to_localized_region(instance)
+        garment_mask, coordinate_offset = _localized_region_to_local_mask(
+            garment_region
+        )
+        if garment_mask is None:
+            continue
+        crop, clipped_mask, clipped_offset = _clip_local_mask_to_image(
+            image,
+            garment_mask,
+            coordinate_offset,
+        )
+        if crop is None or clipped_mask is None:
+            continue
+        pattern_mask = _salient_pattern_mask(crop, clipped_mask)
+        if pattern_mask is None:
+            continue
+        polygons = _mask_to_polygons(
+            pattern_mask,
+            coordinate_offset=clipped_offset,
+        )
+        if not polygons:
+            continue
+        y_values, x_values = np.nonzero(pattern_mask)
+        x_offset, y_offset = clipped_offset
+        return [
+            LocalizedRegion(
+                region_label="pattern",
+                matched_text=(
+                    f"{prompt.matched_term} derived from "
+                    f"{instance.category_label} appearance"
+                ),
+                confidence=max(0.0, min(1.0, instance.confidence * 0.75)),
+                box=LocalizationBoundingBox(
+                    x_min=float(x_values.min()) + x_offset,
+                    y_min=float(y_values.min()) + y_offset,
+                    x_max=float(x_values.max() + 1) + x_offset,
+                    y_max=float(y_values.max() + 1) + y_offset,
+                ),
+                mask=polygons,
+            )
+        ]
+    return []
+
+
+def _pattern_garment_labels_for_query(query: str) -> frozenset[str]:
+    """Narrow a pattern request when it explicitly names a parent garment."""
+    normalized_query = query.casefold()
+    for label, terms in _PATTERN_GARMENT_QUERY_TERMS:
+        if any(term in normalized_query for term in terms):
+            return frozenset((label,))
+    return _PATTERN_GARMENT_LABELS
+
+
+def _clip_local_mask_to_image(
+    image: np.ndarray,
+    local_mask: np.ndarray,
+    coordinate_offset: tuple[float, float],
+) -> tuple[np.ndarray | None, np.ndarray | None, tuple[float, float]]:
+    """Clip a box-local mask to image bounds while preserving coordinates."""
+    x_offset = int(round(coordinate_offset[0]))
+    y_offset = int(round(coordinate_offset[1]))
+    image_height, image_width = image.shape[:2]
+    image_x_min = max(0, x_offset)
+    image_y_min = max(0, y_offset)
+    image_x_max = min(image_width, x_offset + local_mask.shape[1])
+    image_y_max = min(image_height, y_offset + local_mask.shape[0])
+    if image_x_max <= image_x_min or image_y_max <= image_y_min:
+        return None, None, (float(image_x_min), float(image_y_min))
+
+    mask_x_min = image_x_min - x_offset
+    mask_y_min = image_y_min - y_offset
+    mask_x_max = mask_x_min + image_x_max - image_x_min
+    mask_y_max = mask_y_min + image_y_max - image_y_min
+    return (
+        image[image_y_min:image_y_max, image_x_min:image_x_max],
+        local_mask[mask_y_min:mask_y_max, mask_x_min:mask_x_max],
+        (float(image_x_min), float(image_y_min)),
+    )
+
+
+def _salient_pattern_mask(
+    image_crop: np.ndarray,
+    garment_mask: np.ndarray,
+    *,
+    min_component_fraction: float = 0.0005,
+    max_component_fraction: float = 0.20,
+    max_components: int = 16,
+) -> np.ndarray | None:
+    """Extract compact color outliers while rejecting borders and broad shading."""
+    garment_area = int(garment_mask.sum())
+    if garment_area < 64:
+        return None
+    lab = cv2.cvtColor(image_crop, cv2.COLOR_BGR2LAB).astype(np.float32)
+    garment_pixels = lab[garment_mask]
+    dominant_color = np.median(garment_pixels, axis=0)
+    color_distance = np.linalg.norm(lab - dominant_color, axis=2)
+    garment_distances = color_distance[garment_mask]
+    median_distance = float(np.median(garment_distances))
+    mad = float(np.median(np.abs(garment_distances - median_distance)))
+    threshold = median_distance + max(18.0, 3.0 * mad)
+
+    erosion_size = max(3, int(round(min(garment_mask.shape) * 0.015)))
+    if erosion_size % 2 == 0:
+        erosion_size += 1
+    interior_mask = cv2.erode(
+        garment_mask.astype("uint8"),
+        np.ones((erosion_size, erosion_size), dtype="uint8"),
+    ).astype(bool)
+    candidates = (color_distance >= threshold) & interior_mask
+    candidates = cv2.morphologyEx(
+        candidates.astype("uint8"),
+        cv2.MORPH_OPEN,
+        np.ones((3, 3), dtype="uint8"),
+    )
+    candidates = cv2.morphologyEx(
+        candidates,
+        cv2.MORPH_CLOSE,
+        np.ones((5, 5), dtype="uint8"),
+    )
+
+    component_count, labels, stats, _ = cv2.connectedComponentsWithStats(
+        candidates,
+        connectivity=8,
+    )
+    min_area = max(12, int(math.ceil(garment_area * min_component_fraction)))
+    max_area = max(min_area, int(math.floor(garment_area * max_component_fraction)))
+    components = []
+    for component_id in range(1, component_count):
+        area = int(stats[component_id, cv2.CC_STAT_AREA])
+        if not min_area <= area <= max_area:
+            continue
+        component_mask = labels == component_id
+        mean_distance = float(color_distance[component_mask].mean())
+        components.append((area * mean_distance, component_id))
+    if not components:
+        return None
+    components.sort(reverse=True)
+    selected_ids = [component_id for _, component_id in components[:max_components]]
+    selected_mask = np.isin(labels, selected_ids) & garment_mask
+    return selected_mask if selected_mask.any() else None
 
 
 def _segmentation_box_iou(
