@@ -107,3 +107,53 @@ def test_acceptance_report_requires_every_functional_check() -> None:
     assert report["accepted"] is False
     assert report["all_expected_detected"] is True
     assert report["all_sources_matched"] is False
+
+
+def test_acceptance_allows_explicit_full_image_roi_fallback() -> None:
+    """Missing person detections remain valid when fallback is explicit."""
+    row = {
+        "expected_detected": True,
+        "source_matched": True,
+        "subject_roi_source": "full_image_fallback",
+        "subject_roi_present": False,
+        "segmentation_present": True,
+        "all_masks_present": True,
+        "all_boxes_valid": True,
+        "elapsed_seconds": 1.0,
+    }
+
+    report = build_acceptance_report(
+        base_url="http://127.0.0.1:8002",
+        validation_json="validation.json",
+        derived_image="data/derived.jpg",
+        rows=[row],
+    )
+
+    assert report["accepted"] is True
+    assert report["all_roi_modes_valid"] is True
+    assert report["all_subject_rois_detected"] is False
+    assert report["roi_source_counts"] == {"full_image_fallback": 1}
+
+
+def test_acceptance_rejects_inconsistent_detected_roi_state() -> None:
+    """A detected source without a person box should fail functional acceptance."""
+    row = {
+        "expected_detected": True,
+        "source_matched": True,
+        "subject_roi_source": "detected",
+        "subject_roi_present": False,
+        "segmentation_present": True,
+        "all_masks_present": True,
+        "all_boxes_valid": True,
+        "elapsed_seconds": 1.0,
+    }
+
+    report = build_acceptance_report(
+        base_url="http://127.0.0.1:8002",
+        validation_json="validation.json",
+        derived_image="data/derived.jpg",
+        rows=[row],
+    )
+
+    assert report["accepted"] is False
+    assert report["all_roi_modes_valid"] is False

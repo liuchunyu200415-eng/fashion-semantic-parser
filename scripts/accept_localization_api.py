@@ -226,13 +226,14 @@ def build_acceptance_report(
     rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Aggregate all localization requests into one functional decision."""
+    all_subject_rois_detected = all(
+        row["subject_roi_source"] == "detected" and row["subject_roi_present"]
+        for row in rows
+    )
     checks = {
         "all_expected_detected": all(row["expected_detected"] for row in rows),
         "all_sources_matched": all(row["source_matched"] for row in rows),
-        "all_subject_rois_detected": all(
-            row["subject_roi_source"] == "detected" and row["subject_roi_present"]
-            for row in rows
-        ),
+        "all_roi_modes_valid": all(_valid_automatic_roi_state(row) for row in rows),
         "all_segmentations_present": all(row["segmentation_present"] for row in rows),
         "all_masks_present": all(row["all_masks_present"] for row in rows),
         "all_boxes_valid": all(row["all_boxes_valid"] for row in rows),
@@ -244,10 +245,27 @@ def build_acceptance_report(
         "derived_image": derived_image,
         "request_count": len(rows),
         "total_elapsed_seconds": sum(row["elapsed_seconds"] for row in rows),
+        "all_subject_rois_detected": all_subject_rois_detected,
+        "roi_source_counts": {
+            source if source is not None else "missing": sum(
+                row["subject_roi_source"] == source for row in rows
+            )
+            for source in ("detected", "full_image_fallback", "manual", None)
+            if any(row["subject_roi_source"] == source for row in rows)
+        },
         **checks,
         "accepted": all(checks.values()),
         "requests": rows,
     }
+
+
+def _valid_automatic_roi_state(row: dict[str, Any]) -> bool:
+    """Accept a detected person box or an explicit full-image fallback."""
+    source = row["subject_roi_source"]
+    roi_present = row["subject_roi_present"]
+    return (source == "detected" and roi_present) or (
+        source == "full_image_fallback" and not roi_present
+    )
 
 
 def _annotation_area(annotation: dict[str, Any]) -> float:

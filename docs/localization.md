@@ -688,8 +688,10 @@ python scripts/accept_localization_api.py \
 ```
 
 The script prints one progress line per request and exits nonzero if any expected
-label, derived source, subject ROI, segmentation payload, mask, or box is
-missing. Shoulder accepts either supervised `epaulette` partial coverage or a
-fallback `shoulder` result while preserving the returned source. This is
-functional API acceptance only; it does not convert the four unlabelled derived
-regions into accuracy evidence.
+label, derived source, valid automatic ROI state, segmentation payload, mask,
+or box is missing. A valid automatic ROI state is either `detected` with a
+person box or an explicit `full_image_fallback` without one; the stricter
+all-detected value remains in the report as a diagnostic. Shoulder accepts
+either supervised `epaulette` partial coverage or a fallback `shoulder` result
+while preserving the returned source. This is functional API acceptance only;
+it does not convert the four unlabelled derived regions into accuracy evidence.
