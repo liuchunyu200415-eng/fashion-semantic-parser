@@ -664,3 +664,29 @@ The cuff, hem, and waist derivations are explicit geometric approximations, and
 pattern extraction is an appearance heuristic. None has direct Fashionpedia
 part supervision; labelled or pseudo-labelled evaluation data is still needed
 before reporting accuracy for these regions.
+
+### Query API Functional Acceptance
+
+With the API already running, verify all eight PRD region paths using one known
+derived-region image plus deterministic large validation annotations for the
+directly supervised classes:
+
+```bash
+DERIVED_IMAGE="$(python -c '
+import json
+print(json.load(open(
+    "outputs/localization/hybrid_api_smoke/pattern_request.json"
+))["image_path"])
+')"
+
+python scripts/accept_localization_api.py \
+  --base-url http://127.0.0.1:8002 \
+  --val-json data/processed/autodl/localization/fashionpedia_parts_validation.json \
+  --derived-image "$DERIVED_IMAGE" \
+  --output outputs/localization/hybrid_api_smoke/acceptance_report.json
+```
+
+The script prints one progress line per request and exits nonzero if any expected
+label, derived source, subject ROI, segmentation payload, mask, or box is
+missing. This is functional API acceptance only; it does not convert the four
+unlabelled derived regions into accuracy evidence.
