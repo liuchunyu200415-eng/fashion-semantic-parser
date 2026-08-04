@@ -253,6 +253,12 @@ _SUPERVISED_DECORATION_LABELS = frozenset(
     if category.region_group == "decoration"
 )
 _HEM_GARMENT_LABELS = frozenset(("top", "skirt", "outerwear", "dress"))
+_HEM_GARMENT_QUERY_TERMS = (
+    ("dress", ("连衣裙", "dress")),
+    ("outerwear", ("外套", "大衣", "夹克", "coat", "jacket", "outerwear")),
+    ("skirt", ("半身裙", "裙子", "skirt")),
+    ("top", ("上衣", "衬衫", "毛衣", "shirt", "sweater", "t-shirt", "top")),
+)
 
 
 class Mask2FormerPartLocalizationService:
@@ -423,6 +429,7 @@ class HybridRegionLocalizationService:
                 hem_regions = _derive_hems_from_garments(
                     effective_garment_prediction.instances,
                     prompt=prompt,
+                    query=query,
                 )
                 if hem_regions:
                     return RegionLocalizationPrediction(
@@ -648,6 +655,7 @@ def _derive_hems_from_garments(
     garment_instances: list[SegmentationInstance],
     *,
     prompt: LocalizationPrompt,
+    query: str,
     min_garment_confidence: float = 0.5,
     max_hems: int = 2,
     band_fraction: float = 0.06,
@@ -660,11 +668,12 @@ def _derive_hems_from_garments(
     if not 0.0 < band_fraction < 0.5:
         raise ValueError("band_fraction must be between 0 and 0.5")
 
+    requested_labels = _hem_garment_labels_for_query(query)
     eligible_instances = sorted(
         (
             instance
             for instance in garment_instances
-            if instance.category_label in _HEM_GARMENT_LABELS
+            if instance.category_label in requested_labels
             and instance.confidence >= min_garment_confidence
         ),
         key=lambda instance: instance.confidence,
@@ -673,7 +682,7 @@ def _derive_hems_from_garments(
     candidates = []
     for instance in eligible_instances:
         if any(
-            _segmentation_box_iou(instance, retained) >= 0.85 for retained in candidates
+            _segmentation_box_iou(instance, retained) >= 0.7 for retained in candidates
         ):
             continue
         candidates.append(instance)
@@ -735,6 +744,15 @@ def _derive_hems_from_garments(
             )
         )
     return hems
+
+
+def _hem_garment_labels_for_query(query: str) -> frozenset[str]:
+    """Narrow a hem request when it explicitly names a parent garment."""
+    normalized_query = query.casefold()
+    for label, terms in _HEM_GARMENT_QUERY_TERMS:
+        if any(term in normalized_query for term in terms):
+            return frozenset((label,))
+    return _HEM_GARMENT_LABELS
 
 
 def _segmentation_box_iou(

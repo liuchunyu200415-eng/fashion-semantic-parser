@@ -644,8 +644,9 @@ The default application backend is `hybrid`:
    estimate each sleeve's principal axis, and use the distal `8%`; Grounding
    DINO + SAM-HQ remains the fallback when no qualifying sleeve is detected
 5. hem queries reuse the current 3.1.1 `top`, `skirt`, `outerwear`, or `dress`
-   masks, suppress near-identical boxes, and follow the central lower contour
-   with a `6%`-height band so sleeve ends do not become garment hems
+   masks, honor an explicitly named parent garment, suppress overlapping boxes,
+   and follow the central lower contour with a `6%`-height band so sleeve ends
+   do not become garment hems
 6. waist, pattern, and custom queries use Grounding DINO + SAM-HQ
 7. `/v1/query` invokes localization only for known local-region language and
    keeps the 3.1.1 garment result in the same response
