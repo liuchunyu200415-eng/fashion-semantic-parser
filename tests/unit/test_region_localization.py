@@ -102,6 +102,36 @@ class _FakeFallbackLocalizationService:
         )
 
 
+class _FakeGarmentSegmentationService:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, SegmentationSubjectROI | None, bool]] = []
+
+    def segment(
+        self,
+        image_path: str,
+        subject_roi: SegmentationSubjectROI | None = None,
+        auto_subject_roi: bool = False,
+    ) -> SegmentationPrediction:
+        self.calls.append((image_path, subject_roi, auto_subject_roi))
+        return _garment_prediction(image_path, subject_roi)
+
+
+def _garment_prediction(
+    image_path: str,
+    subject_roi: SegmentationSubjectROI | None = None,
+) -> SegmentationPrediction:
+    return SegmentationPrediction(
+        image_path=image_path,
+        instances=[
+            _rect_part_instance("top", 1, 0.92, (10, 20, 90, 100)),
+            _rect_part_instance("pants", 2, 0.95, (20, 90, 80, 180)),
+            _rect_part_instance("dress", 5, 0.3, (5, 15, 95, 170)),
+        ],
+        subject_roi=subject_roi,
+        subject_roi_source="manual" if subject_roi is not None else None,
+    )
+
+
 def _part_instance(
     label: str,
     category_id: int,
@@ -535,6 +565,81 @@ def test_hybrid_localization_falls_back_for_low_confidence_sleeves() -> None:
 
     assert result.regions == []
     assert fallback.calls == [("data/example.jpg", "袖口", None, False)]
+
+
+def test_hybrid_localization_derives_hem_from_supported_garment_mask() -> None:
+    """Hem queries should use the lower edge of a confident garment mask."""
+    garments = _FakeGarmentSegmentationService()
+    fallback = _FakeFallbackLocalizationService()
+    service = HybridRegionLocalizationService(
+        Mask2FormerPartLocalizationService(
+            segmentation_service=_FakePartSegmentationService()
+        ),
+        fallback,
+        garment_segmentation_service=garments,
+    )
+
+    result = service.localize(
+        "data/example.jpg",
+        "这件衣服的下摆在哪里？",
+        auto_subject_roi=False,
+    )
+
+    assert len(result.regions) == 1
+    assert result.regions[0].region_label == "hem"
+    assert result.regions[0].matched_text.endswith("derived from top mask")
+    assert result.regions[0].box.y_min >= 94.0
+    assert garments.calls == [("data/example.jpg", None, False)]
+    assert fallback.calls == []
+
+
+def test_hybrid_localization_reuses_existing_garment_prediction_for_hem() -> None:
+    """The main query path should not rerun an already completed 3.1.1 model."""
+    garments = _FakeGarmentSegmentationService()
+    fallback = _FakeFallbackLocalizationService()
+    service = HybridRegionLocalizationService(
+        Mask2FormerPartLocalizationService(
+            segmentation_service=_FakePartSegmentationService()
+        ),
+        fallback,
+        garment_segmentation_service=garments,
+    )
+    prediction = _garment_prediction("data/example.jpg")
+
+    result = service.localize_with_garment_prediction(
+        "data/example.jpg",
+        "下摆",
+        prediction,
+        auto_subject_roi=False,
+    )
+
+    assert [region.region_label for region in result.regions] == ["hem"]
+    assert garments.calls == []
+    assert fallback.calls == []
+
+
+def test_hybrid_localization_falls_back_when_no_hem_garment_is_available() -> None:
+    """Unsupported garment classes should preserve the open-vocabulary path."""
+    fallback = _FakeFallbackLocalizationService()
+    service = HybridRegionLocalizationService(
+        Mask2FormerPartLocalizationService(
+            segmentation_service=_FakePartSegmentationService()
+        ),
+        fallback,
+    )
+
+    result = service.localize_with_garment_prediction(
+        "data/example.jpg",
+        "下摆",
+        SegmentationPrediction(
+            image_path="data/example.jpg",
+            instances=[_rect_part_instance("pants", 2, 0.95, (20, 90, 80, 180))],
+        ),
+        auto_subject_roi=False,
+    )
+
+    assert result.regions == []
+    assert fallback.calls == [("data/example.jpg", "下摆", None, False)]
 
 
 def test_grounding_results_are_clamped_ranked_and_limited() -> None:

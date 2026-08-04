@@ -79,6 +79,28 @@ class _FakeLocalizationService:
         )
 
 
+class _GarmentAwareFakeLocalizationService(_FakeLocalizationService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.garment_predictions: list[SegmentationPrediction] = []
+
+    def localize_with_garment_prediction(
+        self,
+        image_path: str,
+        query: str,
+        garment_prediction: SegmentationPrediction,
+        subject_roi: SegmentationSubjectROI | None = None,
+        auto_subject_roi: bool = True,
+    ) -> RegionLocalizationPrediction:
+        self.garment_predictions.append(garment_prediction)
+        return self.localize(
+            image_path,
+            query,
+            subject_roi=subject_roi,
+            auto_subject_roi=auto_subject_roi,
+        )
+
+
 def test_query_returns_integrated_segmentation_result() -> None:
     """The existing query route should no longer be a fixed not-ready stub."""
     segmentation_service = _FakeSegmentationService()
@@ -125,6 +147,28 @@ def test_query_routes_known_part_language_through_localization() -> None:
     assert localization_service.calls == [
         ("data/example.jpg", "这件衣服的衣领在哪里？", None, False)
     ]
+
+
+def test_query_reuses_segmentation_for_garment_aware_localization() -> None:
+    """Garment-derived regions should receive the current 3.1.1 prediction."""
+    segmentation_service = _FakeSegmentationService()
+    localization_service = _GarmentAwareFakeLocalizationService()
+    service = FashionParserService(
+        segmentation_service,
+        localization_service=localization_service,
+    )
+
+    response = service.answer_query(
+        MultimodalQueryRequest(
+            image_path="data/example.jpg",
+            query="这件衣服的下摆在哪里？",
+        )
+    )
+
+    assert response.localization is not None
+    assert len(localization_service.garment_predictions) == 1
+    assert localization_service.garment_predictions[0] is response.segmentation
+    assert segmentation_service.calls == [("data/example.jpg", None, True)]
 
 
 def test_query_does_not_localize_general_garment_questions() -> None:

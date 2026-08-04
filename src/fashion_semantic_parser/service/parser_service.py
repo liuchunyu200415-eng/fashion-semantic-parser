@@ -120,6 +120,19 @@ class FashionParserService:
             raise InvalidImageInputError(str(error)) from error
         if prompt.region_label == "custom":
             return None
+        localize_with_garment_prediction = getattr(
+            self.localization_service,
+            "localize_with_garment_prediction",
+            None,
+        )
+        if callable(localize_with_garment_prediction):
+            return localize_with_garment_prediction(
+                request.image_path,
+                request.query,
+                segmentation,
+                subject_roi=segmentation.subject_roi,
+                auto_subject_roi=False,
+            )
         return self.localization_service.localize(
             request.image_path,
             request.query,

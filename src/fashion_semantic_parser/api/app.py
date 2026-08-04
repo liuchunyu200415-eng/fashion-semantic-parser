@@ -68,6 +68,7 @@ def create_app(
                 GroundedSAMHQRegionLocalizationService(
                     localization_settings.fallback_config_path
                 ),
+                garment_segmentation_service=segmentation_service,
             )
     if parser_service is None:
         query_auto_subject_roi = (

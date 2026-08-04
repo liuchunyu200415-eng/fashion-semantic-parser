@@ -643,12 +643,14 @@ The default application backend is `hybrid`:
 4. cuff queries retain at most two sleeve masks with confidence at least `0.5`,
    estimate each sleeve's principal axis, and use the distal `8%`; Grounding
    DINO + SAM-HQ remains the fallback when no qualifying sleeve is detected
-5. hem, waist, pattern, and custom queries use Grounding DINO + SAM-HQ
-6. `/v1/query` invokes localization only for known local-region language and
+5. hem queries reuse the current 3.1.1 `top`, `skirt`, `outerwear`, or `dress`
+   masks and follow their lower contour with a `6%`-height band
+6. waist, pattern, and custom queries use Grounding DINO + SAM-HQ
+7. `/v1/query` invokes localization only for known local-region language and
    keeps the 3.1.1 garment result in the same response
 
 The deployment score threshold `0.25` is provisional for functional testing.
 Thresholded direct-IoU and visual acceptance remain later accuracy work.
-The cuff derivation is an explicit geometric approximation rather than direct
-cuff supervision. Other missing PRD regions require new or pseudo annotations
-rather than relabeling full garment masks as unsupported parts.
+The cuff and hem derivations are explicit geometric approximations rather than
+direct part supervision. Other missing PRD regions require new or pseudo
+annotations rather than relabeling full garment masks as unsupported parts.

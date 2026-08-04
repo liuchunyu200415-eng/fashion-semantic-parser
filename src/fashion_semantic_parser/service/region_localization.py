@@ -25,6 +25,8 @@ from fashion_semantic_parser.models.localization import (
     RegionLocalizationPrediction,
 )
 from fashion_semantic_parser.models.segmentation import (
+    SegmentationInstance,
+    SegmentationPrediction,
     SegmentationSubjectROI,
     SubjectROISource,
 )
@@ -250,6 +252,7 @@ _SUPERVISED_DECORATION_LABELS = frozenset(
     for category in FASHIONPEDIA_PART_CATEGORIES
     if category.region_group == "decoration"
 )
+_HEM_GARMENT_LABELS = frozenset(("top", "skirt", "outerwear", "dress"))
 
 
 class Mask2FormerPartLocalizationService:
@@ -324,10 +327,13 @@ class HybridRegionLocalizationService:
         self,
         supervised_service: Mask2FormerPartLocalizationService,
         fallback_service: RegionLocalizationRuntime,
+        *,
+        garment_segmentation_service: SegmentationRuntime | None = None,
     ) -> None:
         """Combine an exact-category runtime with an open-vocabulary fallback."""
         self.supervised_service = supervised_service
         self.fallback_service = fallback_service
+        self.garment_segmentation_service = garment_segmentation_service
 
     def localize(
         self,
@@ -337,6 +343,41 @@ class HybridRegionLocalizationService:
         auto_subject_roi: bool = True,
     ) -> RegionLocalizationPrediction:
         """Route directly supervised queries without loading both heavy paths."""
+        return self._localize(
+            image_path,
+            query,
+            subject_roi=subject_roi,
+            auto_subject_roi=auto_subject_roi,
+            garment_prediction=None,
+        )
+
+    def localize_with_garment_prediction(
+        self,
+        image_path: str,
+        query: str,
+        garment_prediction: SegmentationPrediction,
+        subject_roi: SegmentationSubjectROI | None = None,
+        auto_subject_roi: bool = True,
+    ) -> RegionLocalizationPrediction:
+        """Reuse an existing 3.1.1 result for garment-derived regions."""
+        return self._localize(
+            image_path,
+            query,
+            subject_roi=subject_roi,
+            auto_subject_roi=auto_subject_roi,
+            garment_prediction=garment_prediction,
+        )
+
+    def _localize(
+        self,
+        image_path: str,
+        query: str,
+        *,
+        subject_roi: SegmentationSubjectROI | None,
+        auto_subject_roi: bool,
+        garment_prediction: SegmentationPrediction | None,
+    ) -> RegionLocalizationPrediction:
+        """Route one query through supervised, derived, or fallback masks."""
         prompt = _resolve_prompt_or_error(query)
         if self.supervised_service.supports_query(query):
             return self.supervised_service.localize(
@@ -365,6 +406,34 @@ class HybridRegionLocalizationService:
                     subject_roi=sleeve_prediction.subject_roi,
                     subject_roi_source=sleeve_prediction.subject_roi_source,
                 )
+        if prompt.region_label == "hem":
+            effective_garment_prediction = garment_prediction
+            if (
+                effective_garment_prediction is None
+                and self.garment_segmentation_service is not None
+            ):
+                effective_garment_prediction = (
+                    self.garment_segmentation_service.segment(
+                        image_path,
+                        subject_roi=subject_roi,
+                        auto_subject_roi=auto_subject_roi,
+                    )
+                )
+            if effective_garment_prediction is not None:
+                hem_regions = _derive_hems_from_garments(
+                    effective_garment_prediction.instances,
+                    prompt=prompt,
+                )
+                if hem_regions:
+                    return RegionLocalizationPrediction(
+                        image_path=image_path,
+                        query=query,
+                        regions=hem_regions,
+                        subject_roi=effective_garment_prediction.subject_roi,
+                        subject_roi_source=(
+                            effective_garment_prediction.subject_roi_source
+                        ),
+                    )
         return self.fallback_service.localize(
             image_path,
             query,
@@ -573,6 +642,101 @@ def _localized_region_to_local_mask(
     if not mask.any():
         return None, (float(x_min), float(y_min))
     return mask.astype(bool), (float(x_min), float(y_min))
+
+
+def _derive_hems_from_garments(
+    garment_instances: list[SegmentationInstance],
+    *,
+    prompt: LocalizationPrompt,
+    min_garment_confidence: float = 0.5,
+    max_hems: int = 2,
+    band_fraction: float = 0.06,
+) -> list[LocalizedRegion]:
+    """Derive lower-edge bands from supported garment instance masks."""
+    if not 0.0 <= min_garment_confidence <= 1.0:
+        raise ValueError("min_garment_confidence must be between 0 and 1")
+    if max_hems < 1:
+        raise ValueError("max_hems must be positive")
+    if not 0.0 < band_fraction < 0.5:
+        raise ValueError("band_fraction must be between 0 and 0.5")
+
+    candidates = sorted(
+        (
+            instance
+            for instance in garment_instances
+            if instance.category_label in _HEM_GARMENT_LABELS
+            and instance.confidence >= min_garment_confidence
+        ),
+        key=lambda instance: instance.confidence,
+        reverse=True,
+    )[:max_hems]
+    hems = []
+    for instance in candidates:
+        garment_region = _segmentation_instance_to_localized_region(instance)
+        garment_mask, coordinate_offset = _localized_region_to_local_mask(
+            garment_region
+        )
+        if garment_mask is None:
+            continue
+        height, width = garment_mask.shape
+        band_height = max(3, int(math.ceil(height * band_fraction)))
+        x_min = int(math.floor(width * 0.05))
+        x_max = int(math.ceil(width * 0.95))
+        hem_mask = np.zeros_like(garment_mask, dtype=bool)
+        for x_value in range(x_min, x_max):
+            column_y = np.flatnonzero(garment_mask[:, x_value])
+            if not len(column_y):
+                continue
+            column_bottom = int(column_y.max())
+            column_top = max(0, column_bottom - band_height + 1)
+            hem_mask[column_top : column_bottom + 1, x_value] = garment_mask[
+                column_top : column_bottom + 1,
+                x_value,
+            ]
+        polygons = _mask_to_polygons(
+            hem_mask,
+            coordinate_offset=coordinate_offset,
+        )
+        if not polygons:
+            continue
+        y_values, x_values = np.nonzero(hem_mask)
+        x_offset, y_offset = coordinate_offset
+        hems.append(
+            LocalizedRegion(
+                region_label="hem",
+                matched_text=(
+                    f"{prompt.matched_term} derived from "
+                    f"{instance.category_label} mask"
+                ),
+                confidence=max(0.0, min(1.0, instance.confidence * 0.9)),
+                box=LocalizationBoundingBox(
+                    x_min=float(x_values.min()) + x_offset,
+                    y_min=float(y_values.min()) + y_offset,
+                    x_max=float(x_values.max() + 1) + x_offset,
+                    y_max=float(y_values.max() + 1) + y_offset,
+                ),
+                mask=polygons,
+            )
+        )
+    return hems
+
+
+def _segmentation_instance_to_localized_region(
+    instance: SegmentationInstance,
+) -> LocalizedRegion:
+    """Adapt a garment instance so shared polygon rasterization can be reused."""
+    return LocalizedRegion(
+        region_label=instance.category_label,
+        matched_text=instance.category_label,
+        confidence=instance.confidence,
+        box=LocalizationBoundingBox(
+            x_min=instance.box.x_min,
+            y_min=instance.box.y_min,
+            x_max=instance.box.x_max,
+            y_max=instance.box.y_max,
+        ),
+        mask=instance.mask,
+    )
 
 
 def _crop_to_subject_roi(
