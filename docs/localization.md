@@ -640,11 +640,14 @@ The default application backend is `hybrid`:
 1. directly supervised Fashionpedia part queries use Mask2Former
 2. generic decoration queries retain all predicted decoration subclasses
 3. shoulder queries use epaulette as explicitly partial supervision
-4. cuff, hem, waist, pattern, and custom queries use Grounding DINO + SAM-HQ
-5. `/v1/query` invokes localization only for known local-region language and
+4. cuff queries derive a distal cuff region from each supervised sleeve mask;
+   Grounding DINO + SAM-HQ remains the fallback when no sleeve is detected
+5. hem, waist, pattern, and custom queries use Grounding DINO + SAM-HQ
+6. `/v1/query` invokes localization only for known local-region language and
    keeps the 3.1.1 garment result in the same response
 
 The deployment score threshold `0.25` is provisional for functional testing.
 Thresholded direct-IoU and visual acceptance remain later accuracy work.
-Missing PRD regions require new or pseudo annotations rather than relabeling
-full sleeves or garment masks as unsupported parts.
+The cuff derivation is an explicit geometric approximation rather than direct
+cuff supervision. Other missing PRD regions require new or pseudo annotations
+rather than relabeling full garment masks as unsupported parts.

@@ -76,6 +76,7 @@ class _FakePartSegmentationService:
                 _part_instance("collar", 2, 0.91),
                 _part_instance("pocket", 6, 0.83),
                 _part_instance("ruffle", 17, 0.72),
+                _part_instance("sleeve", 5, 0.88),
             ],
             subject_roi=subject_roi,
             subject_roi_source="manual" if subject_roi is not None else None,
@@ -117,6 +118,39 @@ def _part_instance(
             y_max=60.0,
         ),
         mask=[[10.0, 20.0, 40.0, 20.0, 40.0, 60.0, 10.0, 60.0]],
+    )
+
+
+def _rect_part_instance(
+    label: str,
+    category_id: int,
+    confidence: float,
+    box: tuple[float, float, float, float],
+) -> SegmentationInstance:
+    """Create one rectangular fake part mask."""
+    x_min, y_min, x_max, y_max = box
+    return SegmentationInstance(
+        category_id=category_id,
+        category_label=label,
+        confidence=confidence,
+        box=SegmentationBoundingBox(
+            x_min=x_min,
+            y_min=y_min,
+            x_max=x_max,
+            y_max=y_max,
+        ),
+        mask=[
+            [
+                x_min,
+                y_min,
+                x_max,
+                y_min,
+                x_max,
+                y_max,
+                x_min,
+                y_max,
+            ]
+        ],
     )
 
 
@@ -351,8 +385,8 @@ def test_supervised_part_localization_expands_generic_decoration_query() -> None
     assert [region.region_label for region in result.regions] == ["ruffle"]
 
 
-def test_hybrid_localization_routes_only_uncovered_queries_to_fallback() -> None:
-    """Missing direct supervision should use Grounded SAM without double loading."""
+def test_hybrid_localization_derives_cuff_from_supervised_sleeve() -> None:
+    """Cuff queries should use the distal supervised sleeve mask first."""
     segmentation = _FakePartSegmentationService()
     supervised = Mask2FormerPartLocalizationService(
         segmentation_service=segmentation,
@@ -372,9 +406,103 @@ def test_hybrid_localization_routes_only_uncovered_queries_to_fallback() -> None
     )
 
     assert [region.region_label for region in collar.regions] == ["collar"]
-    assert cuff.regions == []
-    assert len(segmentation.calls) == 1
+    assert [region.region_label for region in cuff.regions] == ["cuff"]
+    assert cuff.regions[0].matched_text.endswith("derived from sleeve")
+    assert cuff.regions[0].box.y_min > 50.0
+    assert len(segmentation.calls) == 2
+    assert fallback.calls == []
+
+
+def test_hybrid_localization_falls_back_when_no_sleeve_is_detected() -> None:
+    """An empty supervised sleeve result should preserve open-vocabulary fallback."""
+
+    class _NoSleeveSegmentationService(_FakePartSegmentationService):
+        def segment(
+            self,
+            image_path: str,
+            subject_roi: SegmentationSubjectROI | None = None,
+            auto_subject_roi: bool = False,
+        ) -> SegmentationPrediction:
+            prediction = super().segment(
+                image_path,
+                subject_roi=subject_roi,
+                auto_subject_roi=auto_subject_roi,
+            )
+            return prediction.model_copy(
+                update={
+                    "instances": [
+                        instance
+                        for instance in prediction.instances
+                        if instance.category_label != "sleeve"
+                    ]
+                }
+            )
+
+    segmentation = _NoSleeveSegmentationService()
+    fallback = _FakeFallbackLocalizationService()
+    service = HybridRegionLocalizationService(
+        Mask2FormerPartLocalizationService(segmentation_service=segmentation),
+        fallback,
+    )
+
+    result = service.localize(
+        "data/example.jpg",
+        "袖口",
+        auto_subject_roi=False,
+    )
+
+    assert result.regions == []
     assert fallback.calls == [("data/example.jpg", "袖口", None, False)]
+
+
+def test_hybrid_localization_derives_both_outer_cuff_ends() -> None:
+    """Two sleeve masks should produce cuffs at their body-distal ends."""
+
+    class _TwoSleeveSegmentationService(_FakePartSegmentationService):
+        def segment(
+            self,
+            image_path: str,
+            subject_roi: SegmentationSubjectROI | None = None,
+            auto_subject_roi: bool = False,
+        ) -> SegmentationPrediction:
+            self.calls.append((image_path, subject_roi, auto_subject_roi))
+            return SegmentationPrediction(
+                image_path=image_path,
+                instances=[
+                    _rect_part_instance("sleeve", 5, 0.9, (10, 30, 30, 80)),
+                    _rect_part_instance("sleeve", 5, 0.8, (70, 30, 90, 80)),
+                ],
+                subject_roi=subject_roi,
+                subject_roi_source="manual",
+            )
+
+    subject_roi = SegmentationSubjectROI(
+        x_min=0,
+        y_min=0,
+        x_max=100,
+        y_max=100,
+    )
+    fallback = _FakeFallbackLocalizationService()
+    service = HybridRegionLocalizationService(
+        Mask2FormerPartLocalizationService(
+            segmentation_service=_TwoSleeveSegmentationService()
+        ),
+        fallback,
+    )
+
+    result = service.localize(
+        "data/example.jpg",
+        "袖口",
+        subject_roi=subject_roi,
+        auto_subject_roi=False,
+    )
+
+    assert len(result.regions) == 2
+    left_center = (result.regions[0].box.x_min + result.regions[0].box.x_max) / 2.0
+    right_center = (result.regions[1].box.x_min + result.regions[1].box.x_max) / 2.0
+    assert left_center < 20.0
+    assert right_center > 80.0
+    assert fallback.calls == []
 
 
 def test_grounding_results_are_clamped_ranked_and_limited() -> None:

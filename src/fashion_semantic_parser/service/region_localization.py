@@ -337,6 +337,7 @@ class HybridRegionLocalizationService:
         auto_subject_roi: bool = True,
     ) -> RegionLocalizationPrediction:
         """Route directly supervised queries without loading both heavy paths."""
+        prompt = _resolve_prompt_or_error(query)
         if self.supervised_service.supports_query(query):
             return self.supervised_service.localize(
                 image_path,
@@ -344,6 +345,26 @@ class HybridRegionLocalizationService:
                 subject_roi=subject_roi,
                 auto_subject_roi=auto_subject_roi,
             )
+        if prompt.region_label == "cuff":
+            sleeve_prediction = self.supervised_service.localize(
+                image_path,
+                "sleeve",
+                subject_roi=subject_roi,
+                auto_subject_roi=auto_subject_roi,
+            )
+            cuff_regions = _derive_cuffs_from_sleeves(
+                sleeve_prediction.regions,
+                prompt=prompt,
+                subject_roi=sleeve_prediction.subject_roi,
+            )
+            if cuff_regions:
+                return RegionLocalizationPrediction(
+                    image_path=image_path,
+                    query=query,
+                    regions=cuff_regions,
+                    subject_roi=sleeve_prediction.subject_roi,
+                    subject_roi_source=sleeve_prediction.subject_roi_source,
+                )
         return self.fallback_service.localize(
             image_path,
             query,
@@ -401,6 +422,131 @@ def _build_default_subject_roi_detector(
             precision=settings.precision,
         )
     )
+
+
+def _derive_cuffs_from_sleeves(
+    sleeve_regions: list[LocalizedRegion],
+    *,
+    prompt: LocalizationPrompt,
+    subject_roi: SegmentationSubjectROI | None,
+    distal_fraction: float = 0.18,
+) -> list[LocalizedRegion]:
+    """Approximate each cuff from the distal end of a supervised sleeve mask."""
+    if not 0.0 < distal_fraction < 0.5:
+        raise ValueError("distal_fraction must be between 0 and 0.5")
+    if not sleeve_regions:
+        return []
+
+    sleeve_centers = np.asarray(
+        [
+            (
+                (region.box.x_min + region.box.x_max) / 2.0,
+                (region.box.y_min + region.box.y_max) / 2.0,
+            )
+            for region in sleeve_regions
+        ],
+        dtype=np.float64,
+    )
+    if subject_roi is not None:
+        body_center = np.asarray(
+            (
+                (subject_roi.x_min + subject_roi.x_max) / 2.0,
+                (subject_roi.y_min + subject_roi.y_max) / 2.0,
+            ),
+            dtype=np.float64,
+        )
+    else:
+        body_center = sleeve_centers.mean(axis=0)
+
+    cuffs = []
+    for region, sleeve_center in zip(sleeve_regions, sleeve_centers):
+        sleeve_mask, coordinate_offset = _localized_region_to_local_mask(region)
+        if sleeve_mask is None:
+            continue
+        y_values, x_values = np.nonzero(sleeve_mask)
+        global_points = np.column_stack(
+            (
+                x_values.astype(np.float64) + coordinate_offset[0],
+                y_values.astype(np.float64) + coordinate_offset[1],
+            )
+        )
+        direction = sleeve_center - body_center
+        if float(np.linalg.norm(direction)) < 1e-6:
+            centered = global_points - global_points.mean(axis=0)
+            _, _, axes = np.linalg.svd(centered, full_matrices=False)
+            direction = axes[0]
+            if direction[1] < 0:
+                direction = -direction
+        direction /= max(float(np.linalg.norm(direction)), 1e-6)
+        projections = global_points @ direction
+        threshold = float(np.quantile(projections, 1.0 - distal_fraction))
+        distal_points = global_points[projections >= threshold]
+        if len(distal_points) < 3:
+            continue
+
+        cuff_mask = np.zeros_like(sleeve_mask, dtype=bool)
+        local_x = np.rint(distal_points[:, 0] - coordinate_offset[0]).astype(int)
+        local_y = np.rint(distal_points[:, 1] - coordinate_offset[1]).astype(int)
+        cuff_mask[local_y, local_x] = True
+        cuff_mask = cv2.morphologyEx(
+            cuff_mask.astype("uint8"),
+            cv2.MORPH_CLOSE,
+            np.ones((3, 3), dtype="uint8"),
+        ).astype(bool)
+        polygons = _mask_to_polygons(
+            cuff_mask,
+            coordinate_offset=coordinate_offset,
+        )
+        if not polygons:
+            continue
+        cuff_y, cuff_x = np.nonzero(cuff_mask)
+        x_offset, y_offset = coordinate_offset
+        cuffs.append(
+            LocalizedRegion(
+                region_label="cuff",
+                matched_text=f"{prompt.matched_term} derived from sleeve",
+                confidence=max(0.0, min(1.0, region.confidence * 0.9)),
+                box=LocalizationBoundingBox(
+                    x_min=float(cuff_x.min()) + x_offset,
+                    y_min=float(cuff_y.min()) + y_offset,
+                    x_max=float(cuff_x.max() + 1) + x_offset,
+                    y_max=float(cuff_y.max() + 1) + y_offset,
+                ),
+                mask=polygons,
+            )
+        )
+    return cuffs
+
+
+def _localized_region_to_local_mask(
+    region: LocalizedRegion,
+) -> tuple[np.ndarray | None, tuple[float, float]]:
+    """Rasterize one polygon region inside its integer-aligned local bounds."""
+    x_min = int(math.floor(region.box.x_min))
+    y_min = int(math.floor(region.box.y_min))
+    x_max = int(math.ceil(region.box.x_max))
+    y_max = int(math.ceil(region.box.y_max))
+    width = x_max - x_min
+    height = y_max - y_min
+    if width <= 0 or height <= 0:
+        return None, (float(x_min), float(y_min))
+
+    mask = np.zeros((height, width), dtype="uint8")
+    polygons = []
+    for polygon in region.mask:
+        coordinates = np.asarray(polygon, dtype=np.float64)
+        if coordinates.size < 6 or coordinates.size % 2:
+            continue
+        points = coordinates.reshape(-1, 2)
+        points[:, 0] -= x_min
+        points[:, 1] -= y_min
+        polygons.append(np.rint(points).astype(np.int32))
+    if not polygons:
+        return None, (float(x_min), float(y_min))
+    cv2.fillPoly(mask, polygons, 1)
+    if not mask.any():
+        return None, (float(x_min), float(y_min))
+    return mask.astype(bool), (float(x_min), float(y_min))
 
 
 def _crop_to_subject_roi(
