@@ -700,6 +700,87 @@ def test_hybrid_localization_falls_back_when_no_hem_garment_is_available() -> No
     assert fallback.calls == [("data/example.jpg", "下摆", None, False)]
 
 
+def test_hybrid_localization_derives_waist_from_supported_garment_mask() -> None:
+    """Waist queries should reuse a garment mask and return a narrow body band."""
+    garments = _FakeGarmentSegmentationService()
+    fallback = _FakeFallbackLocalizationService()
+    service = HybridRegionLocalizationService(
+        Mask2FormerPartLocalizationService(
+            segmentation_service=_FakePartSegmentationService()
+        ),
+        fallback,
+        garment_segmentation_service=garments,
+    )
+
+    result = service.localize(
+        "data/example.jpg",
+        "这件上衣的腰部在哪里？",
+        auto_subject_roi=False,
+    )
+
+    assert len(result.regions) == 1
+    assert result.regions[0].region_label == "waist"
+    assert result.regions[0].matched_text.endswith("derived from top mask")
+    assert 70.0 <= result.regions[0].box.y_min <= 80.0
+    assert result.regions[0].box.y_max - result.regions[0].box.y_min <= 5.0
+    assert garments.calls == [("data/example.jpg", None, False)]
+    assert fallback.calls == []
+
+
+def test_hybrid_localization_honors_named_parent_garment_for_waist() -> None:
+    """An explicit pants query should ignore a higher-score dress candidate."""
+    prediction = SegmentationPrediction(
+        image_path="data/example.jpg",
+        instances=[
+            _rect_part_instance("dress", 5, 0.97, (8, 10, 92, 110)),
+            _rect_part_instance("pants", 2, 0.90, (20, 70, 80, 150)),
+        ],
+    )
+    fallback = _FakeFallbackLocalizationService()
+    service = HybridRegionLocalizationService(
+        Mask2FormerPartLocalizationService(
+            segmentation_service=_FakePartSegmentationService()
+        ),
+        fallback,
+    )
+
+    result = service.localize_with_garment_prediction(
+        "data/example.jpg",
+        "裤子的腰线在哪里？",
+        prediction,
+        auto_subject_roi=False,
+    )
+
+    assert len(result.regions) == 1
+    assert result.regions[0].matched_text.endswith("derived from pants mask")
+    assert result.regions[0].box.y_min < 80.0
+    assert fallback.calls == []
+
+
+def test_hybrid_localization_falls_back_when_no_waist_garment_is_available() -> None:
+    """Unsupported garment classes should preserve fallback waist localization."""
+    fallback = _FakeFallbackLocalizationService()
+    service = HybridRegionLocalizationService(
+        Mask2FormerPartLocalizationService(
+            segmentation_service=_FakePartSegmentationService()
+        ),
+        fallback,
+    )
+
+    result = service.localize_with_garment_prediction(
+        "data/example.jpg",
+        "腰部",
+        SegmentationPrediction(
+            image_path="data/example.jpg",
+            instances=[_rect_part_instance("accessory", 8, 0.95, (20, 30, 40, 50))],
+        ),
+        auto_subject_roi=False,
+    )
+
+    assert result.regions == []
+    assert fallback.calls == [("data/example.jpg", "腰部", None, False)]
+
+
 def test_grounding_results_are_clamped_ranked_and_limited() -> None:
     """External detections should be normalized before SAM receives them."""
 

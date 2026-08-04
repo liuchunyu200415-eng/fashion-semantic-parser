@@ -259,6 +259,10 @@ _HEM_GARMENT_QUERY_TERMS = (
     ("skirt", ("半身裙", "裙子", "skirt")),
     ("top", ("上衣", "衬衫", "毛衣", "shirt", "sweater", "t-shirt", "top")),
 )
+_WAIST_GARMENT_LABELS = frozenset(("top", "pants", "skirt", "outerwear", "dress"))
+_WAIST_GARMENT_QUERY_TERMS = _HEM_GARMENT_QUERY_TERMS + (
+    ("pants", ("裤子", "长裤", "短裤", "pants", "trousers", "shorts")),
+)
 
 
 class Mask2FormerPartLocalizationService:
@@ -436,6 +440,35 @@ class HybridRegionLocalizationService:
                         image_path=image_path,
                         query=query,
                         regions=hem_regions,
+                        subject_roi=effective_garment_prediction.subject_roi,
+                        subject_roi_source=(
+                            effective_garment_prediction.subject_roi_source
+                        ),
+                    )
+        if prompt.region_label == "waist":
+            effective_garment_prediction = garment_prediction
+            if (
+                effective_garment_prediction is None
+                and self.garment_segmentation_service is not None
+            ):
+                effective_garment_prediction = (
+                    self.garment_segmentation_service.segment(
+                        image_path,
+                        subject_roi=subject_roi,
+                        auto_subject_roi=auto_subject_roi,
+                    )
+                )
+            if effective_garment_prediction is not None:
+                waist_regions = _derive_waists_from_garments(
+                    effective_garment_prediction.instances,
+                    prompt=prompt,
+                    query=query,
+                )
+                if waist_regions:
+                    return RegionLocalizationPrediction(
+                        image_path=image_path,
+                        query=query,
+                        regions=waist_regions,
                         subject_roi=effective_garment_prediction.subject_roi,
                         subject_roi_source=(
                             effective_garment_prediction.subject_roi_source
@@ -753,6 +786,96 @@ def _hem_garment_labels_for_query(query: str) -> frozenset[str]:
         if any(term in normalized_query for term in terms):
             return frozenset((label,))
     return _HEM_GARMENT_LABELS
+
+
+def _derive_waists_from_garments(
+    garment_instances: list[SegmentationInstance],
+    *,
+    prompt: LocalizationPrompt,
+    query: str,
+    min_garment_confidence: float = 0.5,
+    band_fraction: float = 0.06,
+) -> list[LocalizedRegion]:
+    """Approximate one waist band from a named or highest-score garment."""
+    if not 0.0 <= min_garment_confidence <= 1.0:
+        raise ValueError("min_garment_confidence must be between 0 and 1")
+    if not 0.0 < band_fraction < 0.5:
+        raise ValueError("band_fraction must be between 0 and 0.5")
+
+    requested_labels = _waist_garment_labels_for_query(query)
+    eligible_instances = sorted(
+        (
+            instance
+            for instance in garment_instances
+            if instance.category_label in requested_labels
+            and instance.confidence >= min_garment_confidence
+        ),
+        key=lambda instance: instance.confidence,
+        reverse=True,
+    )
+    for instance in eligible_instances:
+        garment_region = _segmentation_instance_to_localized_region(instance)
+        garment_mask, coordinate_offset = _localized_region_to_local_mask(
+            garment_region
+        )
+        if garment_mask is None:
+            continue
+        height, width = garment_mask.shape
+        band_height = max(3, int(math.ceil(height * band_fraction)))
+        center_y = _waist_center_y(instance.category_label, height)
+        y_min = max(0, int(round(center_y - band_height / 2)))
+        y_max = min(height, y_min + band_height)
+        x_min = int(math.floor(width * 0.20))
+        x_max = int(math.ceil(width * 0.80))
+        waist_mask = np.zeros_like(garment_mask, dtype=bool)
+        waist_mask[y_min:y_max, x_min:x_max] = garment_mask[y_min:y_max, x_min:x_max]
+        polygons = _mask_to_polygons(
+            waist_mask,
+            coordinate_offset=coordinate_offset,
+        )
+        if not polygons:
+            continue
+        y_values, x_values = np.nonzero(waist_mask)
+        x_offset, y_offset = coordinate_offset
+        return [
+            LocalizedRegion(
+                region_label="waist",
+                matched_text=(
+                    f"{prompt.matched_term} derived from "
+                    f"{instance.category_label} mask"
+                ),
+                confidence=max(0.0, min(1.0, instance.confidence * 0.85)),
+                box=LocalizationBoundingBox(
+                    x_min=float(x_values.min()) + x_offset,
+                    y_min=float(y_values.min()) + y_offset,
+                    x_max=float(x_values.max() + 1) + x_offset,
+                    y_max=float(y_values.max() + 1) + y_offset,
+                ),
+                mask=polygons,
+            )
+        ]
+    return []
+
+
+def _waist_garment_labels_for_query(query: str) -> frozenset[str]:
+    """Narrow a waist request when it explicitly names a parent garment."""
+    normalized_query = query.casefold()
+    for label, terms in _WAIST_GARMENT_QUERY_TERMS:
+        if any(term in normalized_query for term in terms):
+            return frozenset((label,))
+    return _WAIST_GARMENT_LABELS
+
+
+def _waist_center_y(category_label: str, garment_height: int) -> float:
+    """Choose an anatomy-informed relative waistline for one garment class."""
+    relative_center = {
+        "pants": 0.08,
+        "skirt": 0.08,
+        "dress": 0.45,
+        "top": 0.68,
+        "outerwear": 0.55,
+    }[category_label]
+    return garment_height * relative_center
 
 
 def _segmentation_box_iou(
