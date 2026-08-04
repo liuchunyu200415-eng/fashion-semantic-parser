@@ -696,3 +696,12 @@ all-detected value remains in the report as a diagnostic. Shoulder accepts
 either supervised `epaulette` partial coverage or a fallback `shoulder` result
 while preserving the returned source. This is functional API acceptance only;
 it does not convert the four unlabelled derived regions into accuracy evidence.
+
+The completed AutoDL acceptance run returned `accepted=true` for all eight
+representative requests. Collar, pocket, shoulder, decoration, cuff, hem,
+waist, and pattern were all present; every request retained a detected person
+ROI, a segmentation payload, non-empty masks, and valid boxes. The eight
+requests took `11.51 s` in total. This result closes the first end-to-end
+functional slice, but it is deliberately recorded separately from formal
+dataset accuracy: the examples are selected acceptance cases, and cuff, hem,
+waist, and pattern do not have direct Fashionpedia ground-truth masks.
