@@ -443,6 +443,26 @@ def test_hybrid_localization_derives_cuff_from_supervised_sleeve() -> None:
     assert fallback.calls == []
 
 
+def test_hybrid_localization_falls_back_when_supervised_part_is_empty() -> None:
+    """A supported but missed part should continue to open-vocabulary grounding."""
+    fallback = _FakeFallbackLocalizationService()
+    service = HybridRegionLocalizationService(
+        Mask2FormerPartLocalizationService(
+            segmentation_service=_FakePartSegmentationService()
+        ),
+        fallback,
+    )
+
+    result = service.localize(
+        "data/example.jpg",
+        "肩部",
+        auto_subject_roi=False,
+    )
+
+    assert result.regions == []
+    assert fallback.calls == [("data/example.jpg", "肩部", None, False)]
+
+
 def test_hybrid_localization_falls_back_when_no_sleeve_is_detected() -> None:
     """An empty supervised sleeve result should preserve open-vocabulary fallback."""
 

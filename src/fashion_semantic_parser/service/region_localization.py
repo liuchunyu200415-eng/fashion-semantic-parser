@@ -392,12 +392,14 @@ class HybridRegionLocalizationService:
         """Route one query through supervised, derived, or fallback masks."""
         prompt = _resolve_prompt_or_error(query)
         if self.supervised_service.supports_query(query):
-            return self.supervised_service.localize(
+            supervised_prediction = self.supervised_service.localize(
                 image_path,
                 query,
                 subject_roi=subject_roi,
                 auto_subject_roi=auto_subject_roi,
             )
+            if supervised_prediction.regions:
+                return supervised_prediction
         if prompt.region_label == "cuff":
             sleeve_prediction = self.supervised_service.localize(
                 image_path,

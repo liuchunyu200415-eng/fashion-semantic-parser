@@ -11,7 +11,12 @@ from typing import Any
 DIRECT_CASES = (
     ("collar", "collar", "这件衣服的衣领在哪里？", ("collar",)),
     ("pocket", "pocket", "这件衣服的口袋在哪里？", ("pocket",)),
-    ("shoulder", "epaulette", "这件衣服的肩部在哪里？", ("epaulette",)),
+    (
+        "shoulder",
+        "epaulette",
+        "这件衣服的肩部在哪里？",
+        ("epaulette", "shoulder"),
+    ),
     ("decoration", "ruffle", "荷叶边在哪里？", ("ruffle",)),
 )
 DERIVED_CASES = (

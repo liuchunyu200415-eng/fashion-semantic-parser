@@ -637,7 +637,8 @@ ls -Llh models/checkpoints/localization/mask2former_parts_r50_10000.pth
 
 The default application backend is `hybrid`:
 
-1. directly supervised Fashionpedia part queries use Mask2Former
+1. directly supervised Fashionpedia part queries use Mask2Former and fall back
+   to Grounding DINO + SAM-HQ when the supervised result is empty
 2. generic decoration queries retain all predicted decoration subclasses
 3. shoulder queries use epaulette as explicitly partial supervision
 4. cuff queries retain at most two sleeve masks with confidence at least `0.5`,
@@ -688,5 +689,7 @@ python scripts/accept_localization_api.py \
 
 The script prints one progress line per request and exits nonzero if any expected
 label, derived source, subject ROI, segmentation payload, mask, or box is
-missing. This is functional API acceptance only; it does not convert the four
-unlabelled derived regions into accuracy evidence.
+missing. Shoulder accepts either supervised `epaulette` partial coverage or a
+fallback `shoulder` result while preserving the returned source. This is
+functional API acceptance only; it does not convert the four unlabelled derived
+regions into accuracy evidence.

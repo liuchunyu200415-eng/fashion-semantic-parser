@@ -42,6 +42,7 @@ def test_acceptance_builds_four_direct_and_four_derived_cases() -> None:
         "pattern",
     ]
     assert cases[0]["image_id"] == 2
+    assert cases[2]["expected_labels"] == ["epaulette", "shoulder"]
     assert cases[-1]["expected_source_contains"] == "derived from top appearance"
 
 
