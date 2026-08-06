@@ -51,6 +51,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--progress-every", type=int, default=25)
     parser.add_argument(
+        "--inference-score-threshold",
+        type=float,
+        default=None,
+        help=(
+            "Optional model-output threshold override. Use 0.0 when saving "
+            "candidates for offline score/Top-K calibration."
+        ),
+    )
+    parser.add_argument(
         "--score-threshold",
         type=float,
         default=0.0,
@@ -76,6 +85,9 @@ def main() -> None:
     from fashion_semantic_parser.service.region_localization import (
         Mask2FormerPartLocalizationService,
     )
+    from fashion_semantic_parser.service.segmentation_runtime import (
+        GarmentSegmentationService,
+    )
     from scripts.evaluate_localization_predictions import (
         evaluate_localization_categories,
     )
@@ -86,6 +98,11 @@ def main() -> None:
         raise ValueError("--progress-every must be at least one.")
     if not 0.0 <= args.score_threshold <= 1.0:
         raise ValueError("--score-threshold must be between 0 and 1.")
+    if (
+        args.inference_score_threshold is not None
+        and not 0.0 <= args.inference_score_threshold <= 1.0
+    ):
+        raise ValueError("--inference-score-threshold must be between 0 and 1.")
     if args.top_k is not None and args.top_k < 1:
         raise ValueError("--top-k must be at least one.")
 
@@ -107,7 +124,18 @@ def main() -> None:
         category_ids=set(category_ids.values()),
         image_limit_per_category=args.image_limit_per_category,
     )
-    service = Mask2FormerPartLocalizationService(args.config)
+    segmentation_service = None
+    if args.inference_score_threshold is not None:
+        segmentation_service = GarmentSegmentationService(
+            args.config,
+            settings_overrides={
+                "score_threshold": args.inference_score_threshold,
+            },
+        )
+    service = Mask2FormerPartLocalizationService(
+        args.config,
+        segmentation_service=segmentation_service,
+    )
     predictions: list[dict[str, Any]] = []
     roi_sources: Counter[str] = Counter()
     started_at = time.perf_counter()
@@ -143,6 +171,9 @@ def main() -> None:
         "validation_json": str(validation_path),
         "predictions_json": str(prediction_path),
         "roi_mode": args.roi_mode,
+        "inference_score_threshold_override": args.inference_score_threshold,
+        "offline_score_threshold": args.score_threshold,
+        "offline_top_k": args.top_k,
         "exact_prd_regions": [
             coverage.english_name
             for coverage in PRD_LOCALIZATION_REGION_COVERAGE

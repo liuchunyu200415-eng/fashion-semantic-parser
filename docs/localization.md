@@ -884,3 +884,57 @@ Decision branch after both runs:
 3. If any warm route P95 exceeds `30 ms`, profile person ROI and each model
    route separately, then evaluate shared ROI reuse, TensorRT/ONNX export, and
    lighter backbones. Do not hide a failing route inside an aggregate mean.
+
+If the exact-GT run misses `92%`, regenerate candidates with the model-output
+threshold set to zero. This is different from `--score-threshold`, which is an
+extra offline filter applied only after candidates have already been saved:
+
+```bash
+AUTO_DIR=outputs/localization/performance/exact_gt_auto_candidates
+mkdir -p "$AUTO_DIR"
+
+nohup python scripts/benchmark_localization_accuracy.py \
+  --roi-mode auto \
+  --inference-score-threshold 0.0 \
+  --progress-every 25 \
+  --output-dir "$AUTO_DIR" \
+  > "$AUTO_DIR/benchmark.log" 2>&1 &
+
+echo $! | tee "$AUTO_DIR/benchmark.pid"
+
+PID="$(cat "$AUTO_DIR/benchmark.pid")"
+tail --pid="$PID" -F "$AUTO_DIR/benchmark.log" \
+  | grep --line-buffered -E \
+    "^[[]|exact_gt_scope_passed|measured_percent|Traceback|out of memory"
+```
+
+After candidate generation finishes, scan score thresholds and per-category
+Top-K values without rerunning either model:
+
+```bash
+AUTO_DIR=outputs/localization/performance/exact_gt_auto_candidates
+SCAN_DIR=outputs/localization/performance/operating_points
+mkdir -p "$SCAN_DIR"
+
+nohup python scripts/scan_localization_operating_points.py \
+  --predictions "$AUTO_DIR/predictions.json" \
+  --run-summary "$AUTO_DIR/predictions_summary.json" \
+  --output "$SCAN_DIR/auto.json" \
+  > "$SCAN_DIR/auto.log" 2>&1 &
+
+echo $! | tee "$SCAN_DIR/auto.pid"
+
+PID="$(cat "$SCAN_DIR/auto.pid")"
+tail --pid="$PID" -F "$SCAN_DIR/auto.log" \
+  | grep --line-buffered -E \
+    "^[[]|any_operating_point_passed|Traceback|out of memory"
+```
+
+Interpret the scan before starting another training run:
+
+- high recall only at low thresholds means calibration or postprocessing is
+  the primary blocker
+- low automatic-ROI recall but materially higher full-image recall indicates
+  an ROI crop problem; repeat candidate generation with `--roi-mode full`
+- low recall for both ROI modes even with threshold `0.0` and unlimited Top-K
+  indicates that class-balanced training or additional labels are required
