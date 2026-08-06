@@ -951,3 +951,7 @@ profile in `configs/localization_mask2former_parts_long_tail.yaml`. It raises
 the repeat-factor threshold from `0.01` to `0.05`, lowers the learning rate to
 `5e-6`, and leaves the selected deployment checkpoint unchanged. Evaluate its
 intermediate and final checkpoints before promoting any weights.
+
+Use `benchmark_localization_accuracy.py --weights CHECKPOINT` for those
+comparisons. The explicit override is written into `predictions_summary.json`
+so a result cannot be mistaken for the fixed deployment checkpoint.

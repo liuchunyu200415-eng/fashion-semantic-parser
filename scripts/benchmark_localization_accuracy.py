@@ -36,6 +36,11 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--config", default=DEFAULT_CONFIG)
+    parser.add_argument(
+        "--weights",
+        default=None,
+        help="Optional checkpoint override for comparing fine-tuning stages.",
+    )
     parser.add_argument("--val-json", default=DEFAULT_VALIDATION_JSON)
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
     parser.add_argument(
@@ -124,13 +129,15 @@ def main() -> None:
         category_ids=set(category_ids.values()),
         image_limit_per_category=args.image_limit_per_category,
     )
+    settings_overrides = _segmentation_settings_overrides(
+        weights=args.weights,
+        inference_score_threshold=args.inference_score_threshold,
+    )
     segmentation_service = None
-    if args.inference_score_threshold is not None:
+    if settings_overrides:
         segmentation_service = GarmentSegmentationService(
             args.config,
-            settings_overrides={
-                "score_threshold": args.inference_score_threshold,
-            },
+            settings_overrides=settings_overrides,
         )
     service = Mask2FormerPartLocalizationService(
         args.config,
@@ -168,6 +175,7 @@ def main() -> None:
     )
     summary = {
         "config": args.config,
+        "weights_override": args.weights,
         "validation_json": str(validation_path),
         "predictions_json": str(prediction_path),
         "roi_mode": args.roi_mode,
@@ -229,6 +237,20 @@ def _exact_prd_source_categories(coverage: list[Any]) -> list[str]:
             if category_name not in categories:
                 categories.append(category_name)
     return categories
+
+
+def _segmentation_settings_overrides(
+    *,
+    weights: str | None,
+    inference_score_threshold: float | None,
+) -> dict[str, Any]:
+    """Build explicit runtime overrides without replacing config defaults."""
+    overrides: dict[str, Any] = {}
+    if weights is not None:
+        overrides["weights"] = weights
+    if inference_score_threshold is not None:
+        overrides["score_threshold"] = inference_score_threshold
+    return overrides
 
 
 def _category_ids(

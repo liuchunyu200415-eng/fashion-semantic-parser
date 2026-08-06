@@ -9,6 +9,7 @@ from scripts.benchmark_localization_accuracy import (
     _build_acceptance_result,
     _exact_prd_source_categories,
     _segmentation_prediction_to_coco,
+    _segmentation_settings_overrides,
     _select_exact_gt_images,
 )
 
@@ -27,6 +28,24 @@ def test_exact_source_categories_exclude_partial_and_missing_regions() -> None:
         "lapel",
         "pocket",
     ]
+
+
+def test_checkpoint_and_candidate_threshold_can_be_overridden_together() -> None:
+    """Checkpoint comparisons must not silently evaluate deployment weights."""
+    assert _segmentation_settings_overrides(
+        weights="model_0004999.pth",
+        inference_score_threshold=0.0,
+    ) == {
+        "weights": "model_0004999.pth",
+        "score_threshold": 0.0,
+    }
+    assert (
+        _segmentation_settings_overrides(
+            weights=None,
+            inference_score_threshold=None,
+        )
+        == {}
+    )
 
 
 def test_project_exact_gt_scope_has_sixteen_sources_and_no_epaulette() -> None:
