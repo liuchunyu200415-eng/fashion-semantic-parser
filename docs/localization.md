@@ -938,3 +938,16 @@ Interpret the scan before starting another training run:
   an ROI crop problem; repeat candidate generation with `--roi-mode full`
 - low recall for both ROI modes even with threshold `0.0` and unlimited Top-K
   indicates that class-balanced training or additional labels are required
+
+The first full scan produced `38.53%` macro Recall50 with automatic ROI and
+`38.93%` on the full image. The `0.40` point difference rules out ROI cropping
+as the primary blocker. The best automatic-ROI F1 was `34.32%`; unlimited
+candidates raised recall but reduced precision to `1.71%`. The lowest-recall
+classes were tassel, rivet, fringe, flower, bead, zipper, ribbon, and buckle.
+Threshold calibration alone therefore cannot meet the accuracy contract.
+
+Continue from the 10,000-iteration checkpoint with the isolated long-tail
+profile in `configs/localization_mask2former_parts_long_tail.yaml`. It raises
+the repeat-factor threshold from `0.01` to `0.05`, lowers the learning rate to
+`5e-6`, and leaves the selected deployment checkpoint unchanged. Evaluate its
+intermediate and final checkpoints before promoting any weights.

@@ -1,0 +1,49 @@
+# PRD 3.1.2 long-tail fine-tuning from the completed 10,000-iteration model.
+#
+# The first stage used a 1% repeat threshold and left rare decoration classes
+# with poor Recall50. This isolated stage raises category-frequency repetition
+# while lowering the learning rate so common part classes are not retrained from
+# scratch. Keep the original stage and deployment checkpoint unchanged until a
+# validation comparison selects this experiment.
+model_family: mask2former
+train_json: data/processed/autodl/localization/fashionpedia_parts_train.json
+val_json: data/processed/autodl/localization/fashionpedia_parts_validation.json
+image_root: .
+output_dir: outputs/localization/mask2former_parts_r50_long_tail
+config_source: local
+config_file: external/Mask2Former/configs/coco/instance-segmentation/maskformer2_R50_bs16_50ep.yaml
+weights: models/checkpoints/localization/mask2former_parts_r50_10000.pth
+num_classes: 19
+category_names:
+  - hood
+  - collar
+  - lapel
+  - epaulette
+  - sleeve
+  - pocket
+  - neckline
+  - buckle
+  - zipper
+  - applique
+  - bead
+  - bow
+  - flower
+  - fringe
+  - ribbon
+  - rivet
+  - ruffle
+  - sequin
+  - tassel
+repeat_factor_threshold: 0.05
+mask2former_eager_losses: true
+ims_per_batch: 4
+base_lr: 0.000005
+max_iter: 5000
+checkpoint_period: 1000
+eval_period: 0
+num_workers: 2
+score_threshold: 0.0
+precision: fp16
+device: cuda
+resume: false
+evaluate_after_training: false

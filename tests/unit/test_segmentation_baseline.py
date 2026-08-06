@@ -737,6 +737,22 @@ def test_localization_parts_config_uses_supervised_nineteen_class_masks() -> Non
     SegmentationBaselineSettings.model_validate(config)
 
 
+def test_localization_long_tail_config_preserves_stage_one_checkpoint() -> None:
+    """Rare-class tuning should be isolated and use stronger repeat sampling."""
+    config_path = Path("configs/localization_mask2former_parts_long_tail.yaml")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert config["weights"].endswith("mask2former_parts_r50_10000.pth")
+    assert config["repeat_factor_threshold"] == 0.05
+    assert config["base_lr"] == 0.000005
+    assert config["max_iter"] == 5000
+    assert config["checkpoint_period"] == 1000
+    assert config["resume"] is False
+    assert config["evaluate_after_training"] is False
+    assert len(config["category_names"]) == 19
+    SegmentationBaselineSettings.model_validate(config)
+
+
 def test_localization_parts_deployment_uses_selected_checkpoint() -> None:
     """The API profile should freeze the selected 10,000-iteration model."""
     config_path = Path("configs/localization_mask2former_parts_deployment.yaml")
