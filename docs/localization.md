@@ -736,3 +736,151 @@ a `Partial reference`, while shoulder and other derived cases show `visual only`
 because no equivalent direct Fashionpedia mask exists. Every card also includes
 the person ROI source, region count, and request time. It is intended for visual
 functional review, not dataset-level accuracy reporting.
+
+## Formal Performance Benchmark
+
+The representative `8/8` sheet is functional evidence only. Performance work
+uses two separate measurement contracts:
+
+- exact-GT accuracy runs the deployed 19-class model with its committed score
+  threshold and automatic person ROI on the full validation image union for
+  collar, lapel, neckline, pocket, and all 12 decoration subclasses
+- warm service latency includes path validation, image decoding, automatic
+  person ROI, inference, and mask/box postprocessing, while excluding model
+  loading, HTTP transport, and JSON serialization
+
+The provisional accuracy metric is macro `Recall50` across the 16 exact source
+categories. It is compared with `92%`, but the result is explicitly named
+`exact_gt_scope_passed`. It cannot establish overall eight-region accuracy
+because shoulder has only partial epaulette supervision and cuff, hem, waist,
+and pattern have no equivalent Fashionpedia masks.
+
+Run a short accuracy smoke test first:
+
+```bash
+cd /root/fashion-semantic-parser
+
+export OMP_NUM_THREADS=1
+export TORCH_CUDA_ARCH_LIST="8.6"
+export PYTHONPATH=$PWD/src:$PWD/external/Mask2Former:$PYTHONPATH
+
+SMOKE_DIR=outputs/localization/performance/exact_gt_smoke
+
+python scripts/benchmark_localization_accuracy.py \
+  --image-limit-per-category 2 \
+  --progress-every 1 \
+  --output-dir "$SMOKE_DIR"
+```
+
+After the smoke test succeeds, start the full validation run:
+
+```bash
+RUN_DIR=outputs/localization/performance/exact_gt_full
+mkdir -p "$RUN_DIR"
+
+nohup python scripts/benchmark_localization_accuracy.py \
+  --progress-every 25 \
+  --output-dir "$RUN_DIR" \
+  > "$RUN_DIR/benchmark.log" 2>&1 &
+
+echo $! | tee "$RUN_DIR/benchmark.pid"
+```
+
+Watch it continuously in the current terminal. `Ctrl-C` stops only the monitor,
+not the benchmark:
+
+```bash
+RUN_DIR=outputs/localization/performance/exact_gt_full
+PID="$(cat "$RUN_DIR/benchmark.pid")"
+
+tail --pid="$PID" -F "$RUN_DIR/benchmark.log" \
+  | grep --line-buffered -E \
+    "^[[]|exact_gt_scope_passed|measured_percent|Traceback|out of memory"
+```
+
+Check completion and print the decision without copying the full JSON:
+
+```bash
+RUN_DIR=outputs/localization/performance/exact_gt_full
+PID="$(cat "$RUN_DIR/benchmark.pid")"
+
+if ps -p "$PID" > /dev/null; then
+  echo "状态：完整准确率评估仍在运行"
+elif [ -s "$RUN_DIR/metrics.json" ]; then
+  echo "状态：完整准确率评估已完成"
+else
+  echo "状态：进程结束但没有指标，检查 benchmark.log"
+fi
+
+python - <<'PY'
+import json
+
+path = "outputs/localization/performance/exact_gt_full/metrics.json"
+d = json.load(open(path))
+contract = d["accuracy_contract"]
+metrics = d["evaluation"]["segm_direct_iou"]
+print({
+    "macro_recall50": round(contract["measured_percent"], 2),
+    "target": contract["target_percent"],
+    "exact_gt_passed": contract["exact_gt_scope_passed"],
+    "micro_P50": round(metrics["Precision50"], 2),
+    "micro_R50": round(metrics["Recall50"], 2),
+    "micro_F1": round(metrics["F1_50"], 2),
+    "AllGTIoU": round(metrics["AllGTMeanIoU"], 2),
+})
+PY
+```
+
+Then run the eight-route warm latency benchmark. It reuses loaded services
+within one process and prints one line after each query route:
+
+```bash
+LAT_DIR=outputs/localization/performance/latency
+mkdir -p "$LAT_DIR"
+
+nohup python scripts/benchmark_localization_latency.py \
+  --image-limit 20 \
+  --warmup-runs 5 \
+  --runs 100 \
+  --output "$LAT_DIR/warm_hybrid.json" \
+  > "$LAT_DIR/warm_hybrid.log" 2>&1 &
+
+echo $! | tee "$LAT_DIR/warm_hybrid.pid"
+
+PID="$(cat "$LAT_DIR/warm_hybrid.pid")"
+tail --pid="$PID" -F "$LAT_DIR/warm_hybrid.log" \
+  | grep --line-buffered -E \
+    "mean=|all_routes_passed|Traceback|out of memory"
+```
+
+After it exits, inspect only the route-level P95 values:
+
+```bash
+python - <<'PY'
+import json
+
+path = "outputs/localization/performance/latency/warm_hybrid.json"
+d = json.load(open(path))
+print("all_routes_passed", d["all_routes_passed"])
+for route in d["routes"]:
+    print(
+        route["resolved_region"],
+        {
+            "mean_ms": round(route["latency_ms"]["mean"], 2),
+            "p95_ms": round(route["latency_ms"]["p95"], 2),
+            "passed": route["passed"],
+        },
+    )
+PY
+```
+
+Decision branch after both runs:
+
+1. If exact-GT macro Recall50 is below `92%`, calibrate score threshold and
+   per-class Top-K from the saved `predictions.json`; if recall remains low,
+   continue supervised training or class-balanced fine-tuning.
+2. If exact-GT passes, build a separately annotated five-region validation set
+   before making an overall eight-region accuracy claim.
+3. If any warm route P95 exceeds `30 ms`, profile person ROI and each model
+   route separately, then evaluate shared ROI reuse, TensorRT/ONNX export, and
+   lighter backbones. Do not hide a failing route inside an aggregate mean.

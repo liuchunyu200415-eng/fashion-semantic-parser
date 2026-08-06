@@ -57,6 +57,50 @@ def main() -> None:
     add_src_to_python_path()
 
     from fashion_semantic_parser.common.paths import resolve_project_path
+
+    if not 0.0 <= args.score_threshold <= 1.0:
+        raise ValueError("--score-threshold must be between 0 and 1.")
+    if args.top_k is not None and args.top_k < 1:
+        raise ValueError("--top-k must be at least one.")
+
+    validation_path = _resolve_path(args.val_json, resolve_project_path)
+    prediction_path = _resolve_path(args.predictions, resolve_project_path)
+    default_summary_path = _summary_path(prediction_path)
+    summary_path = (
+        _resolve_path(args.run_summary, resolve_project_path)
+        if args.run_summary
+        else default_summary_path
+    )
+    result = evaluate_localization_categories(
+        validation_path=validation_path,
+        prediction_path=prediction_path,
+        category_names=[args.category],
+        score_threshold=args.score_threshold,
+        top_k=args.top_k,
+        summary_path=summary_path,
+    )
+    result["category"] = args.category
+    result["category_id"] = result["category_ids"][0]
+    serialized = json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)
+    print(serialized)
+    if args.output:
+        output_path = _resolve_path(args.output, resolve_project_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(serialized + "\n", encoding="utf-8")
+
+
+def evaluate_localization_categories(
+    *,
+    validation_path: Path,
+    prediction_path: Path,
+    category_names: list[str],
+    score_threshold: float = 0.0,
+    top_k: int | None = None,
+    summary_path: Path | None = None,
+    image_ids: list[int] | None = None,
+) -> dict[str, Any]:
+    """Evaluate one or more exact Fashionpedia categories on an explicit scope."""
+    add_src_to_python_path()
     from fashion_semantic_parser.service.segmentation_metrics import (
         _coco_ap_at_iou,
         _coco_matched_mask_iou_metrics,
@@ -71,44 +115,56 @@ def main() -> None:
             "pycocotools is required for localization evaluation."
         ) from error
 
-    if not 0.0 <= args.score_threshold <= 1.0:
-        raise ValueError("--score-threshold must be between 0 and 1.")
-    if args.top_k is not None and args.top_k < 1:
-        raise ValueError("--top-k must be at least one.")
+    if not category_names:
+        raise ValueError("At least one localization category is required.")
+    if not 0.0 <= score_threshold <= 1.0:
+        raise ValueError("score_threshold must be between 0 and 1.")
+    if top_k is not None and top_k < 1:
+        raise ValueError("top_k must be at least one.")
 
-    validation_path = _resolve_path(args.val_json, resolve_project_path)
-    prediction_path = _resolve_path(args.predictions, resolve_project_path)
     with redirect_stdout(io.StringIO()):
         coco_ground_truth = COCO(str(validation_path))
-    category_id = _category_id(coco_ground_truth, args.category)
-    default_summary_path = _summary_path(prediction_path)
-    summary_path = (
-        _resolve_path(args.run_summary, resolve_project_path)
-        if args.run_summary
-        else default_summary_path
-    )
-    image_ids = _evaluation_image_ids(
-        coco_ground_truth,
-        category_id=category_id,
-        summary_path=summary_path,
-    )
+    category_ids = [
+        _category_id(coco_ground_truth, category_name)
+        for category_name in category_names
+    ]
+    if image_ids is None:
+        if summary_path is not None:
+            image_ids = _evaluation_image_ids_for_categories(
+                coco_ground_truth,
+                category_ids=category_ids,
+                summary_path=summary_path,
+            )
+        else:
+            image_ids = sorted(
+                {
+                    int(image_id)
+                    for category_id in category_ids
+                    for image_id in coco_ground_truth.getImgIds(catIds=[category_id])
+                }
+            )
+    image_ids = sorted({int(image_id) for image_id in image_ids})
+    if not image_ids:
+        raise ValueError("No evaluation images were selected.")
+
     predictions = _read_prediction_list(prediction_path)
     evaluation_image_ids = set(image_ids)
+    evaluation_category_ids = set(category_ids)
     relevant_predictions = [
         prediction
         for prediction in predictions
-        if int(prediction.get("category_id", -1)) == category_id
+        if int(prediction.get("category_id", -1)) in evaluation_category_ids
         and int(prediction.get("image_id", -1)) in evaluation_image_ids
     ]
-    filtered_predictions = _filter_predictions_per_image(
+    filtered_predictions = _filter_predictions_per_image_category(
         relevant_predictions,
-        score_threshold=args.score_threshold,
-        top_k=args.top_k,
+        score_threshold=score_threshold,
+        top_k=top_k,
     )
     ground_truth_count = len(
         coco_ground_truth.getAnnIds(
             imgIds=image_ids,
-            catIds=[category_id],
+            catIds=category_ids,
             iscrowd=False,
         )
     )
@@ -118,14 +174,24 @@ def main() -> None:
             coco_predictions = coco_ground_truth.loadRes(filtered_predictions)
             coco_eval = COCOeval(coco_ground_truth, coco_predictions, "segm")
             coco_eval.params.imgIds = image_ids
-            coco_eval.params.catIds = [category_id]
+            coco_eval.params.catIds = category_ids
             coco_eval.evaluate()
             coco_eval.accumulate()
             coco_eval.summarize()
         coco_metrics = _coco_ap_summary(coco_eval.stats)
-        coco_metrics["AP85"] = _coco_ap_at_iou(coco_eval, 0.85)
-        coco_metrics["AP90"] = _coco_ap_at_iou(coco_eval, 0.90)
-        direct_metrics = _coco_matched_mask_iou_metrics(coco_eval)
+        for threshold in (0.50, 0.85, 0.90):
+            metric_name = f"AP{int(threshold * 100)}"
+            coco_metrics[metric_name] = _coco_ap_at_iou(coco_eval, threshold)
+            for category_index, category_name in enumerate(category_names):
+                coco_metrics[f"{metric_name}-{category_name}"] = _coco_ap_at_iou(
+                    coco_eval,
+                    threshold,
+                    category_index=category_index,
+                )
+        direct_metrics = _coco_matched_mask_iou_metrics(
+            coco_eval,
+            class_names=category_names,
+        )
     else:
         coco_metrics = {
             key: None
@@ -144,19 +210,23 @@ def main() -> None:
         if precision is not None and recall is not None and precision + recall > 0.0
         else None
     )
-    result = _json_safe(
+    return _json_safe(
         {
             "validation_json": str(validation_path),
             "predictions_json": str(prediction_path),
-            "run_summary_json": str(summary_path) if summary_path.is_file() else None,
-            "category": args.category,
-            "category_id": category_id,
+            "run_summary_json": (
+                str(summary_path)
+                if summary_path is not None and summary_path.is_file()
+                else None
+            ),
+            "categories": category_names,
+            "category_ids": category_ids,
             "image_count": len(image_ids),
             "ground_truth_count": ground_truth_count,
             "candidate_count_before_filter": len(relevant_predictions),
             "candidate_count_after_filter": len(filtered_predictions),
-            "score_threshold": args.score_threshold,
-            "top_k": args.top_k,
+            "score_threshold": score_threshold,
+            "top_k": top_k,
             "segm_coco": coco_metrics,
             "segm_direct_iou": {
                 **direct_metrics,
@@ -164,12 +234,6 @@ def main() -> None:
             },
         }
     )
-    serialized = json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)
-    print(serialized)
-    if args.output:
-        output_path = _resolve_path(args.output, resolve_project_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(serialized + "\n", encoding="utf-8")
 
 
 def _read_prediction_list(path: Path) -> list[dict[str, Any]]:
@@ -206,6 +270,30 @@ def _filter_predictions_per_image(
     return filtered
 
 
+def _filter_predictions_per_image_category(
+    predictions: list[dict[str, Any]],
+    *,
+    score_threshold: float,
+    top_k: int | None,
+) -> list[dict[str, Any]]:
+    """Apply Top-K independently to each image and semantic category."""
+    grouped: defaultdict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
+    for prediction in predictions:
+        if float(prediction.get("score", 0.0)) >= score_threshold:
+            key = (int(prediction["image_id"]), int(prediction["category_id"]))
+            grouped[key].append(prediction)
+
+    filtered: list[dict[str, Any]] = []
+    for key in sorted(grouped):
+        ranked = sorted(
+            grouped[key],
+            key=lambda prediction: float(prediction.get("score", 0.0)),
+            reverse=True,
+        )
+        filtered.extend(ranked if top_k is None else ranked[:top_k])
+    return filtered
+
+
 def _evaluation_image_ids(
     coco_ground_truth: Any,
     *,
@@ -229,6 +317,35 @@ def _evaluation_image_ids(
             )
         return image_ids
     return sorted(valid_image_ids)
+
+
+def _evaluation_image_ids_for_categories(
+    coco_ground_truth: Any,
+    *,
+    category_ids: list[int],
+    summary_path: Path,
+) -> list[int]:
+    """Read one run scope and ensure every image has relevant ground truth."""
+    valid_image_ids = {
+        int(image_id)
+        for category_id in category_ids
+        for image_id in coco_ground_truth.getImgIds(catIds=[category_id])
+    }
+    if not summary_path.is_file():
+        return sorted(valid_image_ids)
+    with summary_path.open("r", encoding="utf-8") as file:
+        summary = json.load(file)
+    raw_image_ids = summary.get("image_ids") if isinstance(summary, dict) else None
+    if not isinstance(raw_image_ids, list):
+        raise ValueError(f"Run summary has no image_ids list: {summary_path}")
+    image_ids = [int(image_id) for image_id in raw_image_ids]
+    invalid_image_ids = set(image_ids) - valid_image_ids
+    if invalid_image_ids:
+        raise ValueError(
+            "Run summary contains images without target ground truth: "
+            f"{sorted(invalid_image_ids)[:5]}"
+        )
+    return image_ids
 
 
 def _category_id(coco_ground_truth: Any, category_name: str) -> int:
