@@ -1,0 +1,56 @@
+# PRD 3.1.2 classification-loss fine-tuning from the best targeted checkpoint.
+# Keep the targeted replay ratio fixed so this stage tests whether stronger
+# supervision for the five weak labels improves ranking without another
+# sampling change. The no-object, mask, and Dice loss weights remain unchanged.
+model_family: mask2former
+train_json: data/processed/autodl/localization/fashionpedia_parts_train.json
+additional_train_jsons:
+  - data/processed/autodl/localization/fashionpedia_parts_train_critical_long_tail.json
+train_source_repeat_factors:
+  - 1.0
+  - 2.0
+val_json: data/processed/autodl/localization/fashionpedia_parts_validation.json
+image_root: .
+output_dir: outputs/localization/mask2former_parts_r50_class_weighted
+config_source: local
+config_file: external/Mask2Former/configs/coco/instance-segmentation/maskformer2_R50_bs16_50ep.yaml
+weights: models/checkpoints/localization/mask2former_parts_r50_targeted_3000.pth
+num_classes: 19
+category_names:
+  - hood
+  - collar
+  - lapel
+  - epaulette
+  - sleeve
+  - pocket
+  - neckline
+  - buckle
+  - zipper
+  - applique
+  - bead
+  - bow
+  - flower
+  - fringe
+  - ribbon
+  - rivet
+  - ruffle
+  - sequin
+  - tassel
+class_loss_weights:
+  buckle: 1.5
+  bow: 2.0
+  ribbon: 2.5
+  rivet: 1.5
+  tassel: 3.0
+mask2former_eager_losses: true
+ims_per_batch: 4
+base_lr: 0.000001
+max_iter: 3000
+checkpoint_period: 1000
+eval_period: 0
+num_workers: 2
+score_threshold: 0.0
+precision: fp16
+device: cuda
+resume: false
+evaluate_after_training: false

@@ -9,10 +9,12 @@ import pytest
 import yaml
 
 import fashion_semantic_parser.service.segmentation_baseline as segmentation_module
+from fashion_semantic_parser.common.exceptions import ModelNotReadyError
 from fashion_semantic_parser.models.segmentation import SegmentationSubjectROI
 from fashion_semantic_parser.service.segmentation_baseline import (
     Detectron2SegmentationBaseline,
     SegmentationBaselineSettings,
+    _apply_mask2former_class_loss_weights,
     _configure_mask2former_eager_losses,
     _crop_image_to_subject_roi,
     _json_safe_config_value,
@@ -356,6 +358,7 @@ def test_segmentation_baseline_settings_defaults() -> None:
     assert settings.max_size_test is None
     assert settings.detections_per_image is None
     assert settings.category_score_thresholds == {}
+    assert settings.class_loss_weights == {}
     assert settings.precision == "fp32"
     assert settings.resume is False
     assert settings.evaluate_after_training is True
@@ -422,6 +425,22 @@ def test_category_thresholds_lower_model_output_floor() -> None:
     )
 
     assert settings.model_score_threshold() == 0.3
+
+
+def test_class_loss_weights_require_known_positive_mask2former_categories() -> None:
+    """Invalid class-weighted losses must fail before a GPU run starts."""
+    with pytest.raises(ValueError, match="unknown categories"):
+        SegmentationBaselineSettings(
+            model_family="mask2former",
+            class_loss_weights={"unknown": 2.0},
+        )
+    with pytest.raises(ValueError, match="finite and positive"):
+        SegmentationBaselineSettings(
+            model_family="mask2former",
+            class_loss_weights={"top": 0.0},
+        )
+    with pytest.raises(ValueError, match="only for Mask2Former"):
+        SegmentationBaselineSettings(class_loss_weights={"top": 2.0})
 
 
 def test_mixed_training_configures_weighted_source_sampler() -> None:
@@ -770,6 +789,25 @@ def test_localization_targeted_config_replays_critical_classes() -> None:
     SegmentationBaselineSettings.model_validate(config)
 
 
+def test_localization_class_weighted_config_continues_targeted_checkpoint() -> None:
+    """Class weighting should isolate a conservative post-targeted stage."""
+    config_path = Path("configs/localization_mask2former_parts_class_weighted.yaml")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert config["weights"].endswith("mask2former_parts_r50_targeted_3000.pth")
+    assert config["train_source_repeat_factors"] == [1.0, 2.0]
+    assert config["class_loss_weights"] == {
+        "buckle": 1.5,
+        "bow": 2.0,
+        "ribbon": 2.5,
+        "rivet": 1.5,
+        "tassel": 3.0,
+    }
+    assert config["base_lr"] == 0.000001
+    assert config["max_iter"] == 3000
+    SegmentationBaselineSettings.model_validate(config)
+
+
 def test_localization_parts_deployment_uses_selected_checkpoint() -> None:
     """The API profile should freeze the selected 10,000-iteration model."""
     config_path = Path("configs/localization_mask2former_parts_deployment.yaml")
@@ -932,6 +970,115 @@ def test_mask2former_trainer_uses_target_optimizer_and_scheduler(
     assert matcher_module.batch_sigmoid_ce_loss_jit is eager_matcher_ce
     assert criterion_module.dice_loss_jit is eager_criterion_dice
     assert criterion_module.sigmoid_ce_loss_jit is eager_criterion_ce
+
+
+def test_mask2former_class_loss_weights_preserve_other_and_no_object_weights() -> None:
+    """Named weights must align with classes and leave no-object unchanged."""
+
+    class FakeTensor:
+        def __init__(self, values: list[float]) -> None:
+            self.values = values
+
+        def __len__(self) -> int:
+            return len(self.values)
+
+        def __setitem__(self, index: int, value: float) -> None:
+            self.values[index] = value
+
+        def detach(self) -> "FakeTensor":
+            return self
+
+        def clone(self) -> "FakeTensor":
+            return FakeTensor(self.values.copy())
+
+        def copy_(self, other: "FakeTensor") -> None:
+            self.values = other.values.copy()
+
+    weights = FakeTensor([1.0, 1.0, 1.0, 0.1])
+    model = SimpleNamespace(criterion=SimpleNamespace(empty_weight=weights))
+
+    _apply_mask2former_class_loss_weights(
+        model,
+        category_names=("collar", "ribbon", "tassel"),
+        class_loss_weights={"ribbon": 2.5, "tassel": 3.0},
+    )
+
+    assert weights.values == [1.0, 2.5, 3.0, 0.1]
+
+
+def test_mask2former_class_loss_weights_validate_model_class_count() -> None:
+    """A stale model head must not receive misaligned category weights."""
+
+    class FakeInvalidTensor:
+        def __len__(self) -> int:
+            return 2
+
+    weights = FakeInvalidTensor()
+    model = SimpleNamespace(criterion=SimpleNamespace(empty_weight=weights))
+
+    with pytest.raises(ModelNotReadyError, match="class count"):
+        _apply_mask2former_class_loss_weights(
+            model,
+            category_names=("collar", "ribbon"),
+            class_loss_weights={"ribbon": 2.0},
+        )
+
+
+def test_mask2former_trainer_applies_configured_class_loss_weights(
+    monkeypatch: Any,
+) -> None:
+    """The dynamic trainer must apply weights immediately after model build."""
+    captured: dict[str, Any] = {}
+    model = object()
+
+    class FakeModelTrainer:
+        @classmethod
+        def build_model(cls, cfg: Any) -> Any:
+            captured["cfg"] = cfg
+            return model
+
+    monkeypatch.setattr(
+        segmentation_module,
+        "_load_mask2former_modules",
+        lambda: {
+            "COCOInstanceNewBaselineDatasetMapper": object,
+            "build_lr_scheduler": object(),
+            "criterion_module": object(),
+            "matcher_module": object(),
+            "maybe_add_gradient_clipping": object(),
+        },
+    )
+    monkeypatch.setattr(
+        segmentation_module,
+        "_apply_mask2former_class_loss_weights",
+        lambda built_model, **kwargs: captured.update(
+            model=built_model,
+            **kwargs,
+        ),
+    )
+    baseline = Detectron2SegmentationBaseline(
+        SegmentationBaselineSettings(
+            model_family="mask2former",
+            class_loss_weights={"bag": 2.0},
+        )
+    )
+    trainer_class = baseline._trainer_class(
+        {
+            "COCOEvaluator": _FakeCOCOEvaluator,
+            "DefaultTrainer": FakeModelTrainer,
+            "BitMasks": None,
+            "build_detection_train_loader": object(),
+        }
+    )
+    cfg = object()
+
+    assert trainer_class.build_model(cfg) is model
+    assert captured == {
+        "cfg": cfg,
+        "model": model,
+        "category_names": baseline.settings.resolved_category_names(),
+        "class_loss_weights": {"bag": 2.0},
+    }
 
 
 def test_trainer_class_builds_coco_evaluator() -> None:

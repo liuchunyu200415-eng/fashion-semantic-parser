@@ -965,3 +965,20 @@ complete images containing buckle, bow, ribbon, rivet, or tassel through
 long-tail checkpoint and does not change the deployment profile.
 The audit selected `5,291 / 44,898` training images (`11.78%`), so the replay
 source uses a conservative `2.0` factor instead of the initial `3.0` proposal.
+
+The targeted replay stage improved formal mask AP from `9.84` to `10.30` at
+3,000 iterations (`AP50 18.40 -> 19.03`, `AP75 8.78 -> 9.25`). Its best exact
+source macro Recall50 was `42.52%`, compared with `41.55%` for the long-tail
+checkpoint. Buckle, bow, ribbon, and rivet gained small formal-AP improvements,
+but tassel remained at zero AP and only `2.56%` Recall50. Because the 1,000 and
+3,000 targeted checkpoints were close, further replay-only training is treated
+as saturated rather than evidence that the `92%` requirement is within reach.
+
+The next isolated experiment is
+`configs/localization_mask2former_parts_class_weighted.yaml`. It keeps the
+targeted replay ratio at `2.0`, starts from the selected targeted 3,000
+checkpoint, lowers the learning rate to `1e-6`, and applies modest
+classification-loss weights to buckle, bow, ribbon, rivet, and tassel. Mask,
+Dice, and no-object weights are unchanged. Evaluate checkpoints at 1,000,
+2,000, and 3,000 iterations using both formal COCO AP and exact-source
+Recall50/F1; do not promote the experiment solely from lower training loss.

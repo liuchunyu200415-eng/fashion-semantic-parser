@@ -50,6 +50,7 @@ class SegmentationBaselineSettings(BaseModel):
     weights: str | None = None
     num_classes: int = Field(default=len(PRD_SEGMENTATION_CATEGORIES), ge=1)
     category_names: list[str] | None = None
+    class_loss_weights: dict[str, float] = Field(default_factory=dict)
     ims_per_batch: int = Field(default=2, ge=1)
     base_lr: float = Field(default=0.00025, gt=0.0)
     max_iter: int = Field(default=3000, ge=1)
@@ -113,6 +114,21 @@ class SegmentationBaselineSettings(BaseModel):
         ):
             raise ValueError(
                 "Category score thresholds must be finite values between 0 and 1."
+            )
+        unknown_weight_names = set(self.class_loss_weights) - set(category_names)
+        if unknown_weight_names:
+            raise ValueError(
+                "class_loss_weights contains unknown categories: "
+                + ", ".join(sorted(unknown_weight_names))
+            )
+        if any(
+            not math.isfinite(weight) or weight <= 0.0
+            for weight in self.class_loss_weights.values()
+        ):
+            raise ValueError("Class loss weights must be finite and positive.")
+        if self.class_loss_weights and self.model_family != "mask2former":
+            raise ValueError(
+                "class_loss_weights is currently supported only for Mask2Former."
             )
         return self
 
@@ -496,9 +512,22 @@ class Detectron2SegmentationBaseline:
             )
         build_detection_train_loader = detectron2["build_detection_train_loader"]
         mapper_class = mask2former["COCOInstanceNewBaselineDatasetMapper"]
+        category_names = self.settings.resolved_category_names()
+        class_loss_weights = dict(self.settings.class_loss_weights)
 
         class Mask2FormerTrainer(SegmentationTrainer):
             """COCO-evaluated trainer with Mask2Former's instance mapper."""
+
+            @classmethod
+            def build_model(cls, cfg: Any) -> Any:
+                """Build the model and apply optional class-weighted CE loss."""
+                model = super().build_model(cfg)
+                _apply_mask2former_class_loss_weights(
+                    model,
+                    category_names=category_names,
+                    class_loss_weights=class_loss_weights,
+                )
+                return model
 
             @classmethod
             def build_train_loader(cls, cfg: Any) -> Any:
@@ -826,6 +855,42 @@ def _configure_mask2former_eager_losses(
     logger.info(
         "Using eager Mask2Former Dice/BCE losses to avoid TorchScript fusion "
         "allocation failures."
+    )
+
+
+def _apply_mask2former_class_loss_weights(
+    model: Any,
+    *,
+    category_names: Sequence[str],
+    class_loss_weights: dict[str, float],
+) -> None:
+    """Apply per-class CE weights while preserving Mask2Former's no-object weight."""
+    if not class_loss_weights:
+        return
+    try:
+        empty_weight = model.criterion.empty_weight
+    except AttributeError as error:
+        raise ModelNotReadyError(
+            "The installed Mask2Former model does not expose criterion.empty_weight."
+        ) from error
+    expected_count = len(category_names) + 1
+    if len(empty_weight) != expected_count:
+        raise ModelNotReadyError(
+            "Mask2Former criterion class count does not match category_names: "
+            f"expected {expected_count} weights including no-object, got "
+            f"{len(empty_weight)}."
+        )
+
+    weighted = empty_weight.detach().clone()
+    category_indexes = {name: index for index, name in enumerate(category_names)}
+    for category_name, weight in class_loss_weights.items():
+        weighted[category_indexes[category_name]] = weight
+    empty_weight.copy_(weighted)
+    logger.info(
+        "Applied Mask2Former class loss weights: %s",
+        ", ".join(
+            f"{name}={weight:g}" for name, weight in sorted(class_loss_weights.items())
+        ),
     )
 
 
