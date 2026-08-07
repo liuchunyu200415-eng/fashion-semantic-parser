@@ -7,7 +7,7 @@ additional_train_jsons:
   - data/processed/autodl/localization/fashionpedia_parts_train_critical_long_tail.json
 train_source_repeat_factors:
   - 1.0
-  - 3.0
+  - 2.0
 val_json: data/processed/autodl/localization/fashionpedia_parts_validation.json
 image_root: .
 output_dir: outputs/localization/mask2former_parts_r50_targeted

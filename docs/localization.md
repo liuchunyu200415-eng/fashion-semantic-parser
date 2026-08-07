@@ -963,3 +963,5 @@ tassel remained at zero recall. The next isolated experiment therefore replays
 complete images containing buckle, bow, ribbon, rivet, or tassel through
 `configs/localization_mask2former_parts_targeted.yaml`; it starts from the
 long-tail checkpoint and does not change the deployment profile.
+The audit selected `5,291 / 44,898` training images (`11.78%`), so the replay
+source uses a conservative `2.0` factor instead of the initial `3.0` proposal.

@@ -762,7 +762,7 @@ def test_localization_targeted_config_replays_critical_classes() -> None:
         "data/processed/autodl/localization/"
         "fashionpedia_parts_train_critical_long_tail.json"
     ]
-    assert config["train_source_repeat_factors"] == [1.0, 3.0]
+    assert config["train_source_repeat_factors"] == [1.0, 2.0]
     assert config["weights"].endswith("mask2former_parts_r50_long_tail_5000.pth")
     assert config["base_lr"] == 0.0000025
     assert config["max_iter"] == 3000
