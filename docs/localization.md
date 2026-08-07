@@ -955,3 +955,11 @@ intermediate and final checkpoints before promoting any weights.
 Use `benchmark_localization_accuracy.py --weights CHECKPOINT` for those
 comparisons. The explicit override is written into `predictions_summary.json`
 so a result cannot be mistaken for the fixed deployment checkpoint.
+
+The 5,000-iteration long-tail checkpoint improved formal mask AP from `8.88`
+to `9.84` and AP50 from `16.95` to `18.40`. Exact-source macro Recall50 rose
+from `38.53%` to `41.55%`. Buckle regressed, while bow and ribbon were flat and
+tassel remained at zero recall. The next isolated experiment therefore replays
+complete images containing buckle, bow, ribbon, rivet, or tassel through
+`configs/localization_mask2former_parts_targeted.yaml`; it starts from the
+long-tail checkpoint and does not change the deployment profile.

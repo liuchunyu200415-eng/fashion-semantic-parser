@@ -753,6 +753,23 @@ def test_localization_long_tail_config_preserves_stage_one_checkpoint() -> None:
     SegmentationBaselineSettings.model_validate(config)
 
 
+def test_localization_targeted_config_replays_critical_classes() -> None:
+    """Targeted tuning should replay weak classes from the long-tail checkpoint."""
+    config_path = Path("configs/localization_mask2former_parts_targeted.yaml")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert config["additional_train_jsons"] == [
+        "data/processed/autodl/localization/"
+        "fashionpedia_parts_train_critical_long_tail.json"
+    ]
+    assert config["train_source_repeat_factors"] == [1.0, 3.0]
+    assert config["weights"].endswith("mask2former_parts_r50_long_tail_5000.pth")
+    assert config["base_lr"] == 0.0000025
+    assert config["max_iter"] == 3000
+    assert config["evaluate_after_training"] is False
+    SegmentationBaselineSettings.model_validate(config)
+
+
 def test_localization_parts_deployment_uses_selected_checkpoint() -> None:
     """The API profile should freeze the selected 10,000-iteration model."""
     config_path = Path("configs/localization_mask2former_parts_deployment.yaml")

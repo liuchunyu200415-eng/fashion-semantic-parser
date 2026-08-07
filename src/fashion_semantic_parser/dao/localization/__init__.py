@@ -12,14 +12,20 @@ from fashion_semantic_parser.dao.localization.taxonomy import (
     PRDRegionCoverage,
     map_fashionpedia_part_category,
 )
+from fashion_semantic_parser.dao.localization.training_subset import (
+    LocalizationTargetSubsetSummary,
+    build_localization_target_coco_subset,
+)
 
 __all__ = [
     "FASHIONPEDIA_PART_CATEGORIES",
     "PRD_LOCALIZATION_REGION_COVERAGE",
     "FashionpediaPartCategory",
     "FashionpediaPartPreparationSummary",
+    "LocalizationTargetSubsetSummary",
     "PRDRegionCoverage",
     "audit_fashionpedia_part_annotations",
+    "build_localization_target_coco_subset",
     "convert_fashionpedia_parts_to_coco",
     "map_fashionpedia_part_category",
 ]
