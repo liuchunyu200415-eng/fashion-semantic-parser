@@ -1170,3 +1170,10 @@ python scripts/predict_referring_localization.py \
   --max-regions 10 \
   --output-dir outputs/localization/referring_smoke/hybrid_known_part_4
 ```
+
+If a labelled case has no useful known-part candidate, run one bounded recall
+diagnostic with `--part-score-threshold 0.05`. This override applies only to the
+Mask2Former auxiliary candidate generator; `--box-threshold` remains the
+Grounding DINO threshold. Compare best Mask/Box IoU before changing any spatial
+reranking rule. If the unfiltered low-threshold candidates still have poor IoU,
+stop threshold tuning and replace or augment the candidate generator.

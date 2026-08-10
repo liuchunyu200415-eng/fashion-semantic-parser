@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from scripts.predict_referring_localization import (
+    _build_part_settings_overrides,
     _build_settings_overrides,
     _latency_summary,
     build_case_response,
@@ -78,6 +79,17 @@ def test_referring_settings_only_include_explicit_valid_overrides() -> None:
             max_regions=None,
             subject_roi_margin=None,
         )
+
+
+def test_part_threshold_override_is_separate_and_validated() -> None:
+    """Known-part recall scans must not silently change grounding settings."""
+    assert _build_part_settings_overrides(score_threshold=None) == {}
+    assert _build_part_settings_overrides(score_threshold=0.05) == {
+        "score_threshold": 0.05
+    }
+
+    with pytest.raises(ValueError, match="part-score-threshold"):
+        _build_part_settings_overrides(score_threshold=-0.01)
 
 
 def test_latency_summary_separates_cold_first_case_from_warm_cases() -> None:

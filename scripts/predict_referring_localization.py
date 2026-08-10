@@ -44,6 +44,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--config", default=DEFAULT_CONFIG)
     parser.add_argument("--part-config", default=DEFAULT_PART_CONFIG)
+    parser.add_argument(
+        "--part-score-threshold",
+        type=float,
+        default=None,
+        help=(
+            "Optional Mask2Former known-part candidate threshold override. "
+            "This does not change the Grounding DINO --box-threshold."
+        ),
+    )
     parser.add_argument("--garment-config", default=DEFAULT_GARMENT_CONFIG)
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--roi-mode", choices=("auto", "full"), default="auto")
@@ -85,6 +94,9 @@ def main() -> None:
         max_regions=args.max_regions,
         subject_roi_margin=args.subject_roi_margin,
     )
+    part_settings_overrides = _build_part_settings_overrides(
+        score_threshold=args.part_score_threshold,
+    )
     manifest_path = resolve_project_path(args.manifest)
     output_dir = resolve_project_path(args.output_dir)
     responses_dir = output_dir / "responses"
@@ -105,7 +117,10 @@ def main() -> None:
     )
     if args.backend == "hybrid":
         service: Any = HybridRegionLocalizationService(
-            Mask2FormerPartLocalizationService(args.part_config),
+            Mask2FormerPartLocalizationService(
+                args.part_config,
+                settings_overrides=part_settings_overrides,
+            ),
             fallback_service,
             garment_segmentation_service=GarmentSegmentationService(
                 args.garment_config
@@ -187,6 +202,9 @@ def main() -> None:
         "backend": args.backend,
         "config": args.config,
         "part_config": args.part_config if args.backend == "hybrid" else None,
+        "part_settings_overrides": (
+            part_settings_overrides if args.backend == "hybrid" else None
+        ),
         "garment_config": args.garment_config if args.backend == "hybrid" else None,
         "roi_mode": args.roi_mode,
         "settings_overrides": settings_overrides,
@@ -261,6 +279,18 @@ def _build_settings_overrides(
         "subject_roi_margin": subject_roi_margin,
     }
     return {key: value for key, value in values.items() if value is not None}
+
+
+def _build_part_settings_overrides(
+    *,
+    score_threshold: float | None,
+) -> dict[str, Any]:
+    """Validate known-part candidate overrides separately from grounding."""
+    if score_threshold is not None and not 0.0 <= score_threshold <= 1.0:
+        raise ValueError("--part-score-threshold must be between 0 and 1.")
+    if score_threshold is None:
+        return {}
+    return {"score_threshold": score_threshold}
 
 
 def _latency_summary(values: list[float]) -> dict[str, Any]:

@@ -316,11 +316,17 @@ class Mask2FormerPartLocalizationService:
         config_path: str = "configs/localization_mask2former_parts_deployment.yaml",
         *,
         segmentation_service: SegmentationRuntime | None = None,
+        settings_overrides: Mapping[str, Any] | None = None,
     ) -> None:
         """Create a lazy supervised part-localization runtime."""
+        if segmentation_service is not None and settings_overrides:
+            raise ValueError(
+                "settings_overrides cannot be used with segmentation_service"
+            )
         self.config_path = config_path
         self.segmentation_service = segmentation_service or GarmentSegmentationService(
-            config_path
+            config_path,
+            settings_overrides=settings_overrides,
         )
 
     def supports_query(self, query: str) -> bool:
