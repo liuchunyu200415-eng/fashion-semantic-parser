@@ -974,11 +974,149 @@ but tassel remained at zero AP and only `2.56%` Recall50. Because the 1,000 and
 3,000 targeted checkpoints were close, further replay-only training is treated
 as saturated rather than evidence that the `92%` requirement is within reach.
 
-The next isolated experiment is
-`configs/localization_mask2former_parts_class_weighted.yaml`. It keeps the
-targeted replay ratio at `2.0`, starts from the selected targeted 3,000
-checkpoint, lowers the learning rate to `1e-6`, and applies modest
-classification-loss weights to buckle, bow, ribbon, rivet, and tassel. Mask,
-Dice, and no-object weights are unchanged. Evaluate checkpoints at 1,000,
-2,000, and 3,000 iterations using both formal COCO AP and exact-source
-Recall50/F1; do not promote the experiment solely from lower training loss.
+The final isolated fixed-label experiment used
+`configs/localization_mask2former_parts_class_weighted.yaml`. It kept the
+targeted replay ratio at `2.0`, started from targeted 3,000, and applied modest
+classification-loss weights to buckle, bow, ribbon, rivet, and tassel. The
+3,000-iteration checkpoint reached mask AP `10.22`, exact-source macro Recall50
+`40.86%`, and best F1 `34.06%`; all three were below targeted 3,000 at `10.30`,
+`42.52%`, and `35.29%`. The class-weighted checkpoints are therefore rejected,
+and further fixed-label loss, replay, or iteration tuning is stopped.
+
+## Open-Language Referring-Expression Correction
+
+The fixed-label experiments above are retained as engineering baselines, not as
+the final interpretation of PRD 3.1.2. Mapping a query such as `左边的袖口` to
+the fixed label `cuff` discards the spatial modifier. The intended task instead
+requires the complete expression to select the target and must distinguish:
+
+- parts, such as buttons or zippers
+- spatial modifiers, such as left, right, upper, or lower
+- visual attributes, such as floral, striped, red, or silver
+- relationships, such as an inner garment underneath a coat
+- novel paraphrases, compositions, and parts outside the fixed 19-class head
+
+Do not merge the 19 Fashionpedia classes into another fixed four-class model as
+the next main experiment. Keep the selected `targeted_3000` checkpoint only as
+an auxiliary known-part candidate source and closed-vocabulary comparison.
+
+### Feasibility Manifest
+
+Start from the committed 20-query template:
+
+```bash
+cp \
+  data/benchmarks/localization/referring_smoke_v1.template.json \
+  data/benchmarks/localization/referring_smoke_v1.json
+```
+
+For the current AutoDL Fashionpedia archive, the `1158` records in
+`instances_attributes_val2020.json` match the images under
+`data/raw/fashionpedia/test/` despite that directory name. Generate a
+deterministic candidate manifest directly from those records:
+
+```bash
+python scripts/prepare_referring_smoke_fashionpedia.py
+```
+
+The selector fills all 20 query rows, keeps the cuff contrast set on one image,
+and imports reviewed-source Fashionpedia masks only where the expression has a
+direct annotation boundary. It deliberately does not relabel sleeves as cuffs
+or decorations as logos. Its summary is written to
+`outputs/localization/referring_smoke/fashionpedia_selection.json`.
+
+The generated file is not immediately accuracy-ready. Direct Fashionpedia GT
+and all automatically selected images still need a visual review; unsupported
+cuff, button, drawstring, color, pattern, and layering expressions remain
+`unlabelled` until a human adds a reviewed Box or Mask.
+
+Replace every placeholder image with a project-relative path and review each
+case. Version 1 defines `left` and `right` in image coordinates. A spatial case
+must record its reference frame. Expressions can contain multiple dimensions,
+for example `左边袖子上的碎花图案` is simultaneously spatial, attribute, and
+relational. Use `contrast_set_id` for multiple expressions on the same image so
+the report can verify that every modifier variant succeeds.
+
+Each case has one explicit annotation boundary:
+
+- `mask`: every target has a reviewed COCO polygon or RLE Mask
+- `box`: every target has a reviewed `xyxy` Box
+- `negative`: the image was reviewed and contains no valid target
+- `unlabelled`: useful for visual exploration but excluded from accuracy
+
+Do not assign `expected_count` to an unlabelled case. For a labelled positive
+case, `expected_count` must equal the number of target instances. This keeps
+`袖口` with two targets distinct from `左边的袖口` with one target.
+
+One reviewed Box case has this shape:
+
+```json
+{
+  "id": "spatial_left_cuff_001",
+  "contrast_set_id": "cuff_image_001",
+  "image_path": "data/raw/referring_smoke/cuffs.jpg",
+  "query": "衣服左边的袖口",
+  "grounding_prompt": "the cuff on the left side of the garment",
+  "dimensions": ["basic", "spatial"],
+  "novelty": "novel_composition",
+  "reference_frame": "image",
+  "annotation_status": "box",
+  "expected_count": 1,
+  "targets": [
+    {
+      "label": "left_cuff",
+      "box": {"x_min": 10, "y_min": 20, "x_max": 40, "y_max": 60}
+    }
+  ]
+}
+```
+
+### Full-Expression Baseline
+
+The batch runner passes each case's complete English grounding prompt without
+changing the original Chinese query and reuses one loaded Grounding DINO +
+SAM-HQ bundle. Run full-image mode first to isolate language grounding from ROI
+cropping:
+
+```bash
+python scripts/predict_referring_localization.py \
+  --manifest data/benchmarks/localization/referring_smoke_v1.json \
+  --roi-mode full \
+  --box-threshold 0.15 \
+  --max-regions 10 \
+  --output-dir outputs/localization/referring_smoke/full
+```
+
+Then evaluate the saved per-query responses without rerunning either model:
+
+```bash
+python scripts/evaluate_referring_localization.py \
+  --manifest data/benchmarks/localization/referring_smoke_v1.json \
+  --responses-dir outputs/localization/referring_smoke/full/responses \
+  --output outputs/localization/referring_smoke/full/metrics.json \
+  --min-iou 0.50
+```
+
+The report separates Mask and Box IoU scopes, positive-instance Recall50,
+query-level all-target recall, exact expected-count success, reviewed negative
+queries, empty predictions, language dimensions, novelty types, and contrast
+sets. A correct target among ten candidates can pass target recall but cannot
+pass exact query selection. Unlabelled cases never enter accuracy denominators.
+
+The first request includes model loading, so cold first-call wall time is kept
+separate from the remaining warm calls. Do not compare the cold value with the
+PRD latency target. This 20-query set selects the next model direction only;
+`prd_accuracy_passed` remains `null` and cannot establish the `92%` contract.
+
+Decision branch after the first complete run:
+
+1. If basic parts fail, compare a stronger referring/open-vocabulary grounding
+   model before adding postprocessing.
+2. If basic parts pass but spatial modifiers fail, retain the candidates and add
+   explicit spatial reranking.
+3. If attributes fail, compare region-attribute or vision-language reranking.
+4. If relationships fail, ground the referenced entities separately and test
+   containment, overlap, adjacency, and garment-layer reasoning.
+5. If selected boxes are correct but Mask boundaries fail, isolate the SAM
+   refinement stage. Current returned boxes are Mask-derived, so proposal boxes
+   must be saved separately before claiming which stage caused an error.

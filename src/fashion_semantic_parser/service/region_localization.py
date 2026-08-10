@@ -121,6 +121,44 @@ class GroundedSAMHQRegionLocalizationService:
         auto_subject_roi: bool = True,
     ) -> RegionLocalizationPrediction:
         """Return query-aligned masks and mask-derived boxes for one image."""
+        return self._localize(
+            image_path,
+            query,
+            subject_roi=subject_roi,
+            auto_subject_roi=auto_subject_roi,
+            grounding_prompt_override=self._grounding_prompt_override,
+        )
+
+    def localize_with_grounding_prompt(
+        self,
+        image_path: str,
+        query: str,
+        grounding_prompt: str,
+        subject_roi: SegmentationSubjectROI | None = None,
+        auto_subject_roi: bool = True,
+    ) -> RegionLocalizationPrediction:
+        """Run one full-expression prompt without rebuilding the heavy models."""
+        normalized_prompt = " ".join(grounding_prompt.strip().split())
+        if not normalized_prompt:
+            raise ValueError("Grounding prompt override cannot be empty.")
+        return self._localize(
+            image_path,
+            query,
+            subject_roi=subject_roi,
+            auto_subject_roi=auto_subject_roi,
+            grounding_prompt_override=normalized_prompt,
+        )
+
+    def _localize(
+        self,
+        image_path: str,
+        query: str,
+        *,
+        subject_roi: SegmentationSubjectROI | None,
+        auto_subject_roi: bool,
+        grounding_prompt_override: str | None,
+    ) -> RegionLocalizationPrediction:
+        """Execute localization with an optional per-request grounding prompt."""
         if subject_roi is not None and auto_subject_roi:
             raise InvalidImageInputError(
                 "subject_roi and auto_subject_roi cannot be used together"
@@ -155,10 +193,10 @@ class GroundedSAMHQRegionLocalizationService:
                 margin=settings.subject_roi_margin,
             )
             prompt = resolve_localization_prompt(query)
-            if self._grounding_prompt_override is not None:
+            if grounding_prompt_override is not None:
                 prompt = prompt.model_copy(
                     update={
-                        "grounding_prompt": self._grounding_prompt_override,
+                        "grounding_prompt": grounding_prompt_override,
                     }
                 )
             candidates = self._get_predictor().predict(

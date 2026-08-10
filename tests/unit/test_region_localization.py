@@ -325,6 +325,52 @@ def test_localization_can_override_grounding_prompt_without_changing_label(
     assert result.regions[0].region_label == "collar"
 
 
+def test_localization_can_change_full_expression_prompt_per_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reusable runtime must preserve modifiers for every smoke-test case."""
+    image_path = tmp_path / "image.jpg"
+    cv2.imwrite(str(image_path), np.zeros((20, 30, 3), dtype=np.uint8))
+    monkeypatch.setattr(
+        "fashion_semantic_parser.service.region_localization.resolve_project_path",
+        lambda _: image_path,
+    )
+    predictor = _FakeGroundedPredictor()
+    service = _service(predictor)
+
+    first = service.localize_with_grounding_prompt(
+        "data/image.jpg",
+        "衣服左边的袖口",
+        " the cuff on the left side of the garment ",
+        auto_subject_roi=False,
+    )
+    second = service.localize_with_grounding_prompt(
+        "data/image.jpg",
+        "银色拉链",
+        "the silver zipper",
+        auto_subject_roi=False,
+    )
+
+    assert predictor.calls == [
+        ((20, 30, 3), "the cuff on the left side of the garment"),
+        ((20, 30, 3), "the silver zipper"),
+    ]
+    assert first.query == "衣服左边的袖口"
+    assert second.query == "银色拉链"
+
+
+def test_per_request_grounding_prompt_rejects_empty_text() -> None:
+    """A smoke case cannot silently fall back to fixed-label normalization."""
+    with pytest.raises(ValueError, match="cannot be empty"):
+        _service(_FakeGroundedPredictor()).localize_with_grounding_prompt(
+            "data/image.jpg",
+            "衣服左边的袖口",
+            "   ",
+            auto_subject_roi=False,
+        )
+
+
 def test_localization_rejects_empty_grounding_prompt_override() -> None:
     """An explicit prompt override must carry usable grounding text."""
     with pytest.raises(ValueError, match="cannot be empty"):

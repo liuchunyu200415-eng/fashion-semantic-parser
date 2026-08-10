@@ -1,0 +1,217 @@
+{
+  "schema_version": 1,
+  "name": "prd_3_1_2_referring_smoke_v1",
+  "description": "Replace every image path and add reviewed Box or Mask targets before using this feasibility set for metrics.",
+  "cases": [
+    {
+      "id": "basic_collar_001",
+      "image_path": "data/raw/referring_smoke/replace_collar.jpg",
+      "query": "这件衣服的领口",
+      "grounding_prompt": "the neckline of the garment",
+      "dimensions": ["basic"],
+      "novelty": "seen",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "basic_cuffs_001",
+      "contrast_set_id": "cuff_image_001",
+      "image_path": "data/raw/referring_smoke/replace_cuffs.jpg",
+      "query": "这件衣服的袖口",
+      "grounding_prompt": "the cuffs of the garment",
+      "dimensions": ["basic"],
+      "novelty": "seen",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "basic_zipper_001",
+      "image_path": "data/raw/referring_smoke/replace_zipper.jpg",
+      "query": "衣服的拉链",
+      "grounding_prompt": "the zipper on the garment",
+      "dimensions": ["basic"],
+      "novelty": "seen",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "basic_button_001",
+      "image_path": "data/raw/referring_smoke/replace_buttons.jpg",
+      "query": "衣服的扣子",
+      "grounding_prompt": "the buttons on the garment",
+      "dimensions": ["basic"],
+      "novelty": "novel_part",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "basic_drawstring_001",
+      "image_path": "data/raw/referring_smoke/replace_drawstring.jpg",
+      "query": "衣服上的抽绳",
+      "grounding_prompt": "the drawstring on the garment",
+      "dimensions": ["basic"],
+      "novelty": "novel_part",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "spatial_left_cuff_001",
+      "contrast_set_id": "cuff_image_001",
+      "image_path": "data/raw/referring_smoke/replace_cuffs.jpg",
+      "query": "衣服左边的袖口",
+      "grounding_prompt": "the cuff on the left side of the garment",
+      "dimensions": ["basic", "spatial"],
+      "novelty": "novel_composition",
+      "reference_frame": "image",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "spatial_right_cuff_001",
+      "contrast_set_id": "cuff_image_001",
+      "image_path": "data/raw/referring_smoke/replace_cuffs.jpg",
+      "query": "衣服右边的袖口",
+      "grounding_prompt": "the cuff on the right side of the garment",
+      "dimensions": ["basic", "spatial"],
+      "novelty": "novel_composition",
+      "reference_frame": "image",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "spatial_right_pocket_001",
+      "image_path": "data/raw/referring_smoke/replace_two_pockets.jpg",
+      "query": "衣服右侧的口袋",
+      "grounding_prompt": "the pocket on the right side of the garment",
+      "dimensions": ["basic", "spatial"],
+      "novelty": "novel_composition",
+      "reference_frame": "image",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "spatial_top_button_001",
+      "image_path": "data/raw/referring_smoke/replace_buttons.jpg",
+      "query": "最上面的扣子",
+      "grounding_prompt": "the topmost button on the garment",
+      "dimensions": ["basic", "spatial"],
+      "novelty": "novel_part",
+      "reference_frame": "image",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "spatial_lower_zipper_001",
+      "image_path": "data/raw/referring_smoke/replace_two_zippers.jpg",
+      "query": "下面的拉链",
+      "grounding_prompt": "the lower zipper on the garment",
+      "dimensions": ["basic", "spatial"],
+      "novelty": "novel_composition",
+      "reference_frame": "image",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "attribute_floral_pattern_001",
+      "image_path": "data/raw/referring_smoke/replace_floral_pattern.jpg",
+      "query": "衣服上的碎花图案",
+      "grounding_prompt": "the small floral pattern on the garment",
+      "dimensions": ["basic", "attribute"],
+      "novelty": "novel_composition",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "attribute_silver_zipper_001",
+      "image_path": "data/raw/referring_smoke/replace_silver_zipper.jpg",
+      "query": "银色拉链",
+      "grounding_prompt": "the silver zipper on the garment",
+      "dimensions": ["basic", "attribute"],
+      "novelty": "novel_composition",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "attribute_red_pocket_001",
+      "image_path": "data/raw/referring_smoke/replace_colored_pockets.jpg",
+      "query": "红色口袋",
+      "grounding_prompt": "the red pocket on the garment",
+      "dimensions": ["basic", "attribute"],
+      "novelty": "novel_composition",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "attribute_striped_collar_001",
+      "image_path": "data/raw/referring_smoke/replace_striped_collar.jpg",
+      "query": "条纹衣领",
+      "grounding_prompt": "the striped collar of the garment",
+      "dimensions": ["basic", "attribute"],
+      "novelty": "novel_composition",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "attribute_logo_001",
+      "image_path": "data/raw/referring_smoke/replace_logo.jpg",
+      "query": "胸前的白色标志",
+      "grounding_prompt": "the white logo on the chest of the garment",
+      "dimensions": ["basic", "spatial", "attribute"],
+      "novelty": "novel_part",
+      "reference_frame": "garment",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "relation_inner_garment_001",
+      "image_path": "data/raw/referring_smoke/replace_outer_inner.jpg",
+      "query": "外套里面的内搭",
+      "grounding_prompt": "the inner garment underneath the outer coat",
+      "dimensions": ["basic", "relation"],
+      "novelty": "novel_composition",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "relation_zipper_beside_pocket_001",
+      "image_path": "data/raw/referring_smoke/replace_zipper_pocket.jpg",
+      "query": "口袋旁边的拉链",
+      "grounding_prompt": "the zipper beside the pocket",
+      "dimensions": ["basic", "relation"],
+      "novelty": "novel_composition",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "relation_decoration_on_collar_001",
+      "image_path": "data/raw/referring_smoke/replace_collar_decoration.jpg",
+      "query": "衣领上的装饰",
+      "grounding_prompt": "the decoration on the collar",
+      "dimensions": ["basic", "relation"],
+      "novelty": "novel_composition",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "relation_left_floral_sleeve_001",
+      "image_path": "data/raw/referring_smoke/replace_floral_sleeves.jpg",
+      "query": "左边袖子上的碎花图案",
+      "grounding_prompt": "the floral pattern on the left sleeve",
+      "dimensions": ["basic", "spatial", "attribute", "relation"],
+      "novelty": "novel_composition",
+      "reference_frame": "image",
+      "annotation_status": "unlabelled",
+      "targets": []
+    },
+    {
+      "id": "relation_drawstring_at_hood_001",
+      "image_path": "data/raw/referring_smoke/replace_hood_drawstring.jpg",
+      "query": "帽兜旁边的抽绳",
+      "grounding_prompt": "the drawstring beside the hood",
+      "dimensions": ["basic", "relation"],
+      "novelty": "novel_part",
+      "annotation_status": "unlabelled",
+      "targets": []
+    }
+  ]
+}
