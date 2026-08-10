@@ -1210,3 +1210,28 @@ historical baselines only. They are not the PRD delivery backend because the
 published technical plan names DINOv2 region features, SAM-HQ, Python 3.10.12,
 and later TensorRT optimization. No replacement model may enter the main path
 without an approved PRD revision.
+
+### PRD Compliance Guardrails
+
+All subsequent 3.1.2 work uses the published PRD as a hard constraint:
+
+- model path: DINOv2 region features, complete-query text features, learned
+  region-text similarity matching, and SAM-HQ Mask refinement
+- supporting stack: PyTorch, OpenCV, and Mask2Former where a proposal or
+  auxiliary segmentation stage is required
+- data boundary: DeepFashion2 is the named local-region training source;
+  Fashionpedia experiments remain historical evidence and cannot replace the
+  formal PRD dataset or acceptance set
+- runtime boundary: Python 3.10.12 first, followed by ONNX Runtime and
+  TensorRT 8.6.1 optimization
+- accuracy boundary: at least `92%` on a manually annotated localization test
+  set; functional demos, Fashionpedia AP, and four-case smoke results are not
+  substitutes
+- latency boundary: at most `30 ms` per localization request, with model-load
+  time reported separately; the complete system must also meet `60 QPS` on one
+  RTX 3090 and at most `400 ms` mean end-to-end response time
+
+The PRD does not name the text encoder or define the exact formula behind
+"localization accuracy." Those two implementation details must be fixed inside
+the listed stack and written into the acceptance protocol before any `92%`
+claim is permitted.
