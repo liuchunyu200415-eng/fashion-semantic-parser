@@ -1236,3 +1236,43 @@ The PRD does not name the text encoder or define the exact formula behind
 "localization accuracy." Those two implementation details must be fixed inside
 the listed stack and written into the acceptance protocol before any `92%`
 claim is permitted.
+
+### Fashionpedia Referring Training Index
+
+`scripts/prepare_referring_training_fashionpedia.py` converts official
+Fashionpedia annotations into a compact JSONL index for the PRD DINOv2
+region-text matching path. Each record preserves the complete query, language,
+query dimensions, target boxes, and official source annotation IDs. Masks are
+not duplicated in JSONL; the training loader resolves them from the official
+Fashionpedia annotation file. This prevents hundreds of thousands of repeated
+polygon/RLE payloads from filling the data disk.
+
+The first version generates only deterministic supervision:
+
+- basic queries target every instance of the named part in one image
+- left/right/upper/lower queries require a unique extreme separated from the
+  next candidate by at least `5%` of the relevant image dimension
+- attribute queries use attributes attached directly to the target part; they
+  do not inherit a garment attribute and relabel the part
+- part-on-garment relation queries require at least `80%` part-box containment
+  and exactly one eligible containing garment; nested ambiguous cases are
+  skipped
+- basic, spatial, and reliable relation queries are generated in Chinese and
+  English; official attribute names remain in English rather than using an
+  invented translation
+
+Run a small audit before producing the full index:
+
+```bash
+python scripts/prepare_referring_training_fashionpedia.py \
+  --split train \
+  --limit 100 \
+  --output data/processed/autodl/localization/fashionpedia_referring_train_smoke.jsonl \
+  --summary-output outputs/localization/referring_training/fashionpedia_train_smoke_summary.json
+```
+
+Then remove `--limit` and use the default full-output paths. The summary reports
+sample, target-reference, dimension, language, category, relation-association,
+ambiguous-spatial, invalid-annotation, and missing-image counts. This index is
+training-data preparation only: DINOv2 alignment training, independent manual
+acceptance data, `92%` accuracy, and `30 ms` latency remain pending.
