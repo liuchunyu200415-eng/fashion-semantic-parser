@@ -17,10 +17,13 @@ DEFAULT_OUTPUT_DIR = "outputs/localization/referring_smoke"
 
 
 def add_src_to_python_path() -> None:
-    """Add the project and local package when they are not installed."""
+    """Add the project, local package, and optional Mask2Former checkout."""
     project_root = Path(__file__).resolve().parents[1]
     src_path = project_root / "src"
-    for path in (project_root, src_path):
+    mask2former_path = project_root / "external" / "Mask2Former"
+    for path in (project_root, src_path, mask2former_path):
+        if path == mask2former_path and not path.is_dir():
+            continue
         if str(path) not in sys.path:
             sys.path.insert(0, str(path))
 
