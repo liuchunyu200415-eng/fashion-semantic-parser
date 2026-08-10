@@ -1120,3 +1120,53 @@ Decision branch after the first complete run:
 5. If selected boxes are correct but Mask boundaries fail, isolate the SAM
    refinement stage. Current returned boxes are Mask-derived, so proposal boxes
    must be saved separately before claiming which stage caused an error.
+
+### First Real Referring Baseline
+
+The first 20-query full-image run completed without empty responses, but only
+four cases had imported Fashionpedia GT. Those four scored `0/4` query success,
+with `25` predicted instances, `4` GT instances, and no Mask IoU match at
+`0.50`. This is a failed accuracy baseline, not evidence that all 20 unlabelled
+queries failed.
+
+Per-case diagnostics separated candidate localization from Mask quality:
+
+| Query | Full expression best Mask/Box IoU | Noun-only best Mask/Box IoU | Noun-only + person ROI |
+|---|---:|---:|---:|
+| neckline | `45.82 / 90.77` | `41.67 / 92.35` | `24.83 / 75.79` |
+| zipper | `4.57 / 14.12` | `1.44 / 9.15` | `0.22 / 5.62` |
+| right pocket | `1.04 / 3.16` | `0.49 / 1.12` | `0.49 / 1.13` |
+| lower zipper | `3.19 / 30.30` | `5.37 / 24.85` | `5.92 / 25.05` |
+
+The neckline result shows a strong candidate Box but weak SAM-HQ Mask. Zipper
+and pocket fail before spatial reranking because no useful candidate is present.
+Noun-only prompts and person ROI do not fix this, so further Grounding DINO
+threshold or ROI tuning is stopped. Warm full-image inference was about `212 ms`
+mean and `231 ms` P95; person ROI increased the warm mean to about `250 ms`.
+The original `258 s` cold call was dominated by blocked Hugging Face retries;
+with cached offline loading it fell to about `6-7 s`.
+
+### Known-Part Candidates with Language Constraints
+
+The next bounded path uses the selected fixed-label model only as an auxiliary
+candidate generator. The complete query is retained, and explicit left, right,
+upper, and lower modifiers select candidates in image coordinates. A query with
+no spatial modifier keeps every matching part. Unknown targets still receive
+the original English expression in the Grounding DINO + SAM-HQ fallback.
+
+This does not yet solve color, pattern, or garment-layer relationships; those
+require attribute or relation reranking after candidate recall is established.
+It also does not turn the fixed 19-class model back into the PRD definition.
+
+Run the four labelled known-part cases with the selected targeted checkpoint:
+
+```bash
+python scripts/predict_referring_localization.py \
+  --manifest data/benchmarks/localization/referring_noun_only_4.json \
+  --backend hybrid \
+  --part-config configs/localization_mask2former_parts_targeted_deployment.yaml \
+  --roi-mode full \
+  --box-threshold 0.15 \
+  --max-regions 10 \
+  --output-dir outputs/localization/referring_smoke/hybrid_known_part_4
+```

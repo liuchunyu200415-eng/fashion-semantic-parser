@@ -1,10 +1,13 @@
 """Fashionpedia part taxonomy and PRD 3.1.2 coverage boundaries."""
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel
 
 CoverageStatus = Literal["exact", "partial", "missing"]
+HorizontalConstraint = Literal["left", "right"]
+VerticalConstraint = Literal["upper", "lower"]
 
 
 class FashionpediaPartCategory(BaseModel):
@@ -34,6 +37,13 @@ class LocalizationPrompt(BaseModel):
     region_label: str
     grounding_prompt: str
     matched_term: str
+
+
+class LocalizationQueryConstraints(BaseModel):
+    """Composable image-coordinate constraints retained from the full query."""
+
+    horizontal: HorizontalConstraint | None = None
+    vertical: VerticalConstraint | None = None
 
 
 FASHIONPEDIA_PART_CATEGORIES = [
@@ -367,6 +377,55 @@ def resolve_localization_prompt(query: str) -> LocalizationPrompt:
         grounding_prompt=normalized_query,
         matched_term=query.strip(),
     )
+
+
+def resolve_localization_query_constraints(
+    query: str,
+) -> LocalizationQueryConstraints:
+    """Extract unambiguous image-coordinate modifiers without losing the query."""
+    normalized_query = " ".join(query.strip().lower().split())
+    if not normalized_query:
+        raise ValueError("Localization query cannot be empty.")
+
+    has_left = _contains_any(
+        normalized_query,
+        ("左边", "左侧", "画面左", "left", "leftmost"),
+    )
+    has_right = _contains_any(
+        normalized_query,
+        ("右边", "右侧", "画面右", "right", "rightmost"),
+    )
+    has_upper = _contains_any(
+        normalized_query,
+        ("最上面", "上方", "顶部", "upper", "topmost", "at the top"),
+    )
+    has_lower = _contains_any(
+        normalized_query,
+        ("最下面", "下面的", "下方", "底部", "lower", "bottommost"),
+    )
+    return LocalizationQueryConstraints(
+        horizontal=(
+            "left"
+            if has_left and not has_right
+            else "right" if has_right and not has_left else None
+        ),
+        vertical=(
+            "upper"
+            if has_upper and not has_lower
+            else "lower" if has_lower and not has_upper else None
+        ),
+    )
+
+
+def _contains_any(query: str, terms: tuple[str, ...]) -> bool:
+    """Match Chinese substrings and whole English terms without false positives."""
+    for term in terms:
+        if term.isascii():
+            if re.search(rf"(?<![a-z]){re.escape(term)}(?![a-z])", query):
+                return True
+        elif term in query:
+            return True
+    return False
 
 
 def localization_coco_categories() -> list[dict[str, object]]:

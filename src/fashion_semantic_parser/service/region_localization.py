@@ -17,7 +17,9 @@ from fashion_semantic_parser.common.paths import resolve_project_path
 from fashion_semantic_parser.dao.localization.taxonomy import (
     FASHIONPEDIA_PART_CATEGORIES,
     LocalizationPrompt,
+    LocalizationQueryConstraints,
     resolve_localization_prompt,
+    resolve_localization_query_constraints,
 )
 from fashion_semantic_parser.models.localization import (
     LocalizationBoundingBox,
@@ -362,12 +364,15 @@ class Mask2FormerPartLocalizationService:
             for instance in prediction.instances
             if instance.category_label in target_labels
         ]
-        return RegionLocalizationPrediction(
-            image_path=image_path,
-            query=query,
-            regions=regions,
-            subject_roi=prediction.subject_roi,
-            subject_roi_source=prediction.subject_roi_source,
+        return _apply_spatial_query_constraints(
+            RegionLocalizationPrediction(
+                image_path=image_path,
+                query=query,
+                regions=regions,
+                subject_roi=prediction.subject_roi,
+                subject_roi_source=prediction.subject_roi_source,
+            ),
+            query,
         )
 
 
@@ -394,12 +399,40 @@ class HybridRegionLocalizationService:
         auto_subject_roi: bool = True,
     ) -> RegionLocalizationPrediction:
         """Route directly supervised queries without loading both heavy paths."""
-        return self._localize(
-            image_path,
+        return _apply_spatial_query_constraints(
+            self._localize(
+                image_path,
+                query,
+                subject_roi=subject_roi,
+                auto_subject_roi=auto_subject_roi,
+                garment_prediction=None,
+                fallback_grounding_prompt=None,
+            ),
             query,
-            subject_roi=subject_roi,
-            auto_subject_roi=auto_subject_roi,
-            garment_prediction=None,
+        )
+
+    def localize_with_grounding_prompt(
+        self,
+        image_path: str,
+        query: str,
+        grounding_prompt: str,
+        subject_roi: SegmentationSubjectROI | None = None,
+        auto_subject_roi: bool = True,
+    ) -> RegionLocalizationPrediction:
+        """Use supervised candidates first while preserving fallback model text."""
+        normalized_prompt = " ".join(grounding_prompt.strip().split())
+        if not normalized_prompt:
+            raise ValueError("Grounding prompt override cannot be empty.")
+        return _apply_spatial_query_constraints(
+            self._localize(
+                image_path,
+                query,
+                subject_roi=subject_roi,
+                auto_subject_roi=auto_subject_roi,
+                garment_prediction=None,
+                fallback_grounding_prompt=normalized_prompt,
+            ),
+            query,
         )
 
     def localize_with_garment_prediction(
@@ -411,12 +444,16 @@ class HybridRegionLocalizationService:
         auto_subject_roi: bool = True,
     ) -> RegionLocalizationPrediction:
         """Reuse an existing 3.1.1 result for garment-derived regions."""
-        return self._localize(
-            image_path,
+        return _apply_spatial_query_constraints(
+            self._localize(
+                image_path,
+                query,
+                subject_roi=subject_roi,
+                auto_subject_roi=auto_subject_roi,
+                garment_prediction=garment_prediction,
+                fallback_grounding_prompt=None,
+            ),
             query,
-            subject_roi=subject_roi,
-            auto_subject_roi=auto_subject_roi,
-            garment_prediction=garment_prediction,
         )
 
     def _localize(
@@ -427,6 +464,7 @@ class HybridRegionLocalizationService:
         subject_roi: SegmentationSubjectROI | None,
         auto_subject_roi: bool,
         garment_prediction: SegmentationPrediction | None,
+        fallback_grounding_prompt: str | None,
     ) -> RegionLocalizationPrediction:
         """Route one query through supervised, derived, or fallback masks."""
         prompt = _resolve_prompt_or_error(query)
@@ -575,6 +613,19 @@ class HybridRegionLocalizationService:
                             effective_garment_prediction.subject_roi_source
                         ),
                     )
+        localized_with_prompt = getattr(
+            self.fallback_service,
+            "localize_with_grounding_prompt",
+            None,
+        )
+        if fallback_grounding_prompt is not None and callable(localized_with_prompt):
+            return localized_with_prompt(
+                image_path,
+                query,
+                fallback_grounding_prompt,
+                subject_roi=subject_roi,
+                auto_subject_roi=auto_subject_roi,
+            )
         return self.fallback_service.localize(
             image_path,
             query,
@@ -607,6 +658,48 @@ def _resolve_prompt_or_error(query: str) -> LocalizationPrompt:
         return resolve_localization_prompt(query)
     except ValueError as error:
         raise InvalidImageInputError(str(error)) from error
+
+
+def _apply_spatial_query_constraints(
+    prediction: RegionLocalizationPrediction,
+    query: str,
+) -> RegionLocalizationPrediction:
+    """Select one image-coordinate candidate for explicit left/right/up/down."""
+    try:
+        constraints = resolve_localization_query_constraints(query)
+    except ValueError as error:
+        raise InvalidImageInputError(str(error)) from error
+    if (
+        constraints.horizontal is None
+        and constraints.vertical is None
+        or len(prediction.regions) <= 1
+    ):
+        return prediction
+    selected = min(
+        prediction.regions,
+        key=lambda region: _spatial_candidate_rank(region, constraints),
+    )
+    return prediction.model_copy(update={"regions": [selected]})
+
+
+def _spatial_candidate_rank(
+    region: LocalizedRegion,
+    constraints: LocalizationQueryConstraints,
+) -> tuple[float, float, float]:
+    """Rank image-coordinate centers, using confidence only as a stable tie break."""
+    center_x = (region.box.x_min + region.box.x_max) / 2.0
+    center_y = (region.box.y_min + region.box.y_max) / 2.0
+    horizontal_rank = (
+        center_x
+        if constraints.horizontal == "left"
+        else -center_x if constraints.horizontal == "right" else 0.0
+    )
+    vertical_rank = (
+        center_y
+        if constraints.vertical == "upper"
+        else -center_y if constraints.vertical == "lower" else 0.0
+    )
+    return horizontal_rank, vertical_rank, -region.confidence
 
 
 def _supervised_labels_for_prompt(

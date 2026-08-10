@@ -13,6 +13,7 @@ from fashion_semantic_parser.dao.localization.taxonomy import (
     PRD_LOCALIZATION_REGION_COVERAGE,
     map_fashionpedia_part_category,
     resolve_localization_prompt,
+    resolve_localization_query_constraints,
 )
 
 
@@ -80,6 +81,29 @@ def test_resolve_localization_prompt_preserves_unknown_free_form_text() -> None:
 
     assert resolved.region_label == "custom"
     assert resolved.grounding_prompt == "silver logo near chest"
+
+
+@pytest.mark.parametrize(
+    ("query", "horizontal", "vertical"),
+    [
+        ("衣服左边的袖口", "left", None),
+        ("the right pocket", "right", None),
+        ("最上面的扣子", None, "upper"),
+        ("the lower zipper", None, "lower"),
+        ("left and right cuffs", None, None),
+        ("the bright zipper", None, None),
+    ],
+)
+def test_resolve_localization_query_constraints(
+    query: str,
+    horizontal: str | None,
+    vertical: str | None,
+) -> None:
+    """Spatial parsing should retain unambiguous modifiers without substrings."""
+    constraints = resolve_localization_query_constraints(query)
+
+    assert constraints.horizontal == horizontal
+    assert constraints.vertical == vertical
 
 
 def test_convert_fashionpedia_parts_preserves_masks_and_prompt_metadata(

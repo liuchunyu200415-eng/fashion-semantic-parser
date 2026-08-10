@@ -7,7 +7,11 @@ import numpy as np
 import pytest
 
 from fashion_semantic_parser.common.exceptions import ModelNotReadyError
-from fashion_semantic_parser.models.localization import RegionLocalizationPrediction
+from fashion_semantic_parser.models.localization import (
+    LocalizationBoundingBox,
+    LocalizedRegion,
+    RegionLocalizationPrediction,
+)
 from fashion_semantic_parser.models.segmentation import (
     SegmentationBoundingBox,
     SegmentationInstance,
@@ -99,6 +103,41 @@ class _FakeFallbackLocalizationService:
             image_path=image_path,
             query=query,
             regions=[],
+        )
+
+
+class _PromptAwareFallbackLocalizationService(_FakeFallbackLocalizationService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.prompt_calls: list[tuple[str, str, str]] = []
+
+    def localize_with_grounding_prompt(
+        self,
+        image_path: str,
+        query: str,
+        grounding_prompt: str,
+        subject_roi: SegmentationSubjectROI | None = None,
+        auto_subject_roi: bool = True,
+    ) -> RegionLocalizationPrediction:
+        self.prompt_calls.append((image_path, query, grounding_prompt))
+        return RegionLocalizationPrediction(
+            image_path=image_path,
+            query=query,
+            regions=[
+                LocalizedRegion(
+                    region_label="custom",
+                    matched_text=grounding_prompt,
+                    confidence=0.7,
+                    box=LocalizationBoundingBox(
+                        x_min=10,
+                        y_min=20,
+                        x_max=20,
+                        y_max=30,
+                    ),
+                    mask=[],
+                )
+            ],
+            subject_roi=subject_roi,
         )
 
 
@@ -459,6 +498,108 @@ def test_supervised_part_localization_expands_generic_decoration_query() -> None
     )
 
     assert [region.region_label for region in result.regions] == ["ruffle"]
+
+
+def test_supervised_part_localization_applies_left_and_right_constraints() -> None:
+    """Full-query spatial modifiers should select one known-part candidate."""
+
+    class _TwoPocketSegmentationService(_FakePartSegmentationService):
+        def segment(
+            self,
+            image_path: str,
+            subject_roi: SegmentationSubjectROI | None = None,
+            auto_subject_roi: bool = False,
+        ) -> SegmentationPrediction:
+            self.calls.append((image_path, subject_roi, auto_subject_roi))
+            return SegmentationPrediction(
+                image_path=image_path,
+                instances=[
+                    _rect_part_instance("pocket", 6, 0.8, (10, 30, 30, 60)),
+                    _rect_part_instance("pocket", 6, 0.9, (70, 30, 90, 60)),
+                ],
+            )
+
+    service = Mask2FormerPartLocalizationService(
+        segmentation_service=_TwoPocketSegmentationService()
+    )
+
+    both = service.localize("data/example.jpg", "衣服的口袋", auto_subject_roi=False)
+    left = service.localize(
+        "data/example.jpg",
+        "衣服左边的口袋",
+        auto_subject_roi=False,
+    )
+    right = service.localize(
+        "data/example.jpg",
+        "衣服右侧的口袋",
+        auto_subject_roi=False,
+    )
+
+    assert len(both.regions) == 2
+    assert left.regions[0].box.x_min == 10.0
+    assert right.regions[0].box.x_min == 70.0
+    assert left.query == "衣服左边的口袋"
+    assert right.query == "衣服右侧的口袋"
+
+
+def test_supervised_part_localization_applies_lower_constraint() -> None:
+    """A lower modifier should select the candidate with the largest image y."""
+
+    class _TwoZipperSegmentationService(_FakePartSegmentationService):
+        def segment(
+            self,
+            image_path: str,
+            subject_roi: SegmentationSubjectROI | None = None,
+            auto_subject_roi: bool = False,
+        ) -> SegmentationPrediction:
+            return SegmentationPrediction(
+                image_path=image_path,
+                instances=[
+                    _rect_part_instance("zipper", 9, 0.9, (40, 10, 50, 30)),
+                    _rect_part_instance("zipper", 9, 0.8, (40, 70, 50, 90)),
+                ],
+            )
+
+    result = Mask2FormerPartLocalizationService(
+        segmentation_service=_TwoZipperSegmentationService()
+    ).localize(
+        "data/example.jpg",
+        "下面的拉链",
+        auto_subject_roi=False,
+    )
+
+    assert len(result.regions) == 1
+    assert result.regions[0].box.y_min == 70.0
+
+
+def test_hybrid_preserves_explicit_grounding_prompt_for_unknown_query() -> None:
+    """Unknown language must still reach the open-vocabulary fallback intact."""
+    fallback = _PromptAwareFallbackLocalizationService()
+    service = HybridRegionLocalizationService(
+        Mask2FormerPartLocalizationService(
+            segmentation_service=_FakePartSegmentationService()
+        ),
+        fallback,
+    )
+
+    result = service.localize_with_grounding_prompt(
+        "data/example.jpg",
+        "胸前的白色标志",
+        "the white logo on the chest of the garment",
+        auto_subject_roi=False,
+    )
+
+    assert fallback.prompt_calls == [
+        (
+            "data/example.jpg",
+            "胸前的白色标志",
+            "the white logo on the chest of the garment",
+        )
+    ]
+    assert result.query == "胸前的白色标志"
+    assert result.regions[0].matched_text == (
+        "the white logo on the chest of the garment"
+    )
 
 
 def test_hybrid_localization_derives_cuff_from_supervised_sleeve() -> None:

@@ -11,6 +11,8 @@ from typing import Any
 import numpy as np
 
 DEFAULT_CONFIG = "configs/localization_grounded_sam_hq.yaml"
+DEFAULT_PART_CONFIG = "configs/localization_mask2former_parts_deployment.yaml"
+DEFAULT_GARMENT_CONFIG = "configs/segmentation_mask2former_deployment.yaml"
 DEFAULT_OUTPUT_DIR = "outputs/localization/referring_smoke"
 
 
@@ -27,12 +29,19 @@ def parse_args() -> argparse.Namespace:
     """Parse one manifest-driven referring-expression prediction run."""
     parser = argparse.ArgumentParser(
         description=(
-            "Run full referring expressions through one reusable Grounding "
-            "DINO + SAM-HQ service and save one response per case."
+            "Run full referring expressions through a reusable open-vocabulary "
+            "or hybrid candidate service and save one response per case."
         )
     )
     parser.add_argument("--manifest", required=True)
+    parser.add_argument(
+        "--backend",
+        choices=("grounded_sam_hq", "hybrid"),
+        default="grounded_sam_hq",
+    )
     parser.add_argument("--config", default=DEFAULT_CONFIG)
+    parser.add_argument("--part-config", default=DEFAULT_PART_CONFIG)
+    parser.add_argument("--garment-config", default=DEFAULT_GARMENT_CONFIG)
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--roi-mode", choices=("auto", "full"), default="auto")
     parser.add_argument("--progress-every", type=int, default=1)
@@ -57,6 +66,11 @@ def main() -> None:
     )
     from fashion_semantic_parser.service.region_localization import (
         GroundedSAMHQRegionLocalizationService,
+        HybridRegionLocalizationService,
+        Mask2FormerPartLocalizationService,
+    )
+    from fashion_semantic_parser.service.segmentation_runtime import (
+        GarmentSegmentationService,
     )
 
     if args.progress_every < 1:
@@ -82,10 +96,20 @@ def main() -> None:
         raise FileNotFoundError(
             f"Referring smoke images are missing: {sorted(set(missing_images))}"
         )
-    service = GroundedSAMHQRegionLocalizationService(
+    fallback_service = GroundedSAMHQRegionLocalizationService(
         args.config,
         settings_overrides=settings_overrides,
     )
+    if args.backend == "hybrid":
+        service: Any = HybridRegionLocalizationService(
+            Mask2FormerPartLocalizationService(args.part_config),
+            fallback_service,
+            garment_segmentation_service=GarmentSegmentationService(
+                args.garment_config
+            ),
+        )
+    else:
+        service = fallback_service
 
     response_files: dict[str, str] = {}
     latencies: list[float] = []
@@ -157,7 +181,10 @@ def main() -> None:
         "benchmark_scope": "open_language_feasibility_smoke",
         "manifest": to_project_relative_path(manifest_path),
         "manifest_name": manifest.name,
+        "backend": args.backend,
         "config": args.config,
+        "part_config": args.part_config if args.backend == "hybrid" else None,
+        "garment_config": args.garment_config if args.backend == "hybrid" else None,
         "roi_mode": args.roi_mode,
         "settings_overrides": settings_overrides,
         "case_count": total,

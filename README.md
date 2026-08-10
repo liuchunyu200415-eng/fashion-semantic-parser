@@ -10,6 +10,8 @@ PRD 3.1.2 语言引导局部区域定位的第一版端到端工程链路已经�
 
 导师反馈后，3.1.2 的最终任务边界已修正为开放语言指代表达定位，而不是用自然语言选择固定 N 类部位。现有 19 类和 Hybrid 路径保留为辅助基线；`targeted_3000` 仍是最佳固定类别实验模型（AP `10.30`、宏 Recall50 `42.52%`、F1 `35.29%`），类别加权模型未超过它并已停止。下一阶段使用 `data/benchmarks/localization/referring_smoke_v1.template.json` 建立包含部件、方位、属性、关系及新部件的查询级验证集；`scripts/prepare_referring_smoke_fashionpedia.py` 可从当前 Fashionpedia validation 标注和 `test/` 图片目录生成待复核的 20 条候选清单。基线以完整表达运行开放词汇 Grounding + SAM-HQ，并将功能 smoke 与 PRD `92%` 正式验收继续分开。
 
+首轮真实开放词汇 smoke 已完成：4 条带 Fashionpedia GT 的查询在 Mask IoU `0.50` 下为 `0/4`，完整表达、名词提示和人物 ROI 都没有解决拉链与口袋的候选召回。领口候选 Box IoU 达到 `90.77%`，但 SAM-HQ Mask IoU 只有 `45.82%`。因此后续停止继续调 Grounding 阈值和 ROI，改用 `targeted_3000` 作为已知部件候选生成器，并让完整查询中的左右、上下约束进行候选筛选；未知部件仍走开放词汇 fallback，属性和关系重排序尚未完成。
+
 分割服务入口为 `POST /v1/segment`，局部定位入口为 `POST /v1/localize`。`POST /v1/query` 默认启用自动人物 ROI，一般服饰查询返回 3.1.1 分割结果，已知局部部位查询同时返回 3.1.2 定位结果；属性提取和最终问答仍属于后续 PRD 模块，不能由当前分割或定位接口替代。
 
 ## 目录结构
