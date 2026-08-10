@@ -1177,3 +1177,28 @@ Mask2Former auxiliary candidate generator; `--box-threshold` remains the
 Grounding DINO threshold. Compare best Mask/Box IoU before changing any spatial
 reranking rule. If the unfiltered low-threshold candidates still have poor IoU,
 stop threshold tuning and replace or augment the candidate generator.
+
+The bounded `0.05` diagnostic reached that stopping condition. It increased the
+right-pocket candidates from `2` to `11` and the lower-zipper candidates from
+`1` to `6`, but did not produce a reliable language-selected result:
+
+| Case | Unfiltered best Mask/Box IoU | Spatially selected Mask/Box IoU |
+|---|---:|---:|
+| right pocket | `40.92 / 78.80` | `39.17 / 39.84` |
+| lower zipper | `28.22 / 20.64` | `6.63 / 0.83` |
+
+The best right-pocket candidate had confidence `0.052`, while the slightly more
+rightward fragment selected by the coordinate rule had confidence `0.215`.
+Therefore neither a confidence cutoff nor an extreme-coordinate rule can select
+the correct candidate consistently. The zipper set still contained no usable
+candidate. Further fixed-part threshold and handcrafted spatial-rank tuning is
+frozen: it would fit these two cases without addressing arbitrary referring
+expressions.
+
+The next model-direction smoke must use a text-prompted open-vocabulary
+segmenter as the primary candidate generator.
+[SAM 3](https://github.com/facebookresearch/sam3) is a candidate because its
+official image interface accepts text prompts and returns masks, boxes, and
+scores directly. This is an evaluation direction only; checkpoint access,
+runtime compatibility, fashion-domain performance, relation handling, and the
+PRD `92%` target remain unverified.
