@@ -1195,16 +1195,18 @@ candidate. Further fixed-part threshold and handcrafted spatial-rank tuning is
 frozen: it would fit these two cases without addressing arbitrary referring
 expressions.
 
-The next model-direction smoke must use a text-prompted open-vocabulary
-segmenter as the primary candidate generator.
-[SAM 3](https://github.com/facebookresearch/sam3) is a candidate because its
-official image interface accepts text prompts and returns masks, boxes, and
-scores directly. This is an evaluation direction only; checkpoint access,
-runtime compatibility, fashion-domain performance, relation handling, and the
-PRD `92%` target remain unverified.
+The next model-direction smoke must follow the published PRD stack rather than
+introducing an unlisted foundation model. The primary path is therefore:
 
-The optional `scripts/predict_referring_sam3.py` runner uses the Transformers
-SAM 3 interface in a separate Python environment. It does not change the
-application backend. Its saved responses are compatible with
-`scripts/evaluate_referring_localization.py`, retain empty predictions as
-misses, and report model-load time separately from request latency.
+1. use DINOv2 to encode dense image regions
+2. encode the complete natural-language expression and learn the cross-modal
+   projection required for region-text similarity matching
+3. retain multiple high-recall region proposals before applying spatial,
+   attribute, and relation constraints
+4. pass the selected proposal box to SAM-HQ for the required output Mask and Box
+
+The existing Grounding DINO and fixed-part Hybrid results remain reproducible
+historical baselines only. They are not the PRD delivery backend because the
+published technical plan names DINOv2 region features, SAM-HQ, Python 3.10.12,
+and later TensorRT optimization. No replacement model may enter the main path
+without an approved PRD revision.
