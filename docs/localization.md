@@ -1202,3 +1202,9 @@ official image interface accepts text prompts and returns masks, boxes, and
 scores directly. This is an evaluation direction only; checkpoint access,
 runtime compatibility, fashion-domain performance, relation handling, and the
 PRD `92%` target remain unverified.
+
+The optional `scripts/predict_referring_sam3.py` runner uses the Transformers
+SAM 3 interface in a separate Python environment. It does not change the
+application backend. Its saved responses are compatible with
+`scripts/evaluate_referring_localization.py`, retain empty predictions as
+misses, and report model-load time separately from request latency.
