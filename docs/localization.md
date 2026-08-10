@@ -1219,9 +1219,10 @@ All subsequent 3.1.2 work uses the published PRD as a hard constraint:
   region-text similarity matching, and SAM-HQ Mask refinement
 - supporting stack: PyTorch, OpenCV, and Mask2Former where a proposal or
   auxiliary segmentation stage is required
-- data boundary: DeepFashion2 is the named local-region training source;
-  Fashionpedia experiments remain historical evidence and cannot replace the
-  formal PRD dataset or acceptance set
+- data boundary: DeepFashion2 and Fashionpedia may both support training,
+  development validation, part supervision, and query-Mask construction;
+  neither dataset's native category metric replaces the independent manually
+  annotated referring-expression acceptance set
 - runtime boundary: Python 3.10.12 first, followed by ONNX Runtime and
   TensorRT 8.6.1 optimization
 - accuracy boundary: at least `92%` on a manually annotated localization test
