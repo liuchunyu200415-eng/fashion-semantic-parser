@@ -1325,13 +1325,14 @@ decision, not a claim that the PRD mandates PyTorch 2.1.2. Create the isolated
 foundation-training environment from the repository root:
 
 ```bash
-touch /tmp/fashion-prd-312-condarc.yaml
-CONDARC=/tmp/fashion-prd-312-condarc.yaml \
-  conda env create -f environment/prd_3_1_2_training.yaml
-source /root/miniconda3/etc/profile.d/conda.sh
-conda activate fashion-prd-312
-python scripts/check_prd_312_training_env.py
+bash scripts/setup_prd_312_training_env.sh
 ```
+
+The setup script uses a temporary regular Conda configuration so a malformed
+user mirror cannot affect dependency resolution. It repairs a partially
+created `fashion-prd-312` environment with `conda env update`, or creates it
+when absent, and then runs the readiness check through `conda run`. Its internal
+error handling exits only the script and cannot close the caller's terminal.
 
 The check requires exact Python `3.10.12`, the pinned CUDA-enabled PyTorch,
 OpenCV, and `pycocotools`. This is only the foundation-training gate. Separate
