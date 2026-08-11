@@ -1,0 +1,230 @@
+"""Extract Mask-pooled local-region features with the official DINOv2 model."""
+
+from contextlib import nullcontext
+from pathlib import Path
+from typing import Any, Literal, cast
+
+import cv2
+import numpy as np
+import yaml
+from pydantic import BaseModel, Field, model_validator
+
+from fashion_semantic_parser.common.paths import resolve_project_path
+
+
+class DinoV2RegionEncoderSettings(BaseModel):
+    """Validated DINOv2 region-feature smoke configuration."""
+
+    model_name: Literal["dinov2_vits14"] = "dinov2_vits14"
+    torch_hub_repo: Literal["facebookresearch/dinov2"] = "facebookresearch/dinov2"
+    input_size: int = Field(default=518, ge=14)
+    patch_size: Literal[14] = 14
+    feature_dimension: Literal[384] = 384
+    device: Literal["cuda", "cpu"] = "cuda"
+    precision: Literal["fp16", "fp32"] = "fp16"
+
+    @model_validator(mode="after")
+    def validate_patch_grid(self) -> "DinoV2RegionEncoderSettings":
+        """Require a square input that maps to an exact patch-token grid."""
+        if self.input_size % self.patch_size != 0:
+            raise ValueError("DINOv2 input_size must be divisible by patch_size.")
+        if self.device == "cpu" and self.precision == "fp16":
+            raise ValueError("DINOv2 fp16 smoke requires the CUDA device.")
+        return self
+
+
+class DinoV2RegionEncoder:
+    """Frozen official DINOv2 backbone with independent Mask pooling."""
+
+    def __init__(self, settings: DinoV2RegionEncoderSettings) -> None:
+        self.settings = settings
+        self._torch: Any | None = None
+        self._model: Any | None = None
+
+    def load(self) -> None:
+        """Load official pretrained weights through Meta's Torch Hub entrypoint."""
+        if self._model is not None:
+            return
+        try:
+            import torch  # type: ignore[import-not-found]
+        except ImportError as error:
+            raise RuntimeError(
+                "PyTorch is required for DINOv2 region encoding."
+            ) from error
+        if self.settings.device == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("DINOv2 CUDA smoke requested but CUDA is unavailable.")
+        model = torch.hub.load(
+            self.settings.torch_hub_repo,
+            self.settings.model_name,
+            source="github",
+            trust_repo=True,
+        )
+        self._model = model.eval().to(self.settings.device)
+        self._torch = torch
+
+    def encode(self, image_rgb: np.ndarray, target_masks: np.ndarray) -> np.ndarray:
+        """Return one unit-normalized DINOv2 feature per independent target Mask."""
+        self.load()
+        torch = self._torch
+        model = self._model
+        if torch is None or model is None:
+            raise RuntimeError("DINOv2 model did not initialize.")
+        image, masks = letterbox_image_and_masks(
+            image_rgb,
+            target_masks,
+            output_size=self.settings.input_size,
+        )
+        image_tensor = torch.from_numpy(image).to(
+            device=self.settings.device,
+            dtype=torch.float32,
+        )
+        image_tensor = image_tensor.permute(2, 0, 1).unsqueeze(0) / 255.0
+        mean = torch.tensor(
+            [0.485, 0.456, 0.406],
+            device=self.settings.device,
+        ).view(1, 3, 1, 1)
+        std = torch.tensor(
+            [0.229, 0.224, 0.225],
+            device=self.settings.device,
+        ).view(1, 3, 1, 1)
+        image_tensor = (image_tensor - mean) / std
+        occupancy_array = masks_to_patch_occupancy(
+            masks,
+            patch_size=self.settings.patch_size,
+        )
+        occupancy = torch.from_numpy(occupancy_array).to(
+            device=self.settings.device,
+            dtype=torch.bool,
+        )
+        grid_size = self.settings.input_size // self.settings.patch_size
+        occupancy = occupancy.reshape(occupancy.shape[0], -1)
+        if not torch.all(occupancy.any(dim=1)):
+            raise ValueError("At least one target does not occupy a DINOv2 patch.")
+
+        autocast_context = (
+            torch.autocast(device_type="cuda", dtype=torch.float16)
+            if self.settings.precision == "fp16"
+            else nullcontext()
+        )
+        with torch.inference_mode(), autocast_context:
+            output = model.forward_features(image_tensor)
+            patch_tokens = output["x_norm_patchtokens"][0]
+            if patch_tokens.shape != (
+                grid_size * grid_size,
+                self.settings.feature_dimension,
+            ):
+                raise ValueError(
+                    "Unexpected DINOv2 patch-token shape: "
+                    f"{tuple(patch_tokens.shape)}"
+                )
+            weights = occupancy.to(dtype=patch_tokens.dtype)
+            features = weights @ patch_tokens
+            features = features / weights.sum(dim=1, keepdim=True)
+            features = torch.nn.functional.normalize(features.float(), dim=1)
+        result: np.ndarray = np.asarray(features.cpu().numpy(), dtype=np.float32)
+        return result
+
+    def synchronize(self) -> None:
+        """Synchronize CUDA so smoke latency excludes queued GPU work."""
+        if (
+            self._torch is not None
+            and self.settings.device == "cuda"
+            and self._torch.cuda.is_available()
+        ):
+            self._torch.cuda.synchronize()
+
+
+def load_dinov2_region_settings(
+    config_path: str | Path = "configs/localization_dinov2_region.yaml",
+) -> DinoV2RegionEncoderSettings:
+    """Load one project-relative DINOv2 region configuration."""
+    path = resolve_project_path(config_path)
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return cast(
+        DinoV2RegionEncoderSettings,
+        DinoV2RegionEncoderSettings.model_validate(raw),
+    )
+
+
+def letterbox_image_and_masks(
+    image_rgb: np.ndarray,
+    target_masks: np.ndarray,
+    *,
+    output_size: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Resize image and Masks together while preserving their aspect ratio."""
+    image = np.asarray(image_rgb)
+    masks = np.asarray(target_masks)
+    if image.ndim != 3 or image.shape[2] != 3 or image.dtype != np.uint8:
+        raise ValueError("DINOv2 input image must be an HxWx3 uint8 RGB array.")
+    if masks.ndim != 3 or masks.shape[1:] != image.shape[:2] or not len(masks):
+        raise ValueError("Target Masks must be a non-empty NxHxW array.")
+    if output_size < 1:
+        raise ValueError("output_size must be positive.")
+    height, width = image.shape[:2]
+    scale = output_size / max(height, width)
+    resized_height = min(output_size, max(1, round(height * scale)))
+    resized_width = min(output_size, max(1, round(width * scale)))
+    resized_image = cv2.resize(
+        image,
+        (resized_width, resized_height),
+        interpolation=cv2.INTER_LINEAR,
+    )
+    resized_masks = np.stack(
+        [
+            cv2.resize(
+                np.asarray(mask != 0, dtype=np.uint8),
+                (resized_width, resized_height),
+                interpolation=cv2.INTER_NEAREST,
+            )
+            for mask in masks
+        ],
+        axis=0,
+    )
+    top = (output_size - resized_height) // 2
+    left = (output_size - resized_width) // 2
+    canvas = np.empty((output_size, output_size, 3), dtype=np.uint8)
+    canvas[:, :] = [124, 116, 104]
+    canvas[top : top + resized_height, left : left + resized_width] = resized_image
+    mask_canvas = np.zeros(
+        (len(masks), output_size, output_size),
+        dtype=np.uint8,
+    )
+    mask_canvas[
+        :,
+        top : top + resized_height,
+        left : left + resized_width,
+    ] = resized_masks
+    if not np.all(mask_canvas.any(axis=(1, 2))):
+        raise ValueError("Letterbox resize removed at least one target Mask.")
+    return canvas, mask_canvas
+
+
+def masks_to_patch_occupancy(
+    masks: np.ndarray,
+    *,
+    patch_size: int,
+) -> np.ndarray:
+    """Mark every DINOv2 patch touched by each target, including tiny parts."""
+    binary_masks = np.asarray(masks) != 0
+    if binary_masks.ndim != 3 or not len(binary_masks):
+        raise ValueError("Patch occupancy requires a non-empty NxHxW Mask array.")
+    if patch_size < 1:
+        raise ValueError("patch_size must be positive.")
+    _, height, width = binary_masks.shape
+    if height % patch_size != 0 or width % patch_size != 0:
+        raise ValueError("Mask dimensions must be divisible by patch_size.")
+    grid_height = height // patch_size
+    grid_width = width // patch_size
+    occupancy: np.ndarray = (
+        binary_masks.reshape(
+            len(binary_masks),
+            grid_height,
+            patch_size,
+            grid_width,
+            patch_size,
+        )
+        .any(axis=4)
+        .any(axis=2)
+    )
+    return occupancy

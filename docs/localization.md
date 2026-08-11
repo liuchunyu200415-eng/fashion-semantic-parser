@@ -1339,3 +1339,34 @@ OpenCV, and `pycocotools`. This is only the foundation-training gate. Separate
 checks must still establish the official DINOv2 model, the selected text encoder
 from the PRD stack, SAM-HQ `1.0+`, ONNX Runtime `1.17`, and TensorRT `8.6.1`
 before model or deployment compliance can be claimed.
+
+### DINOv2 Region Feature Smoke
+
+The first PRD-main-path model smoke uses Meta's official `dinov2_vits14` Torch
+Hub backbone. ViT-S/14 is the latency-oriented starting point: it has 21 million
+parameters, patch size 14, and 384-dimensional features. This is an experimental
+implementation choice, not an accuracy result or a commitment to the final
+backbone. The official model and weights use Apache License 2.0.
+
+Images and source target Masks receive the same aspect-ratio-preserving 518x518
+letterbox transform. Padding uses the ImageNet mean rather than black pixels.
+Every Mask is converted to a 37x37 occupancy grid by marking any patch touched
+by the target, so small parts do not disappear through nearest sampling. The
+corresponding normalized DINOv2 patch tokens are mean-pooled and L2-normalized,
+with broad multi-target queries retaining one independent feature per target.
+
+Run the bounded GPU smoke in the exact PRD foundation environment:
+
+```bash
+conda run -n fashion-prd-312 \
+  python -u scripts/smoke_dinov2_region_features.py \
+  --split train \
+  --limit 4
+```
+
+The first run downloads the official Torch Hub repository and ViT-S/14 weights.
+Model download/load time, first inference, and warm inference are reported
+separately. The final line deliberately remains
+`prd_localization_30ms_passed: not_evaluated`: region feature extraction alone
+does not include text encoding, similarity selection, proposal generation, or
+SAM-HQ, and therefore cannot be compared with the complete 30 ms requirement.

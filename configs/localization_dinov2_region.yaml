@@ -1,0 +1,7 @@
+model_name: dinov2_vits14
+torch_hub_repo: facebookresearch/dinov2
+input_size: 518
+patch_size: 14
+feature_dimension: 384
+device: cuda
+precision: fp16
