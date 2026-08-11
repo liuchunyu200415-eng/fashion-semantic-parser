@@ -22,6 +22,7 @@ class BgeM3TextEncoderSettings(BaseModel):
     weights_size_bytes: int = Field(default=2271064456, ge=1)
     embedding_dimension: Literal[1024] = 1024
     max_length: int = Field(default=64, ge=4, le=512)
+    batch_size: int = Field(default=32, ge=1, le=256)
     device: Literal["cuda", "cpu"] = "cuda"
     precision: Literal["fp16", "fp32"] = "fp16"
 
@@ -82,7 +83,7 @@ class BgeM3TextEncoder:
             raise RuntimeError("BGE-M3 model did not initialize.")
         embeddings = self._model.encode(
             validated_queries,
-            batch_size=len(validated_queries),
+            batch_size=min(self.settings.batch_size, len(validated_queries)),
             show_progress_bar=False,
             convert_to_numpy=True,
             normalize_embeddings=True,

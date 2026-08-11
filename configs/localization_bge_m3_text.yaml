@@ -4,5 +4,6 @@ model_path: models/checkpoints/localization/bge-m3
 weights_size_bytes: 2271064456
 embedding_dimension: 1024
 max_length: 64
+batch_size: 32
 device: cuda
 precision: fp16

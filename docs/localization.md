@@ -1613,3 +1613,9 @@ from `87.07%`/`84.48%` to `88.79%`/`86.21%`. The project alignment config now
 stores `spatial_rerank_weight: 0.10`; `--spatial-weight 0` remains the explicit
 ablation path. This is still Fashionpedia development evidence using oracle
 part Masks, not the independent manual PRD acceptance result.
+
+The next disjoint evaluation contains several hundred complete queries. BGE-M3
+encoding therefore uses an explicit maximum batch size of `32` from
+`configs/localization_bge_m3_text.yaml` instead of using the entire query set as
+one CUDA batch. Smaller smokes still run as one batch. This is a memory-safety
+bound for feature extraction, not a throughput or PRD latency optimization.
