@@ -1,5 +1,6 @@
-"""Train a lightweight projection between text and DINOv2 region features."""
+"""Train and evaluate projection between text and DINOv2 region features."""
 
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, cast
 
@@ -55,6 +56,77 @@ def build_text_projection(settings: RegionTextAlignmentSettings) -> Any:
         torch.nn.GELU(),
         torch.nn.Linear(settings.hidden_dimension, settings.region_dimension),
     )
+
+
+def load_text_projection_checkpoint(
+    checkpoint_path: str | Path,
+    *,
+    device: str,
+) -> tuple[Any, RegionTextAlignmentSettings]:
+    """Load one project-owned projection checkpoint with strict metadata checks."""
+    try:
+        import torch  # type: ignore[import-not-found]
+    except ImportError as error:
+        raise RuntimeError("PyTorch is required for region-text alignment.") from error
+    path = resolve_project_path(checkpoint_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Alignment checkpoint does not exist: {path}")
+    payload = torch.load(path, map_location=device)
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        raise ValueError("Unsupported region-text alignment checkpoint schema.")
+    if payload.get("base_encoders_frozen") is not True:
+        raise ValueError("Alignment checkpoint must record frozen base encoders.")
+    if payload.get("dinov2_model") != "dinov2_vits14":
+        raise ValueError("Alignment checkpoint has an unexpected DINOv2 model.")
+    if payload.get("text_model") != "BAAI/bge-m3":
+        raise ValueError("Alignment checkpoint has an unexpected text model.")
+    settings = RegionTextAlignmentSettings.model_validate(
+        payload.get("alignment_settings")
+    )
+    state_dict = payload.get("state_dict")
+    if not isinstance(state_dict, dict):
+        raise ValueError("Alignment checkpoint state_dict is missing or invalid.")
+    projection = build_text_projection(settings).to(device)
+    projection.load_state_dict(state_dict, strict=True)
+    return projection.eval(), settings
+
+
+def extract_unique_region_features(
+    items: list[Any],
+    encoder: Any,
+) -> dict[int, np.ndarray]:
+    """Encode each unique source Mask once, grouped by source image."""
+    if not items:
+        raise ValueError("Region feature extraction requires at least one item.")
+    grouped: dict[int, dict[str, Any]] = defaultdict(
+        lambda: {"image_rgb": None, "masks": {}}
+    )
+    for item in items:
+        image_id = item.sample.source_image_id
+        group = grouped[image_id]
+        if group["image_rgb"] is None:
+            group["image_rgb"] = item.image_rgb
+        elif not np.array_equal(group["image_rgb"], item.image_rgb):
+            raise ValueError(f"Image {image_id} decoded inconsistently.")
+        for annotation_id, mask in zip(
+            item.source_annotation_ids,
+            item.target_masks,
+        ):
+            existing = group["masks"].get(annotation_id)
+            if existing is not None and not np.array_equal(existing, mask):
+                raise ValueError(f"Annotation {annotation_id} decoded inconsistently.")
+            group["masks"][annotation_id] = mask
+
+    features_by_id: dict[int, np.ndarray] = {}
+    for group in grouped.values():
+        annotation_ids = sorted(group["masks"])
+        masks = np.stack([group["masks"][value] for value in annotation_ids])
+        features = encoder.encode(group["image_rgb"], masks)
+        if len(features) != len(annotation_ids):
+            raise ValueError("Region encoder returned an unexpected row count.")
+        for annotation_id, feature in zip(annotation_ids, features):
+            features_by_id[annotation_id] = np.asarray(feature, dtype=np.float32)
+    return features_by_id
 
 
 def build_positive_region_mask(
@@ -147,3 +219,161 @@ def positive_top1_accuracy(logits: Any, positive_mask: Any) -> float:
         row_indices, top_indices
     ]
     return float(correct.float().mean().item())
+
+
+def evaluate_image_candidate_retrieval(
+    *,
+    query_ids: list[str],
+    projected_text_features: np.ndarray,
+    query_image_ids: list[int],
+    query_target_ids: list[tuple[int, ...]],
+    query_dimensions: list[tuple[str, ...]],
+    query_languages: list[str],
+    region_annotation_ids: list[int],
+    region_image_ids: list[int],
+    region_features: np.ndarray,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Evaluate query-to-region ranking within each selected source image."""
+    text = _normalize_numpy_features(projected_text_features, name="text")
+    regions = _normalize_numpy_features(region_features, name="region")
+    query_count = len(query_ids)
+    query_fields = (
+        query_image_ids,
+        query_target_ids,
+        query_dimensions,
+        query_languages,
+    )
+    if any(len(values) != query_count for values in query_fields):
+        raise ValueError("Query retrieval metadata lengths must match query_ids.")
+    if text.shape[0] != query_count:
+        raise ValueError("Text feature rows must match query_ids.")
+    if text.shape[1] != regions.shape[1]:
+        raise ValueError("Projected text and region dimensions must match.")
+    if len(region_annotation_ids) != regions.shape[0] or len(region_image_ids) != len(
+        region_annotation_ids
+    ):
+        raise ValueError("Region metadata lengths must match region feature rows.")
+    if len(region_annotation_ids) != len(set(region_annotation_ids)):
+        raise ValueError("Region annotation IDs must be unique during evaluation.")
+
+    candidates_by_image: dict[int, list[int]] = defaultdict(list)
+    for region_index, image_id in enumerate(region_image_ids):
+        candidates_by_image[image_id].append(region_index)
+    cases: list[dict[str, Any]] = []
+    for query_index, query_id in enumerate(query_ids):
+        candidate_indices = candidates_by_image.get(query_image_ids[query_index], [])
+        if not candidate_indices:
+            raise ValueError(f"Query {query_id} has no same-image candidate regions.")
+        target_ids = set(query_target_ids[query_index])
+        if not target_ids:
+            raise ValueError(f"Query {query_id} has no target annotations.")
+        candidate_ids = [region_annotation_ids[index] for index in candidate_indices]
+        if not target_ids.issubset(candidate_ids):
+            missing = sorted(target_ids.difference(candidate_ids))
+            raise ValueError(
+                f"Query {query_id} is missing target candidates: {missing}"
+            )
+        scores = regions[candidate_indices] @ text[query_index]
+        ranked_offsets = np.argsort(-scores, kind="stable")
+        ranked_ids = [candidate_ids[offset] for offset in ranked_offsets]
+        top1_correct = ranked_ids[0] in target_ids
+        target_count = len(target_ids)
+        exact_set = set(ranked_ids[:target_count]) == target_ids
+        first_positive_rank = next(
+            rank
+            for rank, annotation_id in enumerate(ranked_ids, start=1)
+            if annotation_id in target_ids
+        )
+        candidate_count = len(candidate_ids)
+        cases.append(
+            {
+                "query_id": query_id,
+                "source_image_id": query_image_ids[query_index],
+                "dimensions": list(query_dimensions[query_index]),
+                "language": query_languages[query_index],
+                "target_annotation_ids": sorted(target_ids),
+                "candidate_count": candidate_count,
+                "negative_candidate_count": candidate_count - target_count,
+                "competitive": candidate_count > target_count,
+                "top1_annotation_id": ranked_ids[0],
+                "top1_correct": top1_correct,
+                "exact_set_at_target_count": exact_set,
+                "reciprocal_rank": 1.0 / first_positive_rank,
+            }
+        )
+
+    dimensions = sorted(
+        {dimension for case in cases for dimension in case["dimensions"]}
+    )
+    languages = sorted({str(case["language"]) for case in cases})
+    summary = _aggregate_retrieval_cases(cases)
+    summary["by_dimension"] = {
+        dimension: _aggregate_retrieval_cases(
+            [case for case in cases if dimension in case["dimensions"]]
+        )
+        for dimension in dimensions
+    }
+    summary["by_language"] = {
+        language: _aggregate_retrieval_cases(
+            [case for case in cases if case["language"] == language]
+        )
+        for language in languages
+    }
+    return summary, cases
+
+
+def _normalize_numpy_features(features: np.ndarray, *, name: str) -> np.ndarray:
+    """Validate and normalize one finite rank-two retrieval feature matrix."""
+    values = np.asarray(features, dtype=np.float32)
+    if values.ndim != 2 or not len(values):
+        raise ValueError(f"{name} features must be a non-empty rank-two array.")
+    if not np.all(np.isfinite(values)):
+        raise ValueError(f"{name} features must contain only finite values.")
+    norms = np.linalg.norm(values, axis=1, keepdims=True)
+    if np.any(norms <= 0.0):
+        raise ValueError(f"{name} features cannot contain a zero vector.")
+    result: np.ndarray = values / norms
+    return result
+
+
+def _aggregate_retrieval_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
+    """Return numerator-aware all-query and competitive-only ranking metrics."""
+    if not cases:
+        return {
+            "query_count": 0,
+            "top1_correct_count": 0,
+            "top1_accuracy": None,
+            "exact_set_correct_count": 0,
+            "exact_set_at_target_count_rate": None,
+            "mean_reciprocal_rank": None,
+            "competitive_query_count": 0,
+            "competitive_top1_correct_count": 0,
+            "competitive_top1_accuracy": None,
+            "competitive_exact_set_correct_count": 0,
+            "competitive_exact_set_at_target_count_rate": None,
+        }
+    competitive = [case for case in cases if case["competitive"]]
+    top1_count = sum(bool(case["top1_correct"]) for case in cases)
+    exact_set_count = sum(bool(case["exact_set_at_target_count"]) for case in cases)
+    competitive_top1_count = sum(bool(case["top1_correct"]) for case in competitive)
+    competitive_exact_set_count = sum(
+        bool(case["exact_set_at_target_count"]) for case in competitive
+    )
+    return {
+        "query_count": len(cases),
+        "top1_correct_count": top1_count,
+        "top1_accuracy": top1_count / len(cases),
+        "exact_set_correct_count": exact_set_count,
+        "exact_set_at_target_count_rate": exact_set_count / len(cases),
+        "mean_reciprocal_rank": sum(float(case["reciprocal_rank"]) for case in cases)
+        / len(cases),
+        "competitive_query_count": len(competitive),
+        "competitive_top1_correct_count": competitive_top1_count,
+        "competitive_top1_accuracy": (
+            competitive_top1_count / len(competitive) if competitive else None
+        ),
+        "competitive_exact_set_correct_count": competitive_exact_set_count,
+        "competitive_exact_set_at_target_count_rate": (
+            competitive_exact_set_count / len(competitive) if competitive else None
+        ),
+    }

@@ -1472,3 +1472,31 @@ serialization. They are not held-out localization accuracy: candidate-region
 generation, negative regions, validation retrieval, SAM-HQ refinement, the
 independent manual acceptance set, `92%` accuracy, and complete `30 ms` timing
 all remain pending.
+
+Evaluate the saved smoke head on the independent official validation split:
+
+```bash
+OMP_NUM_THREADS=1 \
+TOKENIZERS_PARALLELISM=false \
+TRANSFORMERS_OFFLINE=1 \
+HF_HUB_OFFLINE=1 \
+conda run -n fashion-prd-312 \
+  python -u scripts/evaluate_region_text_alignment.py \
+  --split validation \
+  --limit 8
+```
+
+This reports all-query and competitive-only Top-1 and exact-set-at-target-count
+rates. A query is competitive only when its selected image has at least one
+candidate region outside the ground-truth target set, preventing trivial
+single-candidate cases from inflating the result. Dimension and language
+breakdowns plus per-query audit rows are saved to `metrics.json` and
+`cases.json`.
+
+This first evaluator deliberately marks its candidate scope as
+`selected_query_target_union_per_image`: it ranks only the source regions
+referenced by the bounded query selection. It also marks full-image candidate
+coverage and mask localization as false. The next experiment must construct
+all same-image part/proposal negatives before these retrieval numbers can be
+used for model selection; even that retrieval experiment remains separate from
+manual Mask/Box localization acceptance and the PRD `92%` metric.

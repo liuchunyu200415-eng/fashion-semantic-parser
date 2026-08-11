@@ -5,9 +5,7 @@ import gc
 import json
 import sys
 import time
-from collections import defaultdict
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
@@ -66,6 +64,7 @@ def main() -> None:
     from fashion_semantic_parser.service.region_text_alignment import (
         build_positive_region_mask,
         build_text_projection,
+        extract_unique_region_features,
         load_region_text_alignment_settings,
         multi_positive_contrastive_loss,
         positive_top1_accuracy,
@@ -241,40 +240,6 @@ def main() -> None:
     )
     for key, value in metrics.items():
         print(f"{key}: {value}")
-
-
-def extract_unique_region_features(
-    items: list[Any],
-    encoder: Any,
-) -> dict[int, np.ndarray]:
-    """Encode each unique source Mask once, grouped by source image."""
-    grouped: dict[int, dict[str, Any]] = defaultdict(
-        lambda: {"image_rgb": None, "masks": {}}
-    )
-    for item in items:
-        image_id = item.sample.source_image_id
-        group = grouped[image_id]
-        if group["image_rgb"] is None:
-            group["image_rgb"] = item.image_rgb
-        elif not np.array_equal(group["image_rgb"], item.image_rgb):
-            raise ValueError(f"Image {image_id} decoded inconsistently.")
-        for annotation_id, mask in zip(
-            item.source_annotation_ids,
-            item.target_masks,
-        ):
-            existing = group["masks"].get(annotation_id)
-            if existing is not None and not np.array_equal(existing, mask):
-                raise ValueError(f"Annotation {annotation_id} decoded inconsistently.")
-            group["masks"][annotation_id] = mask
-
-    features_by_id: dict[int, np.ndarray] = {}
-    for group in grouped.values():
-        annotation_ids = sorted(group["masks"])
-        masks = np.stack([group["masks"][value] for value in annotation_ids])
-        features = encoder.encode(group["image_rgb"], masks)
-        for annotation_id, feature in zip(annotation_ids, features):
-            features_by_id[annotation_id] = np.asarray(feature, dtype=np.float32)
-    return features_by_id
 
 
 if __name__ == "__main__":
