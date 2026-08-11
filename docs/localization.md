@@ -1355,7 +1355,21 @@ by the target, so small parts do not disappear through nearest sampling. The
 corresponding normalized DINOv2 patch tokens are mean-pooled and L2-normalized,
 with broad multi-target queries retaining one independent feature per target.
 
-Run the bounded GPU smoke in the exact PRD foundation environment:
+Install the pinned official repository and weights. The setup uses Git SSH for
+the repository because Python HTTPS access to GitHub may be blocked on AutoDL;
+the weights use Meta's official CDN and support a resumed partial download:
+
+```bash
+bash scripts/setup_dinov2_region_model.sh
+```
+
+The pinned source commit is
+`7764ea0f912e53c92e82eb78a2a1631e92725fc8`, and the expected official
+ViT-S/14 weights size is `88,283,115` bytes. Runtime loading uses the local
+checkout and local weights only. It rejects an unpinned checkout or incomplete
+weights instead of falling back to a network download.
+
+Then run the bounded GPU smoke in the exact PRD foundation environment:
 
 ```bash
 conda run -n fashion-prd-312 \

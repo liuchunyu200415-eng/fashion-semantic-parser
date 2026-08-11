@@ -17,6 +17,13 @@ class DinoV2RegionEncoderSettings(BaseModel):
 
     model_name: Literal["dinov2_vits14"] = "dinov2_vits14"
     torch_hub_repo: Literal["facebookresearch/dinov2"] = "facebookresearch/dinov2"
+    repo_path: str = "external/dinov2"
+    repo_commit: str = Field(
+        default="7764ea0f912e53c92e82eb78a2a1631e92725fc8",
+        pattern=r"^[0-9a-f]{40}$",
+    )
+    weights_path: str = "models/checkpoints/localization/dinov2_vits14_pretrain.pth"
+    weights_size_bytes: int = Field(default=88283115, ge=1)
     input_size: int = Field(default=518, ge=14)
     patch_size: Literal[14] = 14
     feature_dimension: Literal[384] = 384
@@ -45,6 +52,9 @@ class DinoV2RegionEncoder:
         """Load official pretrained weights through Meta's Torch Hub entrypoint."""
         if self._model is not None:
             return
+        repo_path = resolve_project_path(self.settings.repo_path)
+        weights_path = resolve_project_path(self.settings.weights_path)
+        self._validate_local_assets(repo_path, weights_path)
         try:
             import torch  # type: ignore[import-not-found]
         except ImportError as error:
@@ -54,13 +64,40 @@ class DinoV2RegionEncoder:
         if self.settings.device == "cuda" and not torch.cuda.is_available():
             raise RuntimeError("DINOv2 CUDA smoke requested but CUDA is unavailable.")
         model = torch.hub.load(
-            self.settings.torch_hub_repo,
+            str(repo_path),
             self.settings.model_name,
-            source="github",
+            source="local",
             trust_repo=True,
+            weights=str(weights_path),
         )
         self._model = model.eval().to(self.settings.device)
         self._torch = torch
+
+    def _validate_local_assets(self, repo_path: Path, weights_path: Path) -> None:
+        """Reject missing, drifting, or incomplete official local assets."""
+        head_path = repo_path / ".git" / "HEAD"
+        if not head_path.is_file():
+            raise RuntimeError(
+                "Official DINOv2 checkout is missing; run "
+                "scripts/setup_dinov2_region_model.sh."
+            )
+        actual_commit = head_path.read_text(encoding="utf-8").strip()
+        if actual_commit != self.settings.repo_commit:
+            raise RuntimeError(
+                "DINOv2 checkout is not at the pinned commit: "
+                f"expected={self.settings.repo_commit} actual={actual_commit}"
+            )
+        if not weights_path.is_file():
+            raise RuntimeError(
+                "Official DINOv2 weights are missing; run "
+                "scripts/setup_dinov2_region_model.sh."
+            )
+        actual_size = weights_path.stat().st_size
+        if actual_size != self.settings.weights_size_bytes:
+            raise RuntimeError(
+                "DINOv2 weights have an unexpected size: "
+                f"expected={self.settings.weights_size_bytes} actual={actual_size}"
+            )
 
     def encode(self, image_rgb: np.ndarray, target_masks: np.ndarray) -> np.ndarray:
         """Return one unit-normalized DINOv2 feature per independent target Mask."""

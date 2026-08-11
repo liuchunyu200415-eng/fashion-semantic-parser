@@ -18,6 +18,8 @@ logs/
 tmp/
 
 # Large local assets
+external/*
+!external/.gitkeep
 data/raw/*
 !data/raw/.gitkeep
 data/processed/*
