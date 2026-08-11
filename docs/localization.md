@@ -1278,3 +1278,40 @@ training-data preparation only: DINOv2 alignment training, independent manual
 acceptance data, `92%` accuracy, and `30 ms` latency remain pending.
 The full converter prints one compact progress line per `1000` selected images;
 use `--progress-every` to change that interval.
+
+The complete Fashionpedia conversion produced `713,059` training expressions
+and `17,454` validation expressions. Nine of the `170,341` candidate training
+part annotations had invalid zero-area or otherwise non-positive bounding boxes
+in the official source file and were excluded before query generation:
+
+```text
+23298, 23299, 139952, 262063, 277148, 287029, 290142, 309141, 311943
+```
+
+The affected source categories are six rivets, two beads, and one neckline.
+Validation had no invalid part annotations, and neither split had a missing
+image. These source defects must remain documented exclusions; the pipeline
+must not fabricate replacement boxes or Masks.
+
+`FashionpediaReferringDataset` resolves every JSONL target through its official
+annotation ID. Before returning a training item it verifies the source image
+ID, category, bounding box, image dimensions, non-empty decoded Mask, and safe
+project-relative image path. Multi-target queries retain an independent Mask
+per target instead of merging broad expressions such as "the pockets" into one
+instance. COCO polygon/RLE decoding uses `pycocotools` so training uses the same
+Mask edge semantics as evaluation.
+
+Run a bounded PyTorch `DataLoader` smoke before adding model features:
+
+```bash
+python -u scripts/smoke_referring_training_loader.py \
+  --split train \
+  --limit 8 \
+  --batch-size 2 \
+  --workers 0
+```
+
+The initial smoke deliberately uses `workers=0`. A full-dataset multi-worker
+memory and throughput profile is still required before choosing the production
+training worker count. Successful Mask loading does not yet establish DINOv2
+alignment quality or PRD accuracy and latency compliance.

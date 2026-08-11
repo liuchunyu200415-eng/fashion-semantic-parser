@@ -1,0 +1,226 @@
+"""Tests for loading referring JSONL records with official source Masks."""
+
+import json
+from pathlib import Path
+
+import cv2
+import numpy as np
+import pytest
+
+from fashion_semantic_parser.dao.localization.referring_dataset import (
+    FashionpediaReferringDataset,
+    collate_referring_training_items,
+)
+
+
+def test_dataset_loads_independent_multi_target_masks(tmp_path: Path) -> None:
+    """Broad part expressions must retain each referenced instance Mask."""
+    index_path, annotation_path = _write_source(tmp_path)
+    dataset = FashionpediaReferringDataset(
+        index_path=index_path,
+        annotation_path=annotation_path,
+        project_root=tmp_path,
+        mask_decoder=_polygon_decoder,
+    )
+
+    item = dataset[0]
+
+    assert len(dataset) == 1
+    assert item.sample.query == "这件衣服的口袋"
+    assert item.image_rgb.shape == (12, 16, 3)
+    assert item.image_rgb[0, 0].tolist() == [30, 20, 10]
+    assert item.target_masks.shape == (2, 12, 16)
+    assert np.all(item.target_masks.sum(axis=(1, 2)) > 0)
+    assert item.target_boxes.tolist() == [
+        [1.0, 2.0, 5.0, 7.0],
+        [9.0, 2.0, 14.0, 7.0],
+    ]
+    assert item.source_annotation_ids == (101, 102)
+
+
+def test_dataset_rejects_missing_source_annotation(tmp_path: Path) -> None:
+    """A stale annotation reference must fail before a training epoch starts."""
+    index_path, annotation_path = _write_source(tmp_path)
+    sample = json.loads(index_path.read_text(encoding="utf-8"))
+    sample["targets"][0]["source_annotation_id"] = 999
+    index_path.write_text(json.dumps(sample) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="missing Fashionpedia annotation IDs"):
+        FashionpediaReferringDataset(
+            index_path=index_path,
+            annotation_path=annotation_path,
+            project_root=tmp_path,
+            mask_decoder=_polygon_decoder,
+        )
+
+
+def test_dataset_rejects_annotation_from_another_image(tmp_path: Path) -> None:
+    """A Mask must belong to the same source image as the query record."""
+    index_path, annotation_path = _write_source(tmp_path)
+    source = json.loads(annotation_path.read_text(encoding="utf-8"))
+    source["annotations"][0]["image_id"] = 20
+    source["images"].append(
+        {"id": 20, "file_name": "images/b.png", "width": 16, "height": 12}
+    )
+    annotation_path.write_text(json.dumps(source), encoding="utf-8")
+    dataset = FashionpediaReferringDataset(
+        index_path=index_path,
+        annotation_path=annotation_path,
+        project_root=tmp_path,
+        mask_decoder=_polygon_decoder,
+    )
+
+    with pytest.raises(ValueError, match="belongs to image 20"):
+        dataset[0]
+
+
+def test_dataset_rejects_empty_decoded_mask(tmp_path: Path) -> None:
+    """Bad decoding cannot silently turn a positive target into background."""
+    index_path, annotation_path = _write_source(tmp_path)
+    dataset = FashionpediaReferringDataset(
+        index_path=index_path,
+        annotation_path=annotation_path,
+        project_root=tmp_path,
+        mask_decoder=lambda segmentation, height, width: np.zeros(
+            (height, width), dtype=np.uint8
+        ),
+    )
+
+    with pytest.raises(ValueError, match="empty Mask"):
+        dataset[0]
+
+
+def test_dataset_rejects_source_category_mismatch(tmp_path: Path) -> None:
+    """An existing Mask from the wrong category is still invalid supervision."""
+    index_path, annotation_path = _write_source(tmp_path)
+    source = json.loads(annotation_path.read_text(encoding="utf-8"))
+    source["categories"].append({"id": 35, "name": "zipper"})
+    source["annotations"][0]["category_id"] = 35
+    annotation_path.write_text(json.dumps(source), encoding="utf-8")
+    dataset = FashionpediaReferringDataset(
+        index_path=index_path,
+        annotation_path=annotation_path,
+        project_root=tmp_path,
+        mask_decoder=_polygon_decoder,
+    )
+
+    with pytest.raises(ValueError, match="has label zipper, not pocket"):
+        dataset[0]
+
+
+def test_dataset_rejects_source_box_mismatch(tmp_path: Path) -> None:
+    """A stale target box cannot accompany an otherwise valid source Mask."""
+    index_path, annotation_path = _write_source(tmp_path)
+    sample = json.loads(index_path.read_text(encoding="utf-8"))
+    sample["targets"][0]["box"]["x_max"] = 6
+    index_path.write_text(json.dumps(sample) + "\n", encoding="utf-8")
+    dataset = FashionpediaReferringDataset(
+        index_path=index_path,
+        annotation_path=annotation_path,
+        project_root=tmp_path,
+        mask_decoder=_polygon_decoder,
+    )
+
+    with pytest.raises(ValueError, match="bbox does not match"):
+        dataset[0]
+
+
+def test_collate_preserves_variable_target_sets(tmp_path: Path) -> None:
+    """Batch collation must not pad or merge independent query targets."""
+    index_path, annotation_path = _write_source(tmp_path)
+    dataset = FashionpediaReferringDataset(
+        index_path=index_path,
+        annotation_path=annotation_path,
+        project_root=tmp_path,
+        mask_decoder=_polygon_decoder,
+    )
+
+    batch = collate_referring_training_items([dataset[0], dataset[-1]])
+
+    assert batch["queries"] == ["这件衣服的口袋", "这件衣服的口袋"]
+    assert [masks.shape[0] for masks in batch["target_masks"]] == [2, 2]
+    assert batch["source_annotation_ids"] == [(101, 102), (101, 102)]
+
+
+def test_dataset_rejects_blank_jsonl_record(tmp_path: Path) -> None:
+    """Blank records must not change sample numbering silently."""
+    index_path, annotation_path = _write_source(tmp_path)
+    index_path.write_text("\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Blank JSONL record"):
+        FashionpediaReferringDataset(
+            index_path=index_path,
+            annotation_path=annotation_path,
+            project_root=tmp_path,
+            mask_decoder=_polygon_decoder,
+        )
+
+
+def _write_source(tmp_path: Path) -> tuple[Path, Path]:
+    """Write one two-target source image, annotation file, and query record."""
+    image_path = tmp_path / "images" / "a.png"
+    image_path.parent.mkdir(parents=True)
+    image = np.zeros((12, 16, 3), dtype=np.uint8)
+    image[:, :] = [10, 20, 30]
+    assert cv2.imwrite(str(image_path), image)
+
+    annotation_path = tmp_path / "annotations.json"
+    source = {
+        "categories": [{"id": 32, "name": "pocket"}],
+        "images": [{"id": 10, "file_name": "images/a.png", "width": 16, "height": 12}],
+        "annotations": [
+            {
+                "id": 101,
+                "image_id": 10,
+                "category_id": 32,
+                "bbox": [1, 2, 4, 5],
+                "segmentation": [[1, 2, 5, 2, 5, 7, 1, 7]],
+            },
+            {
+                "id": 102,
+                "image_id": 10,
+                "category_id": 32,
+                "bbox": [9, 2, 5, 5],
+                "segmentation": [[9, 2, 14, 2, 14, 7, 9, 7]],
+            },
+        ],
+    }
+    annotation_path.write_text(json.dumps(source), encoding="utf-8")
+
+    sample = {
+        "id": "fashionpedia-train-10-pocket-basic-zh-101-102",
+        "split": "train",
+        "image_path": "images/a.png",
+        "source_image_id": 10,
+        "query": "这件衣服的口袋",
+        "language": "zh",
+        "dimensions": ["basic"],
+        "target_label": "pocket",
+        "targets": [
+            {
+                "source_annotation_id": 101,
+                "label": "pocket",
+                "box": {"x_min": 1, "y_min": 2, "x_max": 5, "y_max": 7},
+            },
+            {
+                "source_annotation_id": 102,
+                "label": "pocket",
+                "box": {"x_min": 9, "y_min": 2, "x_max": 14, "y_max": 7},
+            },
+        ],
+        "template_id": "basic-zh",
+    }
+    index_path = tmp_path / "referring.jsonl"
+    index_path.write_text(json.dumps(sample) + "\n", encoding="utf-8")
+    return index_path, annotation_path
+
+
+def _polygon_decoder(segmentation: object, height: int, width: int) -> np.ndarray:
+    """Small test decoder; production decoding remains pycocotools-backed."""
+    mask = np.zeros((height, width), dtype=np.uint8)
+    assert isinstance(segmentation, list)
+    polygons = [
+        np.asarray(polygon, dtype=np.int32).reshape(-1, 2) for polygon in segmentation
+    ]
+    cv2.fillPoly(mask, polygons, 1)
+    return mask
