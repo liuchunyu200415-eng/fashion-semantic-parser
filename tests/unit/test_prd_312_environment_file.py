@@ -18,4 +18,6 @@ def test_environment_installs_project_from_repository_root() -> None:
     )
 
     assert "-e .." in pip_dependencies
+    assert "transformers==4.44.2" in pip_dependencies
+    assert "sentence-transformers==3.0.1" in pip_dependencies
     assert "nodefaults" in environment["channels"]

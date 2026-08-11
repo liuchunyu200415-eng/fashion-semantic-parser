@@ -1384,3 +1384,51 @@ separately. The final line deliberately remains
 `prd_localization_30ms_passed: not_evaluated`: region feature extraction alone
 does not include text encoding, similarity selection, proposal generation, or
 SAM-HQ, and therefore cannot be compared with the complete 30 ms requirement.
+
+The first RTX 3090 run in the exact Python 3.10.12 environment loaded the model
+in `2.015 s` and returned four normalized `384`-D target features. The cold first
+encode took `221.846 ms`; after CUDA/operator warm-up, mean latency was
+`11.419 ms` and maximum latency was `11.686 ms` over three requests. This is
+valid evidence for the isolated DINOv2 region encoder only. It leaves roughly
+`18.6 ms` of the localization budget before text encoding, matching, proposal
+generation, and SAM-HQ, so it is not a 30 ms pass.
+
+### BGE-M3 Complete-Query Text Feature Smoke
+
+The PRD lists BGE-M3 and leaves the 3.1.2 text encoder unspecified. BGE-M3 is
+therefore the first in-stack implementation choice for complete-query text
+features: it supports more than 100 languages, including the Chinese/English
+training expressions, and produces normalized 1024-dimensional dense vectors.
+The official model does not require retrieval instructions for BGE-M3 queries.
+This choice remains conditional on latency and alignment accuracy; merely
+embedding text does not align its space with DINOv2's 384-dimensional regions.
+
+Update the existing PRD environment to add the pinned Transformers and
+Sentence Transformers runtime, then download only the dense-model files from
+the fixed BAAI snapshot:
+
+```bash
+bash scripts/setup_prd_312_training_env.sh
+
+conda run -n fashion-prd-312 \
+  python scripts/setup_bge_m3_text_model.py
+```
+
+The pinned BGE-M3 revision is
+`3c06a359c08b8c49f1cab07e3eac8f846eb3a038`; the expected official
+`model.safetensors` size is `2,271,064,456` bytes. Runtime loading is local-only
+and rejects a missing revision marker or partial weights. Duplicate PyTorch
+weights and the sparse/ColBERT heads are not downloaded for this dense smoke.
+
+Measure four complete basic, spatial, attribute, and relation queries:
+
+```bash
+conda run -n fashion-prd-312 \
+  python -u scripts/smoke_bge_m3_text_features.py
+```
+
+The smoke must report four normalized 1024-D vectors and keeps both
+`dinov2_text_alignment_trained: false` and
+`prd_localization_30ms_passed: not_evaluated`. The next model step is a learned
+1024-to-384 projection with contrastive region-text supervision, not direct
+cosine comparison between unrelated pretrained spaces.
