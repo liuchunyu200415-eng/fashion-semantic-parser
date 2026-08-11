@@ -1,0 +1,8 @@
+text_dimension: 1024
+region_dimension: 384
+hidden_dimension: 512
+temperature: 0.07
+learning_rate: 0.001
+weight_decay: 0.01
+training_steps: 20
+seed: 312

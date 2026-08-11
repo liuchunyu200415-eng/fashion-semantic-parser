@@ -1432,3 +1432,43 @@ The smoke must report four normalized 1024-D vectors and keeps both
 `prd_localization_30ms_passed: not_evaluated`. The next model step is a learned
 1024-to-384 projection with contrastive region-text supervision, not direct
 cosine comparison between unrelated pretrained spaces.
+
+The first RTX 3090 BGE-M3 smoke loaded in `3.764 s` and produced four complete
+query embeddings with shape `4x1024`. Their norm range was
+`0.999760..1.000442`; the cold first encode took `156.436 ms`, while the three
+warm requests averaged `18.679 ms` and reached `20.667 ms` maximum. Combined
+with the isolated DINOv2 warm maximum of `11.686 ms`, the two encoders already
+sum to more than the complete `30 ms` localization budget when run
+sequentially. This is a latency risk requiring batching, caching, a smaller
+text encoder, distillation, or deployment optimization; it is not a PRD pass.
+
+### Frozen-Encoder Region-Text Alignment Smoke
+
+The first alignment stage freezes both official foundation encoders and trains
+only a two-layer BGE-M3 `1024 -> 512 -> 384` projection. It uses symmetric
+multi-positive InfoNCE: all independent Fashionpedia annotations referenced by
+a query are positive, and alternative queries that share a source annotation
+do not incorrectly make that region a negative. DINOv2 features are extracted
+once per unique source Mask and reused across the bounded optimization steps.
+
+Run the eight-query smoke in the exact PRD environment:
+
+```bash
+OMP_NUM_THREADS=1 \
+TOKENIZERS_PARALLELISM=false \
+TRANSFORMERS_OFFLINE=1 \
+HF_HUB_OFFLINE=1 \
+conda run -n fashion-prd-312 \
+  python -u scripts/smoke_region_text_alignment_training.py \
+  --split train \
+  --limit 8 \
+  --steps 20
+```
+
+The output is a small projection-only checkpoint plus `metrics.json` under
+`outputs/localization/dinov2_bge_alignment_smoke`. Loss decrease and training
+top-1 on these eight queries validate only gradient flow and checkpoint
+serialization. They are not held-out localization accuracy: candidate-region
+generation, negative regions, validation retrieval, SAM-HQ refinement, the
+independent manual acceptance set, `92%` accuracy, and complete `30 ms` timing
+all remain pending.
