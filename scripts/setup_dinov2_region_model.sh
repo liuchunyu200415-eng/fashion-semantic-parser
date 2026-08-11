@@ -19,7 +19,7 @@ if [[ ! -d "$repo_path/.git" ]]; then
     echo "Refusing to overwrite non-Git path: $repo_path" >&2
     exit 1
   fi
-  git clone --filter=blob:none --no-checkout "$repo_url" "$repo_path"
+  git clone --filter=blob:none "$repo_url" "$repo_path"
 fi
 
 remote_url="$(git -C "$repo_path" remote get-url origin)"
@@ -27,13 +27,23 @@ if [[ "$remote_url" != *"facebookresearch/dinov2.git" ]]; then
   echo "Unexpected DINOv2 origin: $remote_url" >&2
   exit 1
 fi
-if [[ -n "$(git -C "$repo_path" status --porcelain)" ]]; then
+worktree_has_files="false"
+if find "$repo_path" -mindepth 1 -maxdepth 1 ! -name .git -print -quit \
+  | grep -q .; then
+  worktree_has_files="true"
+fi
+if [[ "$worktree_has_files" == "true" ]] \
+  && [[ -n "$(git -C "$repo_path" status --porcelain)" ]]; then
   echo "Refusing to change a dirty DINOv2 checkout: $repo_path" >&2
   exit 1
 fi
 
 git -C "$repo_path" fetch --depth 1 origin "$repo_commit"
 git -C "$repo_path" checkout --detach "$repo_commit"
+if [[ -n "$(git -C "$repo_path" status --porcelain)" ]]; then
+  echo "DINOv2 checkout is dirty after pinned checkout: $repo_path" >&2
+  exit 1
+fi
 
 if [[ -f "$weights_path" ]]; then
   actual_size="$(wc -c < "$weights_path" | tr -d ' ')"
