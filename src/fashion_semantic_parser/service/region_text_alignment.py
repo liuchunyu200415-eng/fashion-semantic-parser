@@ -168,6 +168,7 @@ def multi_positive_contrastive_loss(
     positive_mask: Any,
     *,
     temperature: float,
+    eligible_mask: Any | None = None,
 ) -> tuple[Any, Any]:
     """Return symmetric multi-positive InfoNCE loss and cosine logits."""
     try:
@@ -190,19 +191,85 @@ def multi_positive_contrastive_loss(
         raise ValueError("Every query must have at least one positive region.")
     if not torch.all(positive_mask.any(dim=0)):
         raise ValueError("Every candidate region must be positive for a query.")
+    if eligible_mask is None:
+        eligible_mask = torch.ones_like(positive_mask)
+    else:
+        if tuple(eligible_mask.shape) != tuple(positive_mask.shape):
+            raise ValueError("Eligible mask shape must match the positive mask.")
+        eligible_mask = eligible_mask.to(
+            device=text_features.device,
+            dtype=torch.bool,
+        )
+    if torch.any(positive_mask & ~eligible_mask):
+        raise ValueError("Every positive pair must be eligible for contrastive loss.")
     text_features = torch.nn.functional.normalize(text_features.float(), dim=1)
     region_features = torch.nn.functional.normalize(region_features.float(), dim=1)
     logits = text_features @ region_features.transpose(0, 1)
     logits = logits / temperature
     negative_infinity = torch.finfo(logits.dtype).min
     positive_logits = logits.masked_fill(~positive_mask, negative_infinity)
+    eligible_logits = logits.masked_fill(~eligible_mask, negative_infinity)
     text_to_region = -(
-        torch.logsumexp(positive_logits, dim=1) - torch.logsumexp(logits, dim=1)
+        torch.logsumexp(positive_logits, dim=1)
+        - torch.logsumexp(eligible_logits, dim=1)
     ).mean()
     region_to_text = -(
-        torch.logsumexp(positive_logits, dim=0) - torch.logsumexp(logits, dim=0)
+        torch.logsumexp(positive_logits, dim=0)
+        - torch.logsumexp(eligible_logits, dim=0)
     ).mean()
     return 0.5 * (text_to_region + region_to_text), logits
+
+
+def build_label_aware_eligible_mask(
+    *,
+    positive_mask: np.ndarray,
+    query_image_ids: list[int],
+    region_image_ids: list[int],
+    query_labels: list[str],
+    region_labels: list[str],
+) -> tuple[np.ndarray, dict[str, int]]:
+    """Keep same-image and cross-image different-label pairs eligible."""
+    positives = np.asarray(positive_mask, dtype=np.bool_)
+    if positives.shape != (len(query_image_ids), len(region_image_ids)):
+        raise ValueError("Positive mask shape must match query and region metadata.")
+    if len(query_labels) != len(query_image_ids):
+        raise ValueError("query_labels must match query_image_ids.")
+    if len(region_labels) != len(region_image_ids):
+        raise ValueError("region_labels must match region_image_ids.")
+    same_image = np.equal.outer(query_image_ids, region_image_ids)
+    same_label = np.equal.outer(query_labels, region_labels)
+    if np.any(positives & ~same_image):
+        raise ValueError("Positive query-region pairs must belong to the same image.")
+    if np.any(positives & ~same_label):
+        raise ValueError("Positive query-region pairs must have the same label.")
+    eligible = same_image | ~same_label
+    negatives = ~positives
+    same_image_negatives = negatives & same_image
+    cross_image_different_label = negatives & ~same_image & ~same_label
+    cross_image_same_label = negatives & ~same_image & same_label
+    competitive_images = {
+        image_id
+        for query_index, image_id in enumerate(query_image_ids)
+        if np.any(same_image_negatives[query_index])
+    }
+    audit = {
+        "global_negative_pair_count": int(negatives.sum()),
+        "same_image_negative_pair_count": int(same_image_negatives.sum()),
+        "cross_image_different_label_negative_pair_count": int(
+            cross_image_different_label.sum()
+        ),
+        "cross_image_same_label_negative_pair_count": int(cross_image_same_label.sum()),
+        "label_aware_negative_pair_count": int((eligible & negatives).sum()),
+        "competitive_image_count": len(competitive_images),
+    }
+    if (
+        audit["same_image_negative_pair_count"]
+        + audit["cross_image_different_label_negative_pair_count"]
+        + audit["cross_image_same_label_negative_pair_count"]
+        != audit["global_negative_pair_count"]
+    ):
+        raise ValueError("Negative pair audit did not partition the global pairs.")
+    return np.asarray(eligible, dtype=np.bool_), audit
 
 
 def same_image_contrastive_loss(

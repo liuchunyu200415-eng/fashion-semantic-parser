@@ -6,6 +6,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -28,6 +29,11 @@ def parse_args() -> argparse.Namespace:
     limit_group.add_argument("--limit", type=int, default=None)
     limit_group.add_argument("--image-limit", type=int, default=None)
     parser.add_argument("--steps", type=int, default=None)
+    parser.add_argument(
+        "--negative-scope",
+        choices=("same_image", "label_aware_global", "global"),
+        default="same_image",
+    )
     parser.add_argument("--index", default=None)
     parser.add_argument("--annotations", default=None)
     parser.add_argument(
@@ -69,11 +75,13 @@ def main() -> None:
         load_dinov2_region_settings,
     )
     from fashion_semantic_parser.service.region_text_alignment import (
+        build_label_aware_eligible_mask,
         build_positive_region_mask,
         build_text_projection,
         evaluate_image_candidate_retrieval,
         extract_unique_region_features,
         load_region_text_alignment_settings,
+        multi_positive_contrastive_loss,
         same_image_contrastive_loss,
     )
 
@@ -143,7 +151,9 @@ def main() -> None:
         region_annotation_ids,
     )
     query_image_ids = [item.sample.source_image_id for item in items]
+    query_labels = [item.sample.target_label for item in items]
     region_image_by_id: dict[int, int] = {}
+    region_label_by_id: dict[int, str] = {}
     for item in items:
         for annotation_id in item.source_annotation_ids:
             image_id = item.sample.source_image_id
@@ -152,8 +162,27 @@ def main() -> None:
                 raise ValueError(
                     f"Annotation {annotation_id} belongs to multiple source images."
                 )
+            label = item.sample.target_label
+            previous_label = region_label_by_id.setdefault(annotation_id, label)
+            if previous_label != label:
+                raise ValueError(
+                    f"Annotation {annotation_id} belongs to multiple target labels."
+                )
     region_image_ids = [region_image_by_id[value] for value in region_annotation_ids]
-    global_negative_pair_count = int((~positive_mask_array).sum())
+    region_labels = [region_label_by_id[value] for value in region_annotation_ids]
+    label_aware_eligible_array, pair_audit = build_label_aware_eligible_mask(
+        positive_mask=positive_mask_array,
+        query_image_ids=query_image_ids,
+        region_image_ids=region_image_ids,
+        query_labels=query_labels,
+        region_labels=region_labels,
+    )
+    if args.negative_scope == "same_image":
+        negative_pair_count = pair_audit["same_image_negative_pair_count"]
+    elif args.negative_scope == "label_aware_global":
+        negative_pair_count = pair_audit["label_aware_negative_pair_count"]
+    else:
+        negative_pair_count = pair_audit["global_negative_pair_count"]
 
     del bge_encoder, dinov2_encoder
     gc.collect()
@@ -168,22 +197,40 @@ def main() -> None:
     text_tensor = torch.from_numpy(text_embeddings).to(device=device)
     region_tensor = torch.from_numpy(region_embeddings).to(device=device)
     positive_mask = torch.from_numpy(positive_mask_array).to(device=device)
+    label_aware_eligible_mask = torch.from_numpy(label_aware_eligible_array).to(
+        device=device
+    )
+
+    def training_loss(projected_text: Any) -> Any:
+        """Apply the selected negative-pair scope to one projected text batch."""
+        if args.negative_scope == "same_image":
+            scoped_loss, _, _ = same_image_contrastive_loss(
+                projected_text,
+                region_tensor,
+                positive_mask,
+                query_image_ids=query_image_ids,
+                region_image_ids=region_image_ids,
+                temperature=alignment_settings.temperature,
+            )
+            return scoped_loss
+        eligible_mask = (
+            label_aware_eligible_mask
+            if args.negative_scope == "label_aware_global"
+            else None
+        )
+        scoped_loss, _ = multi_positive_contrastive_loss(
+            projected_text,
+            region_tensor,
+            positive_mask,
+            temperature=alignment_settings.temperature,
+            eligible_mask=eligible_mask,
+        )
+        return scoped_loss
 
     projection.train()
     with torch.no_grad():
         initial_projected_text = projection(text_tensor)
-        (
-            initial_loss_tensor,
-            competitive_image_count,
-            negative_pair_count,
-        ) = same_image_contrastive_loss(
-            initial_projected_text,
-            region_tensor,
-            positive_mask,
-            query_image_ids=query_image_ids,
-            region_image_ids=region_image_ids,
-            temperature=alignment_settings.temperature,
-        )
+        initial_loss_tensor = training_loss(initial_projected_text)
         initial_loss = float(initial_loss_tensor.item())
         initial_summary, _ = evaluate_image_candidate_retrieval(
             query_ids=[item.sample.id for item in items],
@@ -200,14 +247,7 @@ def main() -> None:
     training_started = time.perf_counter()
     for _ in range(steps):
         optimizer.zero_grad(set_to_none=True)
-        loss, _, _ = same_image_contrastive_loss(
-            projection(text_tensor),
-            region_tensor,
-            positive_mask,
-            query_image_ids=query_image_ids,
-            region_image_ids=region_image_ids,
-            temperature=alignment_settings.temperature,
-        )
+        loss = training_loss(projection(text_tensor))
         if not torch.isfinite(loss):
             raise RuntimeError("Alignment smoke produced a non-finite loss.")
         loss.backward()
@@ -215,14 +255,7 @@ def main() -> None:
     projection.eval()
     with torch.no_grad():
         final_projected_text = projection(text_tensor)
-        final_loss_tensor, _, _ = same_image_contrastive_loss(
-            final_projected_text,
-            region_tensor,
-            positive_mask,
-            query_image_ids=query_image_ids,
-            region_image_ids=region_image_ids,
-            temperature=alignment_settings.temperature,
-        )
+        final_loss_tensor = training_loss(final_projected_text)
         final_loss = float(final_loss_tensor.item())
     if device == "cuda":
         torch.cuda.synchronize()
@@ -256,7 +289,7 @@ def main() -> None:
             "base_encoders_frozen": True,
             "dinov2_model": "dinov2_vits14",
             "text_model": "BAAI/bge-m3",
-            "negative_scope": "same_image",
+            "negative_scope": args.negative_scope,
         },
         checkpoint_path,
     )
@@ -270,12 +303,11 @@ def main() -> None:
         "unique_region_count": len(region_annotation_ids),
         "positive_pair_count": int(positive_mask_array.sum()),
         "negative_pair_count": negative_pair_count,
-        "global_negative_pair_count": global_negative_pair_count,
-        "cross_image_negative_pair_count_excluded": (
-            global_negative_pair_count - negative_pair_count
+        **pair_audit,
+        "negative_pair_count_excluded": (
+            pair_audit["global_negative_pair_count"] - negative_pair_count
         ),
-        "negative_scope": "same_image",
-        "competitive_image_count": competitive_image_count,
+        "negative_scope": args.negative_scope,
         "text_dimension": int(text_embeddings.shape[1]),
         "region_dimension": int(region_embeddings.shape[1]),
         "steps": steps,

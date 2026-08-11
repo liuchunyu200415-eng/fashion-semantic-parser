@@ -1558,3 +1558,17 @@ This image-complete Fashionpedia retrieval audit is stricter than the old query
 prefix but still evaluates oracle source Masks as candidates. It does not test
 whether an open-vocabulary proposal model finds unseen parts, nor whether
 SAM-HQ produces the accepted Mask, so it remains below PRD acceptance.
+
+On the same ten image-complete validation images, the earlier global-negative
+checkpoint reached `76.70%` competitive Top-1 and `70.45%` competitive
+exact-set, outperforming the same-image checkpoint by six and five queries.
+Cross-image supervision is therefore useful, but treating a pocket in another
+image as a negative for a basic pocket query is still semantically incorrect.
+
+The next controlled objective is `--negative-scope label_aware_global`. It uses
+all same-image pairs so left/right and attribute-modified instances can compete,
+keeps cross-image pairs whose Fashionpedia target labels differ, and ignores
+cross-image pairs with the same target label. The training audit separates
+same-image, cross-image different-label, and excluded cross-image same-label
+pair counts. `global` and `same_image` remain available for reproducible
+ablation runs.

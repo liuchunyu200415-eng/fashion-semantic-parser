@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from fashion_semantic_parser.service.region_text_alignment import (
     RegionTextAlignmentSettings,
+    build_label_aware_eligible_mask,
     build_positive_region_mask,
     build_text_projection,
     evaluate_image_candidate_retrieval,
@@ -128,6 +129,56 @@ def test_same_image_loss_skips_noncompetitive_image() -> None:
     assert torch.isfinite(loss)
     assert image_count == 1
     assert negative_count == 2
+
+
+def test_label_aware_mask_ignores_only_cross_image_same_label_pairs() -> None:
+    """Useful cross-category negatives remain while semantic false negatives leave."""
+    eligible, audit = build_label_aware_eligible_mask(
+        positive_mask=np.eye(3, dtype=np.bool_),
+        query_image_ids=[1, 2, 2],
+        region_image_ids=[1, 2, 2],
+        query_labels=["pocket", "pocket", "zipper"],
+        region_labels=["pocket", "pocket", "zipper"],
+    )
+
+    assert eligible.tolist() == [
+        [True, False, True],
+        [False, True, True],
+        [True, True, True],
+    ]
+    assert audit == {
+        "global_negative_pair_count": 6,
+        "same_image_negative_pair_count": 2,
+        "cross_image_different_label_negative_pair_count": 2,
+        "cross_image_same_label_negative_pair_count": 2,
+        "label_aware_negative_pair_count": 4,
+        "competitive_image_count": 1,
+    }
+
+
+def test_eligible_mask_removes_ignored_pairs_from_loss_denominator() -> None:
+    """An ignored high-score false negative cannot increase InfoNCE loss."""
+    torch = pytest.importorskip("torch")
+    text = torch.tensor([[1.0, 0.0], [1.0, 0.0]])
+    regions = torch.tensor([[1.0, 0.0], [1.0, 0.0]])
+    positives = torch.eye(2, dtype=torch.bool)
+    eligible = torch.eye(2, dtype=torch.bool)
+
+    unfiltered_loss, _ = multi_positive_contrastive_loss(
+        text,
+        regions,
+        positives,
+        temperature=0.1,
+    )
+    filtered_loss, _ = multi_positive_contrastive_loss(
+        text,
+        regions,
+        positives,
+        temperature=0.1,
+        eligible_mask=eligible,
+    )
+
+    assert filtered_loss.item() < unfiltered_loss.item()
 
 
 def test_retrieval_reports_competitive_and_grouped_metrics_separately() -> None:
