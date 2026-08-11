@@ -16,6 +16,7 @@ from fashion_semantic_parser.service.region_text_alignment import (
     load_text_projection_checkpoint,
     multi_positive_contrastive_loss,
     positive_top1_accuracy,
+    same_image_contrastive_loss,
 )
 
 
@@ -77,6 +78,56 @@ def test_multi_positive_loss_rewards_correct_alignment() -> None:
 
     assert aligned_loss.item() < swapped_loss.item()
     assert positive_top1_accuracy(aligned_logits, positives) == 1.0
+
+
+def test_same_image_loss_excludes_cross_image_false_negatives() -> None:
+    """Only regions from the query image may act as localization negatives."""
+    torch = pytest.importorskip("torch")
+    text = torch.tensor([[1.0, 0.0], [0.0, 1.0], [1.0, 0.0], [0.0, 1.0]])
+    regions = text.clone()
+    positives = torch.eye(4, dtype=torch.bool)
+
+    aligned_loss, image_count, negative_count = same_image_contrastive_loss(
+        text,
+        regions,
+        positives,
+        query_image_ids=[1, 1, 2, 2],
+        region_image_ids=[1, 1, 2, 2],
+        temperature=0.1,
+    )
+    swapped_loss, _, _ = same_image_contrastive_loss(
+        text,
+        regions[[1, 0, 3, 2]],
+        positives,
+        query_image_ids=[1, 1, 2, 2],
+        region_image_ids=[1, 1, 2, 2],
+        temperature=0.1,
+    )
+
+    assert image_count == 2
+    assert negative_count == 4
+    assert aligned_loss.item() < swapped_loss.item()
+
+
+def test_same_image_loss_skips_noncompetitive_image() -> None:
+    """A one-target one-candidate image provides no contrastive supervision."""
+    torch = pytest.importorskip("torch")
+    text = torch.tensor([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
+    regions = text.clone()
+    positives = torch.eye(3, dtype=torch.bool)
+
+    loss, image_count, negative_count = same_image_contrastive_loss(
+        text,
+        regions,
+        positives,
+        query_image_ids=[1, 1, 2],
+        region_image_ids=[1, 1, 2],
+        temperature=0.1,
+    )
+
+    assert torch.isfinite(loss)
+    assert image_count == 1
+    assert negative_count == 2
 
 
 def test_retrieval_reports_competitive_and_grouped_metrics_separately() -> None:

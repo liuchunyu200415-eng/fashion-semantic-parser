@@ -1500,3 +1500,25 @@ coverage and mask localization as false. The next experiment must construct
 all same-image part/proposal negatives before these retrieval numbers can be
 used for model selection; even that retrieval experiment remains separate from
 manual Mask/Box localization acceptance and the PRD `92%` metric.
+
+The initial 128-query experiment exposed a training/evaluation mismatch. A
+global contrastive matrix treated semantically equivalent parts from different
+images as negatives, even though localization selects among regions from the
+current image. The training smoke now constructs an independent candidate pool
+per source image and averages multi-positive losses only across images with at
+least one genuine negative pair. Images whose selected candidates are all
+targets are excluded from the contrastive loss and counted separately.
+
+Checkpoints created by the corrected path record
+`negative_scope: same_image`. Training metrics report both the same-image
+negative-pair count used for gradients and the global cross-image pair count
+that was excluded. Initial/final Top-1 is also computed by the same per-image
+retrieval evaluator used on validation, so the train and validation metrics now
+have matching candidate semantics.
+
+The earlier global-negative 128-query checkpoint remains experimental history.
+On 128 validation expressions it improved competitive Top-1 from `33.33%` for
+the eight-query head to `74.80%`, and competitive exact-set-at-target-count from
+`29.27%` to `69.11%`. This confirms an alignment signal but is not the corrected
+training objective, full candidate coverage, Mask localization, or PRD
+acceptance evidence.

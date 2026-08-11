@@ -205,6 +205,79 @@ def multi_positive_contrastive_loss(
     return 0.5 * (text_to_region + region_to_text), logits
 
 
+def same_image_contrastive_loss(
+    text_features: Any,
+    region_features: Any,
+    positive_mask: Any,
+    *,
+    query_image_ids: list[int],
+    region_image_ids: list[int],
+    temperature: float,
+) -> tuple[Any, int, int]:
+    """Average multi-positive loss only over competitive same-image pools."""
+    try:
+        import torch  # type: ignore[import-not-found]
+    except ImportError as error:
+        raise RuntimeError("PyTorch is required for region-text alignment.") from error
+    if len(query_image_ids) != text_features.shape[0]:
+        raise ValueError("query_image_ids must match text feature rows.")
+    if len(region_image_ids) != region_features.shape[0]:
+        raise ValueError("region_image_ids must match region feature rows.")
+    if tuple(positive_mask.shape) != (
+        text_features.shape[0],
+        region_features.shape[0],
+    ):
+        raise ValueError("Positive mask shape must be queries by candidate regions.")
+    if set(query_image_ids) != set(region_image_ids):
+        raise ValueError("Query and candidate region image sets must match.")
+
+    weighted_losses: list[Any] = []
+    weights: list[int] = []
+    negative_pair_count = 0
+    competitive_image_count = 0
+    for image_id in sorted(set(query_image_ids)):
+        query_indices = [
+            index for index, value in enumerate(query_image_ids) if value == image_id
+        ]
+        region_indices = [
+            index for index, value in enumerate(region_image_ids) if value == image_id
+        ]
+        query_index_tensor = torch.as_tensor(
+            query_indices,
+            device=text_features.device,
+            dtype=torch.long,
+        )
+        region_index_tensor = torch.as_tensor(
+            region_indices,
+            device=region_features.device,
+            dtype=torch.long,
+        )
+        local_text = text_features.index_select(0, query_index_tensor)
+        local_regions = region_features.index_select(0, region_index_tensor)
+        local_positive = positive_mask.index_select(0, query_index_tensor).index_select(
+            1, region_index_tensor
+        )
+        local_negative_count = int((~local_positive.bool()).sum().item())
+        if local_negative_count == 0:
+            continue
+        local_loss, _ = multi_positive_contrastive_loss(
+            local_text,
+            local_regions,
+            local_positive,
+            temperature=temperature,
+        )
+        weighted_losses.append(local_loss * len(query_indices))
+        weights.append(len(query_indices))
+        negative_pair_count += local_negative_count
+        competitive_image_count += 1
+    if not weighted_losses:
+        raise ValueError(
+            "Same-image alignment requires at least one image with a negative pair."
+        )
+    loss = torch.stack(weighted_losses).sum() / sum(weights)
+    return loss, competitive_image_count, negative_pair_count
+
+
 def positive_top1_accuracy(logits: Any, positive_mask: Any) -> float:
     """Measure whether each query's highest-similarity region is a positive."""
     try:

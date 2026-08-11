@@ -64,10 +64,10 @@ def main() -> None:
     from fashion_semantic_parser.service.region_text_alignment import (
         build_positive_region_mask,
         build_text_projection,
+        evaluate_image_candidate_retrieval,
         extract_unique_region_features,
         load_region_text_alignment_settings,
-        multi_positive_contrastive_loss,
-        positive_top1_accuracy,
+        same_image_contrastive_loss,
     )
 
     alignment_settings = load_region_text_alignment_settings()
@@ -134,11 +134,18 @@ def main() -> None:
         query_annotation_ids,
         region_annotation_ids,
     )
-    negative_pair_count = int((~positive_mask_array).sum())
-    if negative_pair_count == 0:
-        raise ValueError(
-            "Alignment smoke requires at least one non-matching query-region pair."
-        )
+    query_image_ids = [item.sample.source_image_id for item in items]
+    region_image_by_id: dict[int, int] = {}
+    for item in items:
+        for annotation_id in item.source_annotation_ids:
+            image_id = item.sample.source_image_id
+            previous = region_image_by_id.setdefault(annotation_id, image_id)
+            if previous != image_id:
+                raise ValueError(
+                    f"Annotation {annotation_id} belongs to multiple source images."
+                )
+    region_image_ids = [region_image_by_id[value] for value in region_annotation_ids]
+    global_negative_pair_count = int((~positive_mask_array).sum())
 
     del bge_encoder, dinov2_encoder
     gc.collect()
@@ -156,22 +163,41 @@ def main() -> None:
 
     projection.train()
     with torch.no_grad():
-        initial_loss_tensor, initial_logits = multi_positive_contrastive_loss(
-            projection(text_tensor),
+        initial_projected_text = projection(text_tensor)
+        (
+            initial_loss_tensor,
+            competitive_image_count,
+            negative_pair_count,
+        ) = same_image_contrastive_loss(
+            initial_projected_text,
             region_tensor,
             positive_mask,
+            query_image_ids=query_image_ids,
+            region_image_ids=region_image_ids,
             temperature=alignment_settings.temperature,
         )
         initial_loss = float(initial_loss_tensor.item())
-        initial_top1 = positive_top1_accuracy(initial_logits, positive_mask)
+        initial_summary, _ = evaluate_image_candidate_retrieval(
+            query_ids=[item.sample.id for item in items],
+            projected_text_features=initial_projected_text.float().cpu().numpy(),
+            query_image_ids=query_image_ids,
+            query_target_ids=query_annotation_ids,
+            query_dimensions=[tuple(item.sample.dimensions) for item in items],
+            query_languages=[item.sample.language for item in items],
+            region_annotation_ids=region_annotation_ids,
+            region_image_ids=region_image_ids,
+            region_features=region_embeddings,
+        )
 
     training_started = time.perf_counter()
     for _ in range(steps):
         optimizer.zero_grad(set_to_none=True)
-        loss, _ = multi_positive_contrastive_loss(
+        loss, _, _ = same_image_contrastive_loss(
             projection(text_tensor),
             region_tensor,
             positive_mask,
+            query_image_ids=query_image_ids,
+            region_image_ids=region_image_ids,
             temperature=alignment_settings.temperature,
         )
         if not torch.isfinite(loss):
@@ -180,17 +206,30 @@ def main() -> None:
         optimizer.step()
     projection.eval()
     with torch.no_grad():
-        final_loss_tensor, final_logits = multi_positive_contrastive_loss(
-            projection(text_tensor),
+        final_projected_text = projection(text_tensor)
+        final_loss_tensor, _, _ = same_image_contrastive_loss(
+            final_projected_text,
             region_tensor,
             positive_mask,
+            query_image_ids=query_image_ids,
+            region_image_ids=region_image_ids,
             temperature=alignment_settings.temperature,
         )
         final_loss = float(final_loss_tensor.item())
     if device == "cuda":
         torch.cuda.synchronize()
     training_seconds = time.perf_counter() - training_started
-    final_top1 = positive_top1_accuracy(final_logits, positive_mask)
+    final_summary, _ = evaluate_image_candidate_retrieval(
+        query_ids=[item.sample.id for item in items],
+        projected_text_features=final_projected_text.float().cpu().numpy(),
+        query_image_ids=query_image_ids,
+        query_target_ids=query_annotation_ids,
+        query_dimensions=[tuple(item.sample.dimensions) for item in items],
+        query_languages=[item.sample.language for item in items],
+        region_annotation_ids=region_annotation_ids,
+        region_image_ids=region_image_ids,
+        region_features=region_embeddings,
+    )
     loss_decreased = final_loss < initial_loss
     if not loss_decreased:
         raise RuntimeError(
@@ -209,6 +248,7 @@ def main() -> None:
             "base_encoders_frozen": True,
             "dinov2_model": "dinov2_vits14",
             "text_model": "BAAI/bge-m3",
+            "negative_scope": "same_image",
         },
         checkpoint_path,
     )
@@ -218,13 +258,18 @@ def main() -> None:
         "unique_region_count": len(region_annotation_ids),
         "positive_pair_count": int(positive_mask_array.sum()),
         "negative_pair_count": negative_pair_count,
+        "global_negative_pair_count_excluded": global_negative_pair_count,
+        "negative_scope": "same_image",
+        "competitive_image_count": competitive_image_count,
         "text_dimension": int(text_embeddings.shape[1]),
         "region_dimension": int(region_embeddings.shape[1]),
         "steps": steps,
         "initial_loss": initial_loss,
         "final_loss": final_loss,
-        "initial_query_top1": initial_top1,
-        "final_query_top1": final_top1,
+        "initial_query_top1": initial_summary["top1_accuracy"],
+        "final_query_top1": final_summary["top1_accuracy"],
+        "initial_competitive_query_top1": initial_summary["competitive_top1_accuracy"],
+        "final_competitive_query_top1": final_summary["competitive_top1_accuracy"],
         "loss_decreased": loss_decreased,
         "feature_extraction_seconds": extraction_seconds,
         "projection_training_seconds": training_seconds,
