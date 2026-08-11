@@ -28,6 +28,7 @@ def parse_args() -> argparse.Namespace:
     limit_group = parser.add_mutually_exclusive_group()
     limit_group.add_argument("--limit", type=int, default=None)
     limit_group.add_argument("--image-limit", type=int, default=None)
+    parser.add_argument("--image-offset", type=int, default=0)
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument(
         "--negative-scope",
@@ -53,6 +54,10 @@ def main() -> None:
         raise ValueError("--limit must be at least two")
     if args.image_limit is not None and args.image_limit < 1:
         raise ValueError("--image-limit must be at least one")
+    if args.image_offset < 0:
+        raise ValueError("--image-offset cannot be negative")
+    if args.image_offset and args.image_limit is None:
+        raise ValueError("--image-offset requires --image-limit")
     if args.steps is not None and args.steps < 1:
         raise ValueError("--steps must be at least one")
     add_src_to_python_path()
@@ -111,6 +116,7 @@ def main() -> None:
         project_root=PROJECT_ROOT,
         max_samples=sample_limit,
         max_images=args.image_limit,
+        image_offset=args.image_offset,
     )
     items = [dataset[index] for index in range(len(dataset))]
     if len(items) < 2:
@@ -300,6 +306,7 @@ def main() -> None:
         "selection_scope": (
             "complete_image_prefix" if args.image_limit is not None else "query_prefix"
         ),
+        "image_offset": args.image_offset,
         "unique_region_count": len(region_annotation_ids),
         "positive_pair_count": int(positive_mask_array.sum()),
         "negative_pair_count": negative_pair_count,

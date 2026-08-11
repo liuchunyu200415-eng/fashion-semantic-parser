@@ -1596,3 +1596,10 @@ weight must be frozen before the independent manual PRD acceptance set; tuning
 on the acceptance set is not allowed. Explicit coordinates cover the current
 image-frame expressions only. Reference-object and garment-layer relations
 still require a separate relation model.
+
+`--image-offset` can be combined with `--image-limit` to select a disjoint,
+image-complete group after skipping the requested number of source images. It
+cannot be combined with a query-count-only boundary. Spatial weight candidates
+are chosen on the first development images, then compared against weight zero
+on later images before being frozen. The saved metrics record the offset so the
+two image groups remain auditable.

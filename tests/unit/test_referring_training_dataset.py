@@ -206,6 +206,18 @@ def test_dataset_image_limit_keeps_complete_query_groups(tmp_path: Path) -> None
     assert len(dataset) == 3
     assert [dataset[index].sample.source_image_id for index in range(3)] == [10, 10, 20]
 
+    offset_dataset = FashionpediaReferringDataset(
+        index_path=index_path,
+        annotation_path=annotation_path,
+        project_root=tmp_path,
+        max_images=1,
+        image_offset=1,
+        mask_decoder=_polygon_decoder,
+    )
+
+    assert len(offset_dataset) == 1
+    assert offset_dataset[0].sample.source_image_id == 20
+
 
 def test_dataset_rejects_simultaneous_sample_and_image_limits(tmp_path: Path) -> None:
     """Callers must choose either a query prefix or an image-complete prefix."""
@@ -218,6 +230,20 @@ def test_dataset_rejects_simultaneous_sample_and_image_limits(tmp_path: Path) ->
             project_root=tmp_path,
             max_samples=1,
             max_images=1,
+            mask_decoder=_polygon_decoder,
+        )
+
+
+def test_dataset_image_offset_requires_image_limit(tmp_path: Path) -> None:
+    """An offset cannot be combined with an ambiguous query-count boundary."""
+    index_path, annotation_path = _write_source(tmp_path)
+
+    with pytest.raises(ValueError, match="requires max_images"):
+        FashionpediaReferringDataset(
+            index_path=index_path,
+            annotation_path=annotation_path,
+            project_root=tmp_path,
+            image_offset=1,
             mask_decoder=_polygon_decoder,
         )
 

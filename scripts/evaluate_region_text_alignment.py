@@ -32,6 +32,7 @@ def parse_args() -> argparse.Namespace:
     limit_group = parser.add_mutually_exclusive_group()
     limit_group.add_argument("--limit", type=int, default=None)
     limit_group.add_argument("--image-limit", type=int, default=None)
+    parser.add_argument("--image-offset", type=int, default=0)
     parser.add_argument("--index", default=None)
     parser.add_argument("--annotations", default=None)
     parser.add_argument("--spatial-weight", type=float, default=0.0)
@@ -56,6 +57,10 @@ def main() -> None:
         raise ValueError("--limit must be at least one")
     if args.image_limit is not None and args.image_limit < 1:
         raise ValueError("--image-limit must be at least one")
+    if args.image_offset < 0:
+        raise ValueError("--image-offset cannot be negative")
+    if args.image_offset and args.image_limit is None:
+        raise ValueError("--image-offset requires --image-limit")
     if not 0.0 <= args.spatial_weight <= 1.0:
         raise ValueError("--spatial-weight must be between zero and one")
     add_src_to_python_path()
@@ -104,6 +109,7 @@ def main() -> None:
         project_root=PROJECT_ROOT,
         max_samples=sample_limit,
         max_images=args.image_limit,
+        image_offset=args.image_offset,
     )
     items = [dataset[index] for index in range(len(dataset))]
     if not items:
@@ -214,6 +220,7 @@ def main() -> None:
                 if args.image_limit is not None
                 else "query_prefix"
             ),
+            "image_offset": args.image_offset,
             "candidate_region_scope": (
                 "all_fashionpedia_part_masks_per_selected_image"
                 if annotated_part_coverage
@@ -240,6 +247,7 @@ def main() -> None:
         "split",
         "query_count",
         "selected_image_count",
+        "image_offset",
         "unique_region_count",
         "top1_correct_count",
         "top1_accuracy",

@@ -55,6 +55,7 @@ class FashionpediaReferringDataset:
         project_root: Path,
         max_samples: int | None = None,
         max_images: int | None = None,
+        image_offset: int = 0,
         mask_decoder: MaskDecoder | None = None,
     ) -> None:
         if max_samples is not None and max_samples < 0:
@@ -63,6 +64,10 @@ class FashionpediaReferringDataset:
             raise ValueError("max_images must be greater than or equal to zero")
         if max_samples is not None and max_images is not None:
             raise ValueError("max_samples and max_images are mutually exclusive")
+        if image_offset < 0:
+            raise ValueError("image_offset must be greater than or equal to zero")
+        if image_offset and max_images is None:
+            raise ValueError("image_offset requires max_images")
         self.index_path = Path(index_path)
         self.annotation_path = Path(annotation_path)
         self.project_root = Path(project_root)
@@ -81,6 +86,7 @@ class FashionpediaReferringDataset:
                 self.index_path,
                 max_samples=max_samples,
                 max_images=max_images,
+                image_offset=image_offset,
             )
         )
         source = read_fashionpedia_json(self.annotation_path)
@@ -261,11 +267,13 @@ def _scan_jsonl_index(
     *,
     max_samples: int | None,
     max_images: int | None,
+    image_offset: int,
 ) -> tuple[list[int], set[int], set[int]]:
     """Collect offsets for a query bound or an image-complete prefix."""
     offsets: list[int] = []
     annotation_ids: set[int] = set()
     image_ids: set[int] = set()
+    skipped_image_ids: set[int] = set()
     with index_path.open("rb") as index_file:
         while max_samples is None or len(offsets) < max_samples:
             offset = index_file.tell()
@@ -282,6 +290,14 @@ def _scan_jsonl_index(
                 raise ValueError(
                     f"Invalid referring record at byte offset {offset} in {index_path}."
                 ) from error
+            if sample.source_image_id in skipped_image_ids:
+                continue
+            if (
+                sample.source_image_id not in image_ids
+                and len(skipped_image_ids) < image_offset
+            ):
+                skipped_image_ids.add(sample.source_image_id)
+                continue
             if (
                 max_images is not None
                 and sample.source_image_id not in image_ids
