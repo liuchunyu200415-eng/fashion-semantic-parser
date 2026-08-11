@@ -1587,7 +1587,8 @@ Chinese or English left/right/upper/lower modifier. It converts candidate box
 centers to image-relative coordinates and adds a bounded directional prior to
 the learned cosine score. Queries with no supported modifier, or combined
 phrases such as "left and right cuffs", receive no adjustment. The default
-weight is zero, so existing evaluations remain reproducible.
+weight was zero during selection; the frozen development value and explicit
+zero-weight ablation are recorded below.
 
 Use `--spatial-weight` only for Fashionpedia development experiments. The
 evaluator reports the spatial-query count and spatial-only competitive Top-1
@@ -1603,3 +1604,12 @@ cannot be combined with a query-count-only boundary. Spatial weight candidates
 are chosen on the first development images, then compared against weight zero
 on later images before being frozen. The saved metrics record the offset so the
 two image groups remain auditable.
+
+The `0.10` spatial weight was then frozen as the Fashionpedia development
+baseline. On the disjoint next ten validation images it raised spatial
+competitive Top-1 and exact-set from `83.33%` to `91.67%` (two additional
+correct queries out of 24), while overall competitive Top-1 and exact-set rose
+from `87.07%`/`84.48%` to `88.79%`/`86.21%`. The project alignment config now
+stores `spatial_rerank_weight: 0.10`; `--spatial-weight 0` remains the explicit
+ablation path. This is still Fashionpedia development evidence using oracle
+part Masks, not the independent manual PRD acceptance result.

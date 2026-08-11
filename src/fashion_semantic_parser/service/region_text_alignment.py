@@ -25,6 +25,7 @@ class RegionTextAlignmentSettings(BaseModel):
     weight_decay: float = Field(default=1e-2, ge=0.0)
     training_steps: int = Field(default=20, ge=1)
     seed: int = Field(default=312, ge=0)
+    spatial_rerank_weight: float = Field(default=0.10, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def validate_projection_geometry(self) -> "RegionTextAlignmentSettings":

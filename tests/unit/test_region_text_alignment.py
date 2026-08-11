@@ -51,6 +51,7 @@ def test_alignment_config_matches_encoder_dimensions() -> None:
     assert settings.region_dimension == 384
     assert settings.hidden_dimension == 512
     assert settings.temperature == 0.07
+    assert settings.spatial_rerank_weight == 0.10
 
 
 def test_alignment_hidden_dimension_cannot_undercut_region_dimension() -> None:

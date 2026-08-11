@@ -35,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image-offset", type=int, default=0)
     parser.add_argument("--index", default=None)
     parser.add_argument("--annotations", default=None)
-    parser.add_argument("--spatial-weight", type=float, default=0.0)
+    parser.add_argument("--spatial-weight", type=float, default=None)
     parser.add_argument(
         "--checkpoint",
         default=DEFAULT_CHECKPOINT,
@@ -61,7 +61,7 @@ def main() -> None:
         raise ValueError("--image-offset cannot be negative")
     if args.image_offset and args.image_limit is None:
         raise ValueError("--image-offset requires --image-limit")
-    if not 0.0 <= args.spatial_weight <= 1.0:
+    if args.spatial_weight is not None and not 0.0 <= args.spatial_weight <= 1.0:
         raise ValueError("--spatial-weight must be between zero and one")
     add_src_to_python_path()
     try:
@@ -131,6 +131,11 @@ def main() -> None:
     )
     if text_embeddings.shape[1] != alignment_settings.text_dimension:
         raise ValueError("Text feature dimension does not match the checkpoint.")
+    spatial_weight = (
+        args.spatial_weight
+        if args.spatial_weight is not None
+        else alignment_settings.spatial_rerank_weight
+    )
     text_tensor = torch.from_numpy(text_embeddings).to(device=device)
     with torch.inference_mode():
         projected_text = projection(text_tensor).float().cpu().numpy()
@@ -171,7 +176,7 @@ def main() -> None:
             [region_box_by_id[value] for value in region_annotation_ids]
         ),
         image_sizes=image_sizes,
-        weight=args.spatial_weight,
+        weight=spatial_weight,
     )
 
     summary, cases = evaluate_image_candidate_retrieval(
@@ -201,7 +206,7 @@ def main() -> None:
             ),
             "unique_region_count": len(region_annotation_ids),
             "feature_extraction_seconds": feature_extraction_seconds,
-            "spatial_rerank_weight": args.spatial_weight,
+            "spatial_rerank_weight": spatial_weight,
             "spatial_modifier_query_count": sum(
                 modifier is not None for modifier in spatial_modifiers
             ),
