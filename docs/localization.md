@@ -1572,3 +1572,27 @@ cross-image pairs with the same target label. The training audit separates
 same-image, cross-image different-label, and excluded cross-image same-label
 pair counts. `global` and `same_image` remain available for reproducible
 ablation runs.
+
+The label-aware checkpoint reached only `72.16%` competitive Top-1 and `67.05%`
+competitive exact-set on the same image-complete development set. The global
+checkpoint remains the empirical baseline at `76.70%` and `70.45%`. Its grouped
+results show that appearance attributes are comparatively strong (`92.31%`
+competitive Top-1), while spatial (`66.07%`), relation (`69.57%`), and Chinese
+queries (`73.33%`) remain the main representation gaps.
+
+### Explicit Spatial Reranking
+
+The spatial baseline preserves the complete query and parses only an explicit
+Chinese or English left/right/upper/lower modifier. It converts candidate box
+centers to image-relative coordinates and adds a bounded directional prior to
+the learned cosine score. Queries with no supported modifier, or combined
+phrases such as "left and right cuffs", receive no adjustment. The default
+weight is zero, so existing evaluations remain reproducible.
+
+Use `--spatial-weight` only for Fashionpedia development experiments. The
+evaluator reports the spatial-query count and spatial-only competitive Top-1
+and exact-set metrics, and stores the parsed modifier with each case. This
+weight must be frozen before the independent manual PRD acceptance set; tuning
+on the acceptance set is not allowed. Explicit coordinates cover the current
+image-frame expressions only. Reference-object and garment-layer relations
+still require a separate relation model.

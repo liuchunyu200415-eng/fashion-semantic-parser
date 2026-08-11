@@ -10,12 +10,14 @@ from fashion_semantic_parser.service.region_text_alignment import (
     RegionTextAlignmentSettings,
     build_label_aware_eligible_mask,
     build_positive_region_mask,
+    build_spatial_score_adjustments,
     build_text_projection,
     evaluate_image_candidate_retrieval,
     extract_unique_region_features,
     load_region_text_alignment_settings,
     load_text_projection_checkpoint,
     multi_positive_contrastive_loss,
+    parse_spatial_modifier,
     positive_top1_accuracy,
     same_image_contrastive_loss,
 )
@@ -179,6 +181,57 @@ def test_eligible_mask_removes_ignored_pairs_from_loss_denominator() -> None:
     )
 
     assert filtered_loss.item() < unfiltered_loss.item()
+
+
+def test_spatial_parser_preserves_supported_complete_query_modifiers() -> None:
+    """Chinese and English direction text must reach explicit spatial reasoning."""
+    assert parse_spatial_modifier("衣服左侧的袖口") == "left"
+    assert parse_spatial_modifier("the pocket on the right side") == "right"
+    assert parse_spatial_modifier("the upper zipper on the garment") == "upper"
+    assert parse_spatial_modifier("衣服下方的纽扣") == "lower"
+    assert parse_spatial_modifier("the silver zipper") is None
+    assert parse_spatial_modifier("left and right cuffs") is None
+
+
+def test_spatial_adjustments_use_normalized_candidate_centers() -> None:
+    """Direction priors must be image-relative and bounded by the chosen weight."""
+    adjustments, modifiers = build_spatial_score_adjustments(
+        queries=["左边的口袋", "the right pocket", "lower zipper", "silver zipper"],
+        query_image_ids=[1, 1, 1, 1],
+        region_image_ids=[1, 1],
+        region_boxes_xyxy=np.asarray(
+            [[0.0, 0.0, 20.0, 20.0], [80.0, 80.0, 100.0, 100.0]],
+            dtype=np.float32,
+        ),
+        image_sizes={1: (100, 100)},
+        weight=0.2,
+    )
+
+    assert modifiers == ["left", "right", "lower", None]
+    assert adjustments[0].tolist() == pytest.approx([0.16, -0.16])
+    assert adjustments[1].tolist() == pytest.approx([-0.16, 0.16])
+    assert adjustments[2].tolist() == pytest.approx([-0.16, 0.16])
+    assert adjustments[3].tolist() == [0.0, 0.0]
+
+
+def test_retrieval_applies_spatial_score_adjustments() -> None:
+    """A right-side prior must resolve otherwise tied candidate similarities."""
+    summary, cases = evaluate_image_candidate_retrieval(
+        query_ids=["right-pocket"],
+        projected_text_features=np.asarray([[1.0, 0.0]], dtype=np.float32),
+        query_image_ids=[1],
+        query_target_ids=[(12,)],
+        query_dimensions=[("basic", "spatial")],
+        query_languages=["en"],
+        region_annotation_ids=[11, 12],
+        region_image_ids=[1, 1],
+        region_features=np.asarray([[1.0, 0.0], [1.0, 0.0]], dtype=np.float32),
+        score_adjustments=np.asarray([[-0.1, 0.1]], dtype=np.float32),
+    )
+
+    assert summary["competitive_top1_accuracy"] == 1.0
+    assert cases[0]["top1_annotation_id"] == 12
+    assert cases[0]["score_adjustment_applied"] is True
 
 
 def test_retrieval_reports_competitive_and_grouped_metrics_separately() -> None:

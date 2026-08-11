@@ -34,6 +34,7 @@ def parse_args() -> argparse.Namespace:
     limit_group.add_argument("--image-limit", type=int, default=None)
     parser.add_argument("--index", default=None)
     parser.add_argument("--annotations", default=None)
+    parser.add_argument("--spatial-weight", type=float, default=0.0)
     parser.add_argument(
         "--checkpoint",
         default=DEFAULT_CHECKPOINT,
@@ -55,6 +56,8 @@ def main() -> None:
         raise ValueError("--limit must be at least one")
     if args.image_limit is not None and args.image_limit < 1:
         raise ValueError("--image-limit must be at least one")
+    if not 0.0 <= args.spatial_weight <= 1.0:
+        raise ValueError("--spatial-weight must be between zero and one")
     add_src_to_python_path()
     try:
         import torch  # type: ignore[import-not-found]
@@ -75,6 +78,7 @@ def main() -> None:
         load_dinov2_region_settings,
     )
     from fashion_semantic_parser.service.region_text_alignment import (
+        build_spatial_score_adjustments,
         evaluate_image_candidate_retrieval,
         extract_unique_region_features,
         load_text_projection_checkpoint,
@@ -130,14 +134,39 @@ def main() -> None:
         [region_features_by_id[value] for value in region_annotation_ids]
     )
     region_image_by_id: dict[int, int] = {}
+    region_box_by_id: dict[int, np.ndarray] = {}
+    image_sizes: dict[int, tuple[int, int]] = {}
     for item in items:
-        for annotation_id in item.source_annotation_ids:
+        image_id = item.sample.source_image_id
+        image_sizes[image_id] = item.image_rgb.shape[:2]
+        for annotation_id, box in zip(
+            item.source_annotation_ids,
+            item.target_boxes,
+        ):
             image_id = item.sample.source_image_id
             previous = region_image_by_id.setdefault(annotation_id, image_id)
             if previous != image_id:
                 raise ValueError(
                     f"Annotation {annotation_id} belongs to multiple source images."
                 )
+            previous_box = region_box_by_id.setdefault(annotation_id, box)
+            if not np.allclose(previous_box, box, atol=1e-6):
+                raise ValueError(
+                    f"Annotation {annotation_id} has inconsistent target boxes."
+                )
+
+    query_texts = [item.sample.query for item in items]
+    region_image_ids = [region_image_by_id[value] for value in region_annotation_ids]
+    spatial_adjustments, spatial_modifiers = build_spatial_score_adjustments(
+        queries=query_texts,
+        query_image_ids=[item.sample.source_image_id for item in items],
+        region_image_ids=region_image_ids,
+        region_boxes_xyxy=np.stack(
+            [region_box_by_id[value] for value in region_annotation_ids]
+        ),
+        image_sizes=image_sizes,
+        weight=args.spatial_weight,
+    )
 
     summary, cases = evaluate_image_candidate_retrieval(
         query_ids=[item.sample.id for item in items],
@@ -147,9 +176,16 @@ def main() -> None:
         query_dimensions=[tuple(item.sample.dimensions) for item in items],
         query_languages=[item.sample.language for item in items],
         region_annotation_ids=region_annotation_ids,
-        region_image_ids=[region_image_by_id[value] for value in region_annotation_ids],
+        region_image_ids=region_image_ids,
         region_features=region_features,
+        score_adjustments=spatial_adjustments,
     )
+    for case, item, modifier in zip(cases, items, spatial_modifiers):
+        case["query"] = item.sample.query
+        case["target_label"] = item.sample.target_label
+        case["template_id"] = item.sample.template_id
+        case["spatial_modifier"] = modifier
+    spatial_summary = summary["by_dimension"].get("spatial", {})
     annotated_part_coverage = args.image_limit is not None and using_default_index
     summary.update(
         {
@@ -159,6 +195,19 @@ def main() -> None:
             ),
             "unique_region_count": len(region_annotation_ids),
             "feature_extraction_seconds": feature_extraction_seconds,
+            "spatial_rerank_weight": args.spatial_weight,
+            "spatial_modifier_query_count": sum(
+                modifier is not None for modifier in spatial_modifiers
+            ),
+            "spatial_competitive_query_count": spatial_summary.get(
+                "competitive_query_count", 0
+            ),
+            "spatial_competitive_top1_accuracy": spatial_summary.get(
+                "competitive_top1_accuracy"
+            ),
+            "spatial_competitive_exact_set_at_target_count_rate": (
+                spatial_summary.get("competitive_exact_set_at_target_count_rate")
+            ),
             "checkpoint_path": str(resolve_project_path(args.checkpoint)),
             "selection_scope": (
                 "complete_image_prefix"
@@ -202,6 +251,11 @@ def main() -> None:
         "competitive_top1_accuracy",
         "competitive_exact_set_correct_count",
         "competitive_exact_set_at_target_count_rate",
+        "spatial_rerank_weight",
+        "spatial_modifier_query_count",
+        "spatial_competitive_query_count",
+        "spatial_competitive_top1_accuracy",
+        "spatial_competitive_exact_set_at_target_count_rate",
         "selection_scope",
         "candidate_region_scope",
         "fashionpedia_annotated_part_candidate_coverage",

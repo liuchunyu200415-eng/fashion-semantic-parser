@@ -1,14 +1,17 @@
 """Train and evaluate projection between text and DINOv2 region features."""
 
+import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import numpy as np
 import yaml
 from pydantic import BaseModel, Field, model_validator
 
 from fashion_semantic_parser.common.paths import resolve_project_path
+
+SpatialModifier = Literal["left", "right", "upper", "lower"]
 
 
 class RegionTextAlignmentSettings(BaseModel):
@@ -272,6 +275,86 @@ def build_label_aware_eligible_mask(
     return np.asarray(eligible, dtype=np.bool_), audit
 
 
+def parse_spatial_modifier(query: str) -> SpatialModifier | None:
+    """Parse the supported image-frame modifier without collapsing target text."""
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("Spatial parsing requires a non-empty complete query.")
+    normalized = " ".join(query.lower().strip().split())
+    patterns: tuple[tuple[SpatialModifier, tuple[str, ...], str], ...] = (
+        ("left", ("左侧", "左边", "左方"), "left"),
+        ("right", ("右侧", "右边", "右方"), "right"),
+        ("upper", ("上方", "上部", "上边"), "upper"),
+        ("lower", ("下方", "下部", "下边"), "lower"),
+    )
+    matched = [
+        modifier
+        for modifier, chinese_tokens, english_token in patterns
+        if any(token in normalized for token in chinese_tokens)
+        or re.search(rf"\b{english_token}\b", normalized)
+    ]
+    if len(matched) > 1:
+        return None
+    return matched[0] if matched else None
+
+
+def build_spatial_score_adjustments(
+    *,
+    queries: list[str],
+    query_image_ids: list[int],
+    region_image_ids: list[int],
+    region_boxes_xyxy: np.ndarray,
+    image_sizes: dict[int, tuple[int, int]],
+    weight: float,
+) -> tuple[np.ndarray, list[SpatialModifier | None]]:
+    """Build a bounded additive left/right/upper/lower candidate score prior."""
+    if not 0.0 <= weight <= 1.0:
+        raise ValueError("Spatial rerank weight must be between zero and one.")
+    if len(queries) != len(query_image_ids):
+        raise ValueError("queries must match query_image_ids.")
+    boxes = np.asarray(region_boxes_xyxy, dtype=np.float32)
+    if boxes.shape != (len(region_image_ids), 4):
+        raise ValueError("Region boxes must have shape Nx4.")
+    if not np.all(np.isfinite(boxes)):
+        raise ValueError("Region boxes must contain finite coordinates.")
+    if np.any(boxes[:, 2] <= boxes[:, 0]) or np.any(boxes[:, 3] <= boxes[:, 1]):
+        raise ValueError("Region boxes must have positive area.")
+
+    modifiers = [parse_spatial_modifier(query) for query in queries]
+    adjustments = np.zeros(
+        (len(queries), len(region_image_ids)),
+        dtype=np.float32,
+    )
+    for query_index, (image_id, modifier) in enumerate(zip(query_image_ids, modifiers)):
+        if modifier is None or weight == 0.0:
+            continue
+        if image_id not in image_sizes:
+            raise ValueError(f"Missing image size for spatial query image {image_id}.")
+        height, width = image_sizes[image_id]
+        if height < 1 or width < 1:
+            raise ValueError(f"Invalid image size for source image {image_id}.")
+        candidate_indices = [
+            index for index, value in enumerate(region_image_ids) if value == image_id
+        ]
+        centers_x = (boxes[candidate_indices, 0] + boxes[candidate_indices, 2]) / (
+            2.0 * width
+        )
+        centers_y = (boxes[candidate_indices, 1] + boxes[candidate_indices, 3]) / (
+            2.0 * height
+        )
+        centers_x = np.clip(centers_x, 0.0, 1.0)
+        centers_y = np.clip(centers_y, 0.0, 1.0)
+        if modifier == "left":
+            prior = 1.0 - centers_x
+        elif modifier == "right":
+            prior = centers_x
+        elif modifier == "upper":
+            prior = 1.0 - centers_y
+        else:
+            prior = centers_y
+        adjustments[query_index, candidate_indices] = weight * (2.0 * prior - 1.0)
+    return adjustments, modifiers
+
+
 def same_image_contrastive_loss(
     text_features: Any,
     region_features: Any,
@@ -372,6 +455,7 @@ def evaluate_image_candidate_retrieval(
     region_annotation_ids: list[int],
     region_image_ids: list[int],
     region_features: np.ndarray,
+    score_adjustments: np.ndarray | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Evaluate query-to-region ranking within each selected source image."""
     text = _normalize_numpy_features(projected_text_features, name="text")
@@ -395,6 +479,17 @@ def evaluate_image_candidate_retrieval(
         raise ValueError("Region metadata lengths must match region feature rows.")
     if len(region_annotation_ids) != len(set(region_annotation_ids)):
         raise ValueError("Region annotation IDs must be unique during evaluation.")
+    if score_adjustments is None:
+        adjustments = np.zeros(
+            (query_count, len(region_annotation_ids)),
+            dtype=np.float32,
+        )
+    else:
+        adjustments = np.asarray(score_adjustments, dtype=np.float32)
+        if adjustments.shape != (query_count, len(region_annotation_ids)):
+            raise ValueError("Score adjustments must have query by region shape.")
+        if not np.all(np.isfinite(adjustments)):
+            raise ValueError("Score adjustments must contain finite values.")
 
     candidates_by_image: dict[int, list[int]] = defaultdict(list)
     for region_index, image_id in enumerate(region_image_ids):
@@ -414,6 +509,7 @@ def evaluate_image_candidate_retrieval(
                 f"Query {query_id} is missing target candidates: {missing}"
             )
         scores = regions[candidate_indices] @ text[query_index]
+        scores = scores + adjustments[query_index, candidate_indices]
         ranked_offsets = np.argsort(-scores, kind="stable")
         ranked_ids = [candidate_ids[offset] for offset in ranked_offsets]
         top1_correct = ranked_ids[0] in target_ids
@@ -439,6 +535,9 @@ def evaluate_image_candidate_retrieval(
                 "top1_correct": top1_correct,
                 "exact_set_at_target_count": exact_set,
                 "reciprocal_rank": 1.0 / first_positive_rank,
+                "score_adjustment_applied": bool(
+                    np.any(adjustments[query_index, candidate_indices] != 0.0)
+                ),
             }
         )
 
