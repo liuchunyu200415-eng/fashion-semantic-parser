@@ -1325,7 +1325,8 @@ decision, not a claim that the PRD mandates PyTorch 2.1.2. Create the isolated
 foundation-training environment from the repository root:
 
 ```bash
-conda env create -f environment/prd_3_1_2_training.yaml
+CONDARC=/dev/null conda env create -f environment/prd_3_1_2_training.yaml
+source /root/miniconda3/etc/profile.d/conda.sh
 conda activate fashion-prd-312
 python scripts/check_prd_312_training_env.py
 ```
