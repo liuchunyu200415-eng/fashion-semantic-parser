@@ -54,10 +54,15 @@ class FashionpediaReferringDataset:
         annotation_path: Path,
         project_root: Path,
         max_samples: int | None = None,
+        max_images: int | None = None,
         mask_decoder: MaskDecoder | None = None,
     ) -> None:
         if max_samples is not None and max_samples < 0:
             raise ValueError("max_samples must be greater than or equal to zero")
+        if max_images is not None and max_images < 0:
+            raise ValueError("max_images must be greater than or equal to zero")
+        if max_samples is not None and max_images is not None:
+            raise ValueError("max_samples and max_images are mutually exclusive")
         self.index_path = Path(index_path)
         self.annotation_path = Path(annotation_path)
         self.project_root = Path(project_root)
@@ -72,7 +77,11 @@ class FashionpediaReferringDataset:
 
         self._mask_decoder = mask_decoder or decode_coco_mask
         self._offsets, referenced_annotation_ids, referenced_image_ids = (
-            _scan_jsonl_index(self.index_path, max_samples=max_samples)
+            _scan_jsonl_index(
+                self.index_path,
+                max_samples=max_samples,
+                max_images=max_images,
+            )
         )
         source = read_fashionpedia_json(self.annotation_path)
         category_by_id = category_records_by_id(dict_records(source.get("categories")))
@@ -251,8 +260,9 @@ def _scan_jsonl_index(
     index_path: Path,
     *,
     max_samples: int | None,
+    max_images: int | None,
 ) -> tuple[list[int], set[int], set[int]]:
-    """Collect byte offsets plus referenced source IDs in one bounded scan."""
+    """Collect offsets for a query bound or an image-complete prefix."""
     offsets: list[int] = []
     annotation_ids: set[int] = set()
     image_ids: set[int] = set()
@@ -272,6 +282,12 @@ def _scan_jsonl_index(
                 raise ValueError(
                     f"Invalid referring record at byte offset {offset} in {index_path}."
                 ) from error
+            if (
+                max_images is not None
+                and sample.source_image_id not in image_ids
+                and len(image_ids) >= max_images
+            ):
+                break
             offsets.append(offset)
             image_ids.add(sample.source_image_id)
             annotation_ids.update(

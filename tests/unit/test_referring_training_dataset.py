@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import cv2
 import numpy as np
@@ -156,6 +157,71 @@ def test_dataset_rejects_blank_jsonl_record(tmp_path: Path) -> None:
         )
 
 
+def test_dataset_image_limit_keeps_complete_query_groups(tmp_path: Path) -> None:
+    """An image bound cannot truncate expressions belonging to its last image."""
+    index_path, annotation_path = _write_source(tmp_path)
+    first_sample = json.loads(index_path.read_text(encoding="utf-8"))
+    second_first_image_sample = dict(first_sample)
+    second_first_image_sample["id"] = "fashionpedia-train-10-pocket-basic-en-101-102"
+    second_first_image_sample["query"] = "the pockets on the garment"
+    second_first_image_sample["language"] = "en"
+    second_first_image_sample["template_id"] = "basic-en"
+    second_image_sample = _add_source_image(
+        tmp_path=tmp_path,
+        annotation_path=annotation_path,
+        sample=first_sample,
+        image_id=20,
+        annotation_ids=(201, 202),
+        file_name="images/b.png",
+    )
+    third_image_sample = _add_source_image(
+        tmp_path=tmp_path,
+        annotation_path=annotation_path,
+        sample=first_sample,
+        image_id=30,
+        annotation_ids=(301, 302),
+        file_name="images/c.png",
+    )
+    index_path.write_text(
+        "".join(
+            json.dumps(sample) + "\n"
+            for sample in (
+                first_sample,
+                second_first_image_sample,
+                second_image_sample,
+                third_image_sample,
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    dataset = FashionpediaReferringDataset(
+        index_path=index_path,
+        annotation_path=annotation_path,
+        project_root=tmp_path,
+        max_images=2,
+        mask_decoder=_polygon_decoder,
+    )
+
+    assert len(dataset) == 3
+    assert [dataset[index].sample.source_image_id for index in range(3)] == [10, 10, 20]
+
+
+def test_dataset_rejects_simultaneous_sample_and_image_limits(tmp_path: Path) -> None:
+    """Callers must choose either a query prefix or an image-complete prefix."""
+    index_path, annotation_path = _write_source(tmp_path)
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        FashionpediaReferringDataset(
+            index_path=index_path,
+            annotation_path=annotation_path,
+            project_root=tmp_path,
+            max_samples=1,
+            max_images=1,
+            mask_decoder=_polygon_decoder,
+        )
+
+
 def _write_source(tmp_path: Path) -> tuple[Path, Path]:
     """Write one two-target source image, annotation file, and query record."""
     image_path = tmp_path / "images" / "a.png"
@@ -213,6 +279,40 @@ def _write_source(tmp_path: Path) -> tuple[Path, Path]:
     index_path = tmp_path / "referring.jsonl"
     index_path.write_text(json.dumps(sample) + "\n", encoding="utf-8")
     return index_path, annotation_path
+
+
+def _add_source_image(
+    *,
+    tmp_path: Path,
+    annotation_path: Path,
+    sample: dict[str, Any],
+    image_id: int,
+    annotation_ids: tuple[int, int],
+    file_name: str,
+) -> dict[str, Any]:
+    """Append one equivalent source image and return its referring sample."""
+    image = np.zeros((12, 16, 3), dtype=np.uint8)
+    assert cv2.imwrite(str(tmp_path / file_name), image)
+    source = json.loads(annotation_path.read_text(encoding="utf-8"))
+    source["images"].append(
+        {"id": image_id, "file_name": file_name, "width": 16, "height": 12}
+    )
+    for source_annotation, annotation_id in zip(
+        source["annotations"][:2], annotation_ids
+    ):
+        annotation = dict(source_annotation)
+        annotation["id"] = annotation_id
+        annotation["image_id"] = image_id
+        source["annotations"].append(annotation)
+    annotation_path.write_text(json.dumps(source), encoding="utf-8")
+
+    result = cast(dict[str, Any], json.loads(json.dumps(sample)))
+    result["id"] = f"fashionpedia-train-{image_id}-pocket-basic-zh"
+    result["source_image_id"] = image_id
+    result["image_path"] = file_name
+    for target, annotation_id in zip(result["targets"], annotation_ids):
+        target["source_annotation_id"] = annotation_id
+    return result
 
 
 def _polygon_decoder(segmentation: object, height: int, width: int) -> np.ndarray:

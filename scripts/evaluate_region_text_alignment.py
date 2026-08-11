@@ -29,7 +29,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--split", choices=("train", "validation"), default="validation"
     )
-    parser.add_argument("--limit", type=int, default=8)
+    limit_group = parser.add_mutually_exclusive_group()
+    limit_group.add_argument("--limit", type=int, default=None)
+    limit_group.add_argument("--image-limit", type=int, default=None)
     parser.add_argument("--index", default=None)
     parser.add_argument("--annotations", default=None)
     parser.add_argument(
@@ -46,8 +48,13 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """Load frozen features, rank same-image candidates, and save audit records."""
     args = parse_args()
-    if args.limit < 1:
+    sample_limit = args.limit if args.image_limit is None else None
+    if sample_limit is None and args.image_limit is None:
+        sample_limit = 8
+    if sample_limit is not None and sample_limit < 1:
         raise ValueError("--limit must be at least one")
+    if args.image_limit is not None and args.image_limit < 1:
+        raise ValueError("--image-limit must be at least one")
     add_src_to_python_path()
     try:
         import torch  # type: ignore[import-not-found]
@@ -74,6 +81,7 @@ def main() -> None:
     )
 
     project_settings = load_settings()
+    using_default_index = args.index is None
     index = args.index or (
         "data/processed/autodl/localization/"
         f"fashionpedia_referring_{args.split}.jsonl"
@@ -90,7 +98,8 @@ def main() -> None:
         index_path=resolve_project_path(index),
         annotation_path=resolve_project_path(annotations),
         project_root=PROJECT_ROOT,
-        max_samples=args.limit,
+        max_samples=sample_limit,
+        max_images=args.image_limit,
     )
     items = [dataset[index] for index in range(len(dataset))]
     if not items:
@@ -141,13 +150,27 @@ def main() -> None:
         region_image_ids=[region_image_by_id[value] for value in region_annotation_ids],
         region_features=region_features,
     )
+    annotated_part_coverage = args.image_limit is not None and using_default_index
     summary.update(
         {
             "split": args.split,
+            "selected_image_count": len(
+                {item.sample.source_image_id for item in items}
+            ),
             "unique_region_count": len(region_annotation_ids),
             "feature_extraction_seconds": feature_extraction_seconds,
             "checkpoint_path": str(resolve_project_path(args.checkpoint)),
-            "candidate_region_scope": "selected_query_target_union_per_image",
+            "selection_scope": (
+                "complete_image_prefix"
+                if args.image_limit is not None
+                else "query_prefix"
+            ),
+            "candidate_region_scope": (
+                "all_fashionpedia_part_masks_per_selected_image"
+                if annotated_part_coverage
+                else "selected_query_target_union_per_image"
+            ),
+            "fashionpedia_annotated_part_candidate_coverage": annotated_part_coverage,
             "full_image_candidate_coverage": False,
             "mask_localization_evaluated": False,
             "prd_accuracy_92_passed": None,
@@ -167,6 +190,7 @@ def main() -> None:
     keys = (
         "split",
         "query_count",
+        "selected_image_count",
         "unique_region_count",
         "top1_correct_count",
         "top1_accuracy",
@@ -178,7 +202,9 @@ def main() -> None:
         "competitive_top1_accuracy",
         "competitive_exact_set_correct_count",
         "competitive_exact_set_at_target_count_rate",
+        "selection_scope",
         "candidate_region_scope",
+        "fashionpedia_annotated_part_candidate_coverage",
         "full_image_candidate_coverage",
         "mask_localization_evaluated",
         "prd_accuracy_92_passed",

@@ -24,7 +24,9 @@ def parse_args() -> argparse.Namespace:
         description="Train only the BGE-M3-to-DINOv2 alignment projection."
     )
     parser.add_argument("--split", choices=("train", "validation"), default="train")
-    parser.add_argument("--limit", type=int, default=8)
+    limit_group = parser.add_mutually_exclusive_group()
+    limit_group.add_argument("--limit", type=int, default=None)
+    limit_group.add_argument("--image-limit", type=int, default=None)
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--index", default=None)
     parser.add_argument("--annotations", default=None)
@@ -38,8 +40,13 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """Extract frozen features once, train one small head, and save evidence."""
     args = parse_args()
-    if args.limit < 2:
+    sample_limit = args.limit if args.image_limit is None else None
+    if sample_limit is None and args.image_limit is None:
+        sample_limit = 8
+    if sample_limit is not None and sample_limit < 2:
         raise ValueError("--limit must be at least two")
+    if args.image_limit is not None and args.image_limit < 1:
+        raise ValueError("--image-limit must be at least one")
     if args.steps is not None and args.steps < 1:
         raise ValueError("--steps must be at least one")
     add_src_to_python_path()
@@ -94,7 +101,8 @@ def main() -> None:
         index_path=resolve_project_path(index),
         annotation_path=resolve_project_path(annotations),
         project_root=PROJECT_ROOT,
-        max_samples=args.limit,
+        max_samples=sample_limit,
+        max_images=args.image_limit,
     )
     items = [dataset[index] for index in range(len(dataset))]
     if len(items) < 2:
@@ -255,6 +263,10 @@ def main() -> None:
     metrics = {
         "split": args.split,
         "sample_count": len(items),
+        "selected_image_count": len(set(query_image_ids)),
+        "selection_scope": (
+            "complete_image_prefix" if args.image_limit is not None else "query_prefix"
+        ),
         "unique_region_count": len(region_annotation_ids),
         "positive_pair_count": int(positive_mask_array.sum()),
         "negative_pair_count": negative_pair_count,

@@ -1523,3 +1523,38 @@ the eight-query head to `74.80%`, and competitive exact-set-at-target-count from
 `29.27%` to `69.11%`. This confirms an alignment signal but is not the corrected
 training objective, full candidate coverage, Mask localization, or PRD
 acceptance evidence.
+
+The corrected same-image checkpoint reached `73.17%` competitive Top-1 and
+`66.67%` competitive exact-set on the same 128-expression validation prefix.
+That is slightly below the global-negative checkpoint by two and three queries,
+respectively. The result does not justify selecting either objective because a
+query-count prefix can stop midway through one image and therefore omit valid
+same-image Fashionpedia part candidates.
+
+Both alignment scripts now accept mutually exclusive `--limit` and
+`--image-limit` bounds. `--image-limit` consumes every generated expression for
+each selected image before stopping. Because every valid Fashionpedia part Mask
+has a basic bilingual expression, the union then covers all valid annotated
+part Masks for those images. This is recorded as
+`fashionpedia_annotated_part_candidate_coverage: true`, while broader full-image
+and open-vocabulary proposal coverage remains false.
+
+Run the next validation audit on ten complete images:
+
+```bash
+OMP_NUM_THREADS=1 \
+TOKENIZERS_PARALLELISM=false \
+TRANSFORMERS_OFFLINE=1 \
+HF_HUB_OFFLINE=1 \
+conda run -n fashion-prd-312 \
+  python -u scripts/evaluate_region_text_alignment.py \
+  --split validation \
+  --image-limit 10 \
+  --checkpoint outputs/localization/dinov2_bge_alignment_train128_same_image/alignment_head_smoke.pt \
+  --output-dir outputs/localization/dinov2_bge_alignment_validation_images10
+```
+
+This image-complete Fashionpedia retrieval audit is stricter than the old query
+prefix but still evaluates oracle source Masks as candidates. It does not test
+whether an open-vocabulary proposal model finds unseen parts, nor whether
+SAM-HQ produces the accepted Mask, so it remains below PRD acceptance.
