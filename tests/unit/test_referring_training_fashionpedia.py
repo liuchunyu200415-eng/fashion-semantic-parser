@@ -188,6 +188,37 @@ def test_training_sample_rejects_spatial_without_reference_frame() -> None:
         )
 
 
+def test_preparation_reports_bounded_progress(tmp_path: Path) -> None:
+    """Full conversion should expose progress without logging every sample."""
+    root = _fashionpedia_root(tmp_path)
+    source = {
+        "categories": [{"id": 32, "name": "pocket"}],
+        "images": [
+            {"id": 10, "file_name": "a.jpg", "width": 100, "height": 100},
+            {"id": 20, "file_name": "b.jpg", "width": 100, "height": 100},
+        ],
+        "annotations": [
+            _annotation(1, 10, 32, [10, 10, 20, 20]),
+            _annotation(2, 20, 32, [20, 20, 20, 20]),
+        ],
+    }
+    _write_train_source(root, source, image_names=("a.jpg", "b.jpg"))
+    updates: list[tuple[int, int, int]] = []
+
+    prepare_fashionpedia_referring_training_data(
+        root=root,
+        split="train",
+        output_path=tmp_path / "referring.jsonl",
+        summary_output_path=tmp_path / "summary.json",
+        progress_every=2,
+        progress_callback=lambda processed, total, samples: updates.append(
+            (processed, total, samples)
+        ),
+    )
+
+    assert updates == [(1, 2, 0), (2, 2, 2)]
+
+
 def _fashionpedia_root(tmp_path: Path) -> Path:
     root = tmp_path / "fashionpedia"
     (root / "annotations").mkdir(parents=True)

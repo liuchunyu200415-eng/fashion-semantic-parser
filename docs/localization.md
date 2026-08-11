@@ -1276,3 +1276,5 @@ sample, target-reference, dimension, language, category, relation-association,
 ambiguous-spatial, invalid-annotation, and missing-image counts. This index is
 training-data preparation only: DINOv2 alignment training, independent manual
 acceptance data, `92%` accuracy, and `30 ms` latency remain pending.
+The full converter prints one compact progress line per `1000` selected images;
+use `--progress-every` to change that interval.

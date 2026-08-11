@@ -3,7 +3,7 @@
 import json
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -172,6 +172,8 @@ def prepare_fashionpedia_referring_training_data(
     limit: int | None = None,
     min_spatial_separation: float = 0.05,
     max_attributes_per_annotation: int = 2,
+    progress_every: int = 1000,
+    progress_callback: Callable[[int, int, int], None] | None = None,
 ) -> ReferringTrainingPreparationSummary:
     """Write compact language records that reference official source Masks."""
     if split not in ("train", "validation"):
@@ -182,6 +184,8 @@ def prepare_fashionpedia_referring_training_data(
         raise ValueError("min_spatial_separation must be between zero and one")
     if max_attributes_per_annotation < 0:
         raise ValueError("max_attributes_per_annotation cannot be negative")
+    if progress_every < 1:
+        raise ValueError("progress_every must be at least one")
 
     annotation_path, image_root = resolve_fashionpedia_split_paths(root, split)
     source = read_fashionpedia_json(annotation_path)
@@ -222,10 +226,20 @@ def prepare_fashionpedia_referring_training_data(
     relation_association_count = 0
     unmatched_relation_part_count = 0
     spatial_ambiguous_group_count = 0
+    last_progress_index = 0
 
     try:
         with tmp_output.open("w", encoding="utf-8") as output_file:
-            for image in selected_images:
+            for image_index, image in enumerate(selected_images, start=1):
+                if progress_callback is not None and (
+                    image_index == 1 or image_index % progress_every == 0
+                ):
+                    progress_callback(
+                        image_index,
+                        len(selected_images),
+                        output_sample_count,
+                    )
+                    last_progress_index = image_index
                 image_id = image.get("id")
                 file_name = image.get("file_name")
                 width = image.get("width")
@@ -276,6 +290,14 @@ def prepare_fashionpedia_referring_training_data(
                     template_counts[sample.template_id] += 1
                     for dimension in sample.dimensions:
                         dimension_counts[dimension] += 1
+            if progress_callback is not None and last_progress_index != len(
+                selected_images
+            ):
+                progress_callback(
+                    len(selected_images),
+                    len(selected_images),
+                    output_sample_count,
+                )
         if missing_image_count:
             raise FileNotFoundError(
                 f"Fashionpedia {split} is missing {missing_image_count} image(s) "

@@ -28,6 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--min-spatial-separation", type=float, default=0.05)
     parser.add_argument("--max-attributes-per-annotation", type=int, default=2)
+    parser.add_argument("--progress-every", type=int, default=1000)
     return parser.parse_args()
 
 
@@ -59,8 +60,18 @@ def main() -> None:
         limit=args.limit,
         min_spatial_separation=args.min_spatial_separation,
         max_attributes_per_annotation=args.max_attributes_per_annotation,
+        progress_every=args.progress_every,
+        progress_callback=_print_progress,
     )
     print(json.dumps(summary.model_dump(mode="json"), ensure_ascii=False, indent=2))
+
+
+def _print_progress(processed: int, total: int, sample_count: int) -> None:
+    """Print compact progress without dumping individual training records."""
+    print(
+        f"[{processed}/{total}] samples={sample_count}",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
