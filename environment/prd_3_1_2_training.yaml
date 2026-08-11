@@ -1,0 +1,12 @@
+name: fashion-prd-312
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10.12
+  - pip=24.0
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu121
+      - torch==2.1.2+cu121
+      - torchvision==0.16.2+cu121
+      - pycocotools>=2.0.7,<3
+      - -e .

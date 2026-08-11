@@ -1315,3 +1315,23 @@ The initial smoke deliberately uses `workers=0`. A full-dataset multi-worker
 memory and throughput profile is still required before choosing the production
 training worker count. Successful Mask loading does not yet establish DINOv2
 alignment quality or PRD accuracy and latency compliance.
+
+### PRD 3.1.2 Training Environment
+
+The PRD requires Python `3.10.12` exactly. It lists PyTorch but does not assign a
+PyTorch version, so this project pins the already validated implementation
+combination PyTorch `2.1.2` with CUDA `12.1`; that pin is a reproducibility
+decision, not a claim that the PRD mandates PyTorch 2.1.2. Create the isolated
+foundation-training environment from the repository root:
+
+```bash
+conda env create -f environment/prd_3_1_2_training.yaml
+conda activate fashion-prd-312
+python scripts/check_prd_312_training_env.py
+```
+
+The check requires exact Python `3.10.12`, the pinned CUDA-enabled PyTorch,
+OpenCV, and `pycocotools`. This is only the foundation-training gate. Separate
+checks must still establish the official DINOv2 model, the selected text encoder
+from the PRD stack, SAM-HQ `1.0+`, ONNX Runtime `1.17`, and TensorRT `8.6.1`
+before model or deployment compliance can be claimed.
