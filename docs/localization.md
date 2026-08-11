@@ -1511,10 +1511,11 @@ targets are excluded from the contrastive loss and counted separately.
 
 Checkpoints created by the corrected path record
 `negative_scope: same_image`. Training metrics report both the same-image
-negative-pair count used for gradients and the global cross-image pair count
-that was excluded. Initial/final Top-1 is also computed by the same per-image
-retrieval evaluator used on validation, so the train and validation metrics now
-have matching candidate semantics.
+negative-pair count used for gradients, the total global negative-pair count,
+and their difference as the cross-image pair count that was excluded.
+Initial/final Top-1 is also computed by the same per-image retrieval evaluator
+used on validation, so the train and validation metrics now have matching
+candidate semantics.
 
 The earlier global-negative 128-query checkpoint remains experimental history.
 On 128 validation expressions it improved competitive Top-1 from `33.33%` for

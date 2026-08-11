@@ -258,7 +258,10 @@ def main() -> None:
         "unique_region_count": len(region_annotation_ids),
         "positive_pair_count": int(positive_mask_array.sum()),
         "negative_pair_count": negative_pair_count,
-        "global_negative_pair_count_excluded": global_negative_pair_count,
+        "global_negative_pair_count": global_negative_pair_count,
+        "cross_image_negative_pair_count_excluded": (
+            global_negative_pair_count - negative_pair_count
+        ),
         "negative_scope": "same_image",
         "competitive_image_count": competitive_image_count,
         "text_dimension": int(text_embeddings.shape[1]),
