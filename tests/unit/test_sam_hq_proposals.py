@@ -108,15 +108,45 @@ def test_wrong_mask_shape_is_rejected() -> None:
         generator.generate(np.zeros((20, 30, 3), dtype=np.uint8))
 
 
-def test_invalid_quality_score_is_rejected() -> None:
+def test_unbounded_finite_predicted_iou_is_retained() -> None:
     generator = SAMHQAutomaticProposalGenerator(
         SAMHQProposalSettings(device="cpu", precision="fp32"),
         generator=_FakeGenerator(
-            [_record((1, 1, 3, 3), predicted_iou=1.1, stability_score=0.9)]
+            [_record((1, 1, 6, 6), predicted_iou=1.1, stability_score=0.9)]
         ),
     )
 
-    with pytest.raises(ModelNotReadyError, match="predicted_iou"):
+    proposals = generator.generate(np.zeros((20, 30, 3), dtype=np.uint8))
+
+    assert proposals[0].predicted_iou == 1.1
+
+
+@pytest.mark.parametrize(
+    ("predicted_iou", "stability_score", "message"),
+    [
+        (float("nan"), 0.9, "predicted_iou must be finite"),
+        (0.9, 1.1, "stability_score must be in"),
+    ],
+)
+def test_invalid_quality_score_is_rejected(
+    predicted_iou: float,
+    stability_score: float,
+    message: str,
+) -> None:
+    generator = SAMHQAutomaticProposalGenerator(
+        SAMHQProposalSettings(device="cpu", precision="fp32"),
+        generator=_FakeGenerator(
+            [
+                _record(
+                    (1, 1, 6, 6),
+                    predicted_iou=predicted_iou,
+                    stability_score=stability_score,
+                )
+            ]
+        ),
+    )
+
+    with pytest.raises(ModelNotReadyError, match=message):
         generator.generate(np.zeros((20, 30, 3), dtype=np.uint8))
 
 

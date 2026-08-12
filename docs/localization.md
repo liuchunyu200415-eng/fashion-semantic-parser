@@ -1669,6 +1669,9 @@ missing installation before the import check.
 Python import caches inside the external checkout are allowed as untracked
 runtime files; tracked SAM-HQ source modifications still stop the setup before
 the pinned checkout is changed.
+SAM-HQ's `predicted_iou` is retained as a finite regression score and is not
+clamped to `[0, 1]`; the official quality head can emit values slightly outside
+that interval. `stability_score` remains strictly validated in `[0, 1]`.
 
 The primary gate is `proposal_recall50`, accompanied by `proposal_recall75`
 and all-GT mean best Mask IoU. This is independent best-proposal recall rather

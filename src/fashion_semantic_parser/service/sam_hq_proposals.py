@@ -257,10 +257,15 @@ class SAMHQAutomaticProposalGenerator:
             raise ModelNotReadyError(
                 "SAM-HQ proposal Mask dimensions do not match the input image."
             )
-        predicted_iou = _quality_score(record.get("predicted_iou"), "predicted_iou")
+        predicted_iou = _quality_score(
+            record.get("predicted_iou"),
+            "predicted_iou",
+            bounded=False,
+        )
         stability_score = _quality_score(
             record.get("stability_score"),
             "stability_score",
+            bounded=True,
         )
         area = int(mask.sum())
         if area == 0:
@@ -302,12 +307,14 @@ def load_sam_hq_proposal_settings(
     return cast(SAMHQProposalSettings, SAMHQProposalSettings.model_validate(raw))
 
 
-def _quality_score(value: Any, name: str) -> float:
-    """Validate one finite normalized external quality score."""
+def _quality_score(value: Any, name: str, *, bounded: bool) -> float:
+    """Validate one finite external score and optional normalized bounds."""
     try:
         score = float(value)
     except (TypeError, ValueError) as error:
         raise ModelNotReadyError(f"SAM-HQ proposal {name} is invalid.") from error
-    if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+    if not math.isfinite(score):
+        raise ModelNotReadyError(f"SAM-HQ proposal {name} must be finite.")
+    if bounded and not 0.0 <= score <= 1.0:
         raise ModelNotReadyError(f"SAM-HQ proposal {name} must be in [0, 1].")
     return score
