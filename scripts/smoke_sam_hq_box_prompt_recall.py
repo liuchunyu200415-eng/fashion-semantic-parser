@@ -39,6 +39,11 @@ class _CaseRow(TypedDict):
     mask_box: tuple[float, float, float, float] | None
     mask_quality: float
     mask_iou: float
+    box_expansion_ratio: float
+    candidate_count: int
+    score_selected_candidate_index: int
+    oracle_best_candidate_index: int
+    oracle_best_mask_iou: float
 
 
 class _ImageRow(TypedDict):
@@ -46,6 +51,7 @@ class _ImageRow(TypedDict):
 
     source_image_id: int
     target_count: int
+    prompt_count: int
     elapsed_seconds: float
 
 
@@ -87,6 +93,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image-offset", type=int, default=0)
     parser.add_argument("--index", default=None)
     parser.add_argument("--annotations", default=None)
+    parser.add_argument(
+        "--box-expansion-ratios",
+        type=_parse_expansion_ratios,
+        default=(0.0,),
+        help="Comma-separated per-side Box expansion ratios; must include zero.",
+    )
+    parser.add_argument(
+        "--multimask-output",
+        action="store_true",
+        help="Retain ambiguity-aware SAM-HQ Mask candidates for oracle analysis.",
+    )
     parser.add_argument(
         "--config",
         default="configs/localization_sam_hq_proposals.yaml",
@@ -153,16 +170,53 @@ def main() -> None:
     latencies: list[float] = []
     for image_number, (image_id, group) in enumerate(groups.items(), start=1):
         targets = [group["targets"][key] for key in sorted(group["targets"])]
-        boxes = [target["box"] for target in targets]
+        image_rgb = group["image_rgb"]
+        if image_rgb is None:
+            raise ValueError(f"Image {image_id} has no decoded pixels.")
+        prompt_rows = [
+            (
+                target,
+                ratio,
+                _expand_box(
+                    target["box"],
+                    ratio,
+                    image_width=int(image_rgb.shape[1]),
+                    image_height=int(image_rgb.shape[0]),
+                ),
+            )
+            for ratio in args.box_expansion_ratios
+            for target in targets
+        ]
+        boxes = [row[2] for row in prompt_rows]
         started = time.perf_counter()
-        refinements = refiner.refine(group["image_rgb"], boxes)
+        candidate_groups = refiner.refine_candidates(
+            image_rgb,
+            boxes,
+            multimask_output=args.multimask_output,
+        )
         refiner.synchronize()
         elapsed = time.perf_counter() - started
         latencies.append(elapsed)
-        if len(refinements) != len(targets):
+        if len(candidate_groups) != len(prompt_rows):
             raise ValueError("SAM-HQ did not preserve the Box prompt count.")
-        for target, refinement in zip(targets, refinements, strict=True):
+        for (target, ratio, _box), refinements in zip(
+            prompt_rows,
+            candidate_groups,
+            strict=True,
+        ):
             target_mask = target["mask"]
+            candidate_ious = [
+                _mask_iou(target_mask, refinement.mask) for refinement in refinements
+            ]
+            selected_index = max(
+                range(len(refinements)),
+                key=lambda index: refinements[index].mask_quality,
+            )
+            oracle_index = max(
+                range(len(refinements)),
+                key=candidate_ious.__getitem__,
+            )
+            selected = refinements[selected_index]
             cases.append(
                 {
                     "source_image_id": image_id,
@@ -170,22 +224,29 @@ def main() -> None:
                     "target_label": target["label"],
                     "target_area_pixels": int(target_mask.sum()),
                     "target_area_ratio": float(target_mask.mean()),
-                    "prompt_box": refinement.prompt_box,
-                    "mask_box": refinement.mask_box,
-                    "mask_quality": refinement.mask_quality,
-                    "mask_iou": _mask_iou(target_mask, refinement.mask),
+                    "prompt_box": selected.prompt_box,
+                    "mask_box": selected.mask_box,
+                    "mask_quality": selected.mask_quality,
+                    "mask_iou": candidate_ious[selected_index],
+                    "box_expansion_ratio": ratio,
+                    "candidate_count": len(refinements),
+                    "score_selected_candidate_index": selected_index,
+                    "oracle_best_candidate_index": oracle_index,
+                    "oracle_best_mask_iou": candidate_ious[oracle_index],
                 }
             )
         image_rows.append(
             {
                 "source_image_id": image_id,
                 "target_count": len(targets),
+                "prompt_count": len(prompt_rows),
                 "elapsed_seconds": elapsed,
             }
         )
         print(
             f"[{image_number}/{len(groups)}] image={image_id} "
-            + f"targets={len(targets)} elapsed={elapsed:.3f}s"
+            + f"targets={len(targets)} prompts={len(prompt_rows)} "
+            + f"elapsed={elapsed:.3f}s"
         )
 
     summary = _summarize(cases, image_rows, args)
@@ -254,13 +315,71 @@ def _mask_iou(target_mask: np.ndarray, prediction_mask: np.ndarray) -> float:
     return intersection / union if union else 0.0
 
 
+def _parse_expansion_ratios(value: str) -> tuple[float, ...]:
+    """Parse unique bounded expansion ratios and require a zero baseline."""
+    try:
+        ratios = tuple(float(item.strip()) for item in value.split(","))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "Box expansion ratios must be comma-separated numbers."
+        ) from error
+    if not ratios or len(set(ratios)) != len(ratios):
+        raise argparse.ArgumentTypeError(
+            "Box expansion ratios must be non-empty and unique."
+        )
+    if any(not np.isfinite(ratio) or not 0.0 <= ratio <= 1.0 for ratio in ratios):
+        raise argparse.ArgumentTypeError("Box expansion ratios must be in [0, 1].")
+    if 0.0 not in ratios:
+        raise argparse.ArgumentTypeError("Box expansion ratios must include zero.")
+    return ratios
+
+
+def _expand_box(
+    box: tuple[float, float, float, float],
+    ratio: float,
+    *,
+    image_width: int,
+    image_height: int,
+) -> tuple[float, float, float, float]:
+    """Expand each Box side by a fraction of its width and height."""
+    x_min, y_min, x_max, y_max = box
+    margin_x = (x_max - x_min) * ratio
+    margin_y = (y_max - y_min) * ratio
+    return (
+        max(0.0, x_min - margin_x),
+        max(0.0, y_min - margin_y),
+        min(float(image_width), x_max + margin_x),
+        min(float(image_height), y_max + margin_y),
+    )
+
+
 def _summarize(
     cases: list[_CaseRow],
     image_rows: list[_ImageRow],
     args: argparse.Namespace,
 ) -> dict[str, object]:
     """Build JSON-safe oracle-Box refinement metrics."""
-    ious = np.asarray([row["mask_iou"] for row in cases], dtype=float)
+    by_expansion_ratio: dict[str, dict[str, float | int]] = {}
+    for ratio in args.box_expansion_ratios:
+        ratio_cases = [row for row in cases if row["box_expansion_ratio"] == ratio]
+        selected_ious = np.asarray(
+            [row["mask_iou"] for row in ratio_cases],
+            dtype=float,
+        )
+        oracle_ious = np.asarray(
+            [row["oracle_best_mask_iou"] for row in ratio_cases],
+            dtype=float,
+        )
+        by_expansion_ratio[f"{ratio:.3f}"] = {
+            "target_count": len(ratio_cases),
+            "score_selected_recall50": float(np.mean(selected_ious >= 0.50)),
+            "score_selected_recall75": float(np.mean(selected_ious >= 0.75)),
+            "score_selected_mean_mask_iou": float(selected_ious.mean()),
+            "oracle_best_recall50": float(np.mean(oracle_ious >= 0.50)),
+            "oracle_best_recall75": float(np.mean(oracle_ious >= 0.75)),
+            "oracle_best_mean_mask_iou": float(oracle_ious.mean()),
+        }
+    baseline = by_expansion_ratio["0.000"]
     latencies = np.asarray(
         [row["elapsed_seconds"] for row in image_rows],
         dtype=float,
@@ -270,10 +389,16 @@ def _summarize(
         "split": args.split,
         "selected_image_count": len(image_rows),
         "image_offset": args.image_offset,
-        "target_region_count": len(cases),
-        "box_prompt_recall50": float(np.mean(ious >= 0.50)),
-        "box_prompt_recall75": float(np.mean(ious >= 0.75)),
-        "all_gt_mean_mask_iou": float(ious.mean()),
+        "target_region_count": int(baseline["target_count"]),
+        "box_prompt_recall50": baseline["score_selected_recall50"],
+        "box_prompt_recall75": baseline["score_selected_recall75"],
+        "all_gt_mean_mask_iou": baseline["score_selected_mean_mask_iou"],
+        "oracle_multimask_recall50": baseline["oracle_best_recall50"],
+        "oracle_multimask_recall75": baseline["oracle_best_recall75"],
+        "oracle_multimask_mean_mask_iou": baseline["oracle_best_mean_mask_iou"],
+        "multimask_output": args.multimask_output,
+        "box_expansion_ratios": args.box_expansion_ratios,
+        "by_box_expansion_ratio": by_expansion_ratio,
         "first_image_including_model_load_seconds": float(latencies[0]),
         "warm_image_count": len(warm),
         "warm_mean_seconds": float(warm.mean()) if len(warm) else None,

@@ -1706,3 +1706,33 @@ DINOv2 patch features before SAM-HQ refinement. If it remains low even with
 exact boxes, SAM-HQ input resolution, Box expansion, or the selected checkpoint
 must be corrected before building the candidate path. In either case,
 `prd_accuracy_92_passed` and `prd_localization_30ms_passed` remain `null`.
+
+The first exact-Box run reached only `60%` Recall50/Recall75 over five targets,
+with mean Mask IoU `63.19%` and `89.75 ms` warm latency. Both sleeve Masks and
+one applique passed, while the two neckline Masks reached only `39.60%` and
+`18.26%`. The successful applique occupies only `0.168%` of the image, smaller
+than both failed necklines, so target area alone does not explain the misses.
+SAM-HQ refinement ambiguity is now a second isolated bottleneck alongside
+automatic proposal coverage.
+
+Run one controlled ambiguity sweep on the same images. All Box variants for an
+image are batched through one SAM-HQ image embedding:
+
+```bash
+OMP_NUM_THREADS=1 \
+conda run -n fashion-prd-312 \
+  python -u scripts/smoke_sam_hq_box_prompt_recall.py \
+  --split validation \
+  --image-limit 2 \
+  --multimask-output \
+  --box-expansion-ratios 0,0.10,0.20 \
+  --output-dir outputs/localization/sam_hq_box_prompt_multimask_sweep_images2
+```
+
+The report separates score-selected Mask quality, which is usable at inference,
+from oracle-best multimask quality, which only tests whether a correct candidate
+exists. Improvement only in `oracle_best_recall50` means candidate selection
+must be learned or redesigned; improvement from Box expansion identifies prompt
+geometry as the issue. Failure in both columns rejects this ViT-B refinement
+setting for neckline-like parts. Sweep timing contains three Box variants and
+must not be compared directly with the single-variant `89.75 ms` measurement.

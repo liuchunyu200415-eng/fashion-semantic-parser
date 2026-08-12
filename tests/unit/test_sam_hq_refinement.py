@@ -37,10 +37,14 @@ class _FakePredictor:
         """Return one rectangular Mask per transformed Box prompt."""
         boxes = np.asarray(kwargs["boxes"], dtype=np.int32)
         assert self.image_shape is not None
-        masks = np.zeros((len(boxes), 1, *self.image_shape[:2]), dtype=bool)
+        candidate_count = 3 if kwargs["multimask_output"] else 1
+        masks = np.zeros(
+            (len(boxes), candidate_count, *self.image_shape[:2]),
+            dtype=bool,
+        )
         for index, (x_min, y_min, x_max, y_max) in enumerate(boxes):
-            masks[index, 0, y_min:y_max, x_min:x_max] = True
-        return masks, np.full((len(boxes), 1), 0.9), None
+            masks[index, :, y_min:y_max, x_min:x_max] = True
+        return masks, np.full((len(boxes), candidate_count), 0.9), None
 
 
 def _refiner() -> SAMHQBoxPromptRefiner:
@@ -75,6 +79,18 @@ def test_box_prompt_refinement_rejects_invalid_or_empty_boxes() -> None:
     assert _refiner().refine(image, []) == []
     with pytest.raises(ValueError, match="positive in-image area"):
         _refiner().refine(image, [(5.0, 5.0, 2.0, 2.0)])
+
+
+def test_multimask_refinement_preserves_candidate_groups() -> None:
+    """Ambiguity-aware inference should retain every candidate per prompt."""
+    groups = _refiner().refine_candidates(
+        np.zeros((20, 30, 3), dtype=np.uint8),
+        [(1.0, 2.0, 5.0, 7.0), (10.0, 4.0, 15.0, 8.0)],
+        multimask_output=True,
+    )
+
+    assert [len(group) for group in groups] == [3, 3]
+    assert all(candidate.mask.sum() > 0 for group in groups for candidate in group)
 
 
 def test_box_prompt_refinement_rejects_invalid_output_shape() -> None:

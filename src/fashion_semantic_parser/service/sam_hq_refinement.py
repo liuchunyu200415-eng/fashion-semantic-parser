@@ -73,6 +73,34 @@ class SAMHQBoxPromptRefiner:
             ValueError: If the image or any prompt is invalid.
             ModelNotReadyError: If the official runtime returns invalid outputs.
         """
+        candidate_groups = self.refine_candidates(
+            image_rgb,
+            boxes,
+            multimask_output=False,
+        )
+        return [group[0] for group in candidate_groups]
+
+    def refine_candidates(
+        self,
+        image_rgb: np.ndarray,
+        boxes: list[tuple[float, float, float, float]],
+        *,
+        multimask_output: bool,
+    ) -> list[list[SAMHQBoxPromptResult]]:
+        """Return every SAM-HQ candidate generated for each Box prompt.
+
+        Args:
+            image_rgb: Input uint8 RGB image.
+            boxes: Positive-area ``xyxy`` prompts in image coordinates.
+            multimask_output: Whether to request ambiguity-aware Mask candidates.
+
+        Returns:
+            Candidate groups preserving Box prompt order.
+
+        Raises:
+            ValueError: If the image or any prompt is invalid.
+            ModelNotReadyError: If the official runtime returns invalid outputs.
+        """
         image = np.asarray(image_rgb)
         if image.ndim != 3 or image.shape[2] != 3 or image.dtype != np.uint8:
             raise ValueError(
@@ -110,39 +138,56 @@ class SAMHQBoxPromptRefiner:
                     point_labels=None,
                     boxes=transformed_boxes,
                     mask_input=None,
-                    multimask_output=False,
+                    multimask_output=multimask_output,
                     hq_token_only=self.settings.hq_token_only,
                 )
         mask_values = _tensor_to_numpy(masks)
         score_values = _tensor_to_numpy(mask_scores)
-        expected_mask_shape = (len(normalized_boxes), 1, *image.shape[:2])
-        if mask_values.shape != expected_mask_shape:
+        if (
+            mask_values.ndim != 4
+            or mask_values.shape[0] != len(normalized_boxes)
+            or mask_values.shape[1] < 1
+            or mask_values.shape[2:] != image.shape[:2]
+        ):
             raise ModelNotReadyError(
                 "SAM-HQ returned invalid prompted Mask dimensions."
             )
-        if score_values.shape != (len(normalized_boxes), 1):
+        if score_values.shape != mask_values.shape[:2]:
             raise ModelNotReadyError(
                 "SAM-HQ returned invalid prompted score dimensions."
             )
-        results = []
-        for box, mask_value, score_value in zip(
+        if not multimask_output and mask_values.shape[1] != 1:
+            raise ModelNotReadyError(
+                "SAM-HQ returned multiple Masks when multimask output was disabled."
+            )
+        results: list[list[SAMHQBoxPromptResult]] = []
+        for box, prompt_masks, prompt_scores in zip(
             normalized_boxes,
-            mask_values[:, 0],
-            score_values[:, 0],
+            mask_values,
+            score_values,
             strict=True,
         ):
-            mask = np.asarray(mask_value, dtype=bool)
-            quality = float(score_value)
-            if not math.isfinite(quality):
-                raise ModelNotReadyError("SAM-HQ prompted Mask score must be finite.")
-            results.append(
-                SAMHQBoxPromptResult(
-                    prompt_box=box,
-                    mask_box=_mask_box(mask),
-                    mask=mask,
-                    mask_quality=quality,
+            candidates = []
+            for mask_value, score_value in zip(
+                prompt_masks,
+                prompt_scores,
+                strict=True,
+            ):
+                mask = np.asarray(mask_value, dtype=bool)
+                quality = float(score_value)
+                if not math.isfinite(quality):
+                    raise ModelNotReadyError(
+                        "SAM-HQ prompted Mask score must be finite."
+                    )
+                candidates.append(
+                    SAMHQBoxPromptResult(
+                        prompt_box=box,
+                        mask_box=_mask_box(mask),
+                        mask=mask,
+                        mask_quality=quality,
+                    )
                 )
-            )
+            results.append(candidates)
         return results
 
     def synchronize(self) -> None:
