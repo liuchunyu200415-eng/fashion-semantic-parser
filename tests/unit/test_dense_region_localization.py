@@ -6,6 +6,7 @@ import pytest
 from fashion_semantic_parser.service.dense_region_localization import (
     binary_mask_iou,
     box_iou,
+    calibrated_dense_probabilities,
     dense_similarity_scores,
     quantile_mask_candidates,
 )
@@ -51,6 +52,21 @@ def test_mask_and_box_iou_retain_misses() -> None:
     assert binary_mask_iou(target, miss) == 0.0
     assert box_iou((0.0, 0.0, 2.0, 2.0), (0.0, 0.0, 2.0, 2.0)) == 1.0
     assert box_iou((0.0, 0.0, 2.0, 2.0), None) == 0.0
+
+
+def test_dense_probability_calibration_is_monotonic() -> None:
+    """Learned scale and bias must preserve the cosine score ordering."""
+    values = calibrated_dense_probabilities(
+        np.asarray([-1.0, 0.0, 1.0], dtype=np.float32),
+        logit_scale=2.0,
+        logit_bias=0.0,
+    )
+
+    assert values[0] < values[1] < values[2]
+    assert values[1] == pytest.approx(0.5)
+
+    with pytest.raises(ValueError, match="positive"):
+        calibrated_dense_probabilities(values, logit_scale=0.0, logit_bias=0.0)
 
 
 def test_dense_localization_rejects_invalid_features_and_quantiles() -> None:

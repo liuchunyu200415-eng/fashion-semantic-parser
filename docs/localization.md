@@ -1889,3 +1889,78 @@ Mask; it must be retained only when it improves the disjoint Mask result.
 Mask2Former remains an auxiliary known-part/proposal path. The complete
 production request, ONNX/TensorRT optimization, independent manual `92%`
 acceptance, and end-to-end `30 ms` timing remain separate later gates.
+
+The raw dense sweep completed over 24 full queries from the first two validation
+images. Its best Mask result was quantile `0.95`: `16.67%` Recall50, `0%`
+Recall75, and `12.59%` mean Mask IoU. Quantile `0.98` reached the best Box
+Recall50 at `29.17%`, but no Mask passed IoU `0.50`. More quantile tuning is
+stopped. The existing projection was trained only against mean-pooled oracle
+region features, so applying it independently to every patch does not provide
+foreground/background or calibrated area supervision.
+
+### Supervised DINOv2 Patch Alignment
+
+The correction stays inside the same PRD mechanism. DINOv2 and BGE-M3 remain
+frozen; the existing 300-image text projection initializes training. For each
+complete query, its Fashionpedia target Mask is letterboxed with the image and
+converted into soft foreground fractions on the `37 x 37` DINOv2 patch grid.
+Only the text projection, cosine logit scale, and foreground bias are optimized
+with foreground-balanced BCE plus soft Dice loss. This remains region/text
+similarity matching and does not add a replacement foundation model or fixed
+part classifier.
+
+Train the first image-complete patch head on 100 Fashionpedia training images:
+
+```bash
+TRAIN_DIR=outputs/localization/dinov2_dense_patch_alignment_train_images100
+mkdir -p "$TRAIN_DIR"
+
+nohup env \
+  OMP_NUM_THREADS=1 \
+  TOKENIZERS_PARALLELISM=false \
+  TRANSFORMERS_OFFLINE=1 \
+  HF_HUB_OFFLINE=1 \
+  conda run -n fashion-prd-312 \
+  python -u scripts/train_dense_patch_alignment.py \
+  --split train \
+  --image-limit 100 \
+  --steps 300 \
+  --initial-checkpoint \
+    outputs/localization/dinov2_bge_alignment_train_images300_global/alignment_head_smoke.pt \
+  --output-dir "$TRAIN_DIR" \
+  > "$TRAIN_DIR/run.log" 2>&1 &
+```
+
+Training reports only patch-grid metrics on the training set. They demonstrate
+optimization behavior but cannot establish full-image localization accuracy.
+The saved checkpoint freezes a learned `0.5` probability threshold; validation
+does not scan quantiles or use target areas.
+
+Evaluate that fixed checkpoint on the same two-image architecture-debug set:
+
+```bash
+EVAL_DIR=outputs/localization/dinov2_dense_patch_localization_images2
+mkdir -p "$EVAL_DIR"
+
+OMP_NUM_THREADS=1 \
+TOKENIZERS_PARALLELISM=false \
+TRANSFORMERS_OFFLINE=1 \
+HF_HUB_OFFLINE=1 \
+conda run -n fashion-prd-312 \
+  python -u scripts/evaluate_dense_patch_localization.py \
+  --split validation \
+  --image-limit 2 \
+  --checkpoint \
+    "$TRAIN_DIR/dense_patch_alignment.pt" \
+  --output-dir "$EVAL_DIR"
+```
+
+The evaluation restores calibrated patch probabilities to source-image
+coordinates and produces the final coarse Mask and tight Box directly. It
+reports overall and dimension/language/category metrics, retains empty and poor
+predictions as misses, and separates first-image model loading from warm image
+time. This two-image set has already been used for architecture diagnostics, so
+its pass flags remain `null`. Its immediate gate is improvement over the raw
+`16.67%` Mask Recall50 baseline at the fixed threshold. A successful result is
+then frozen and evaluated on a larger disjoint image-complete set before any
+SAM-HQ refinement comparison.

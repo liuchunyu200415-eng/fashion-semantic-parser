@@ -96,6 +96,37 @@ def quantile_mask_candidates(
     return candidates
 
 
+def calibrated_dense_probabilities(
+    similarity_scores: np.ndarray,
+    *,
+    logit_scale: float,
+    logit_bias: float,
+) -> np.ndarray:
+    """Convert cosine similarity maps into calibrated foreground probabilities.
+
+    Args:
+        similarity_scores: Finite similarity maps with any non-empty shape.
+        logit_scale: Positive finite cosine scale from dense patch training.
+        logit_bias: Finite foreground logit bias from dense patch training.
+
+    Returns:
+        Float32 probabilities with the same shape as ``similarity_scores``.
+
+    Raises:
+        ValueError: If scores or calibration values are invalid.
+    """
+    scores = np.asarray(similarity_scores, dtype=np.float32)
+    if not scores.size or not np.all(np.isfinite(scores)):
+        raise ValueError("Dense similarity scores must be non-empty and finite.")
+    if not np.isfinite(logit_scale) or logit_scale <= 0.0:
+        raise ValueError("Dense logit scale must be positive and finite.")
+    if not np.isfinite(logit_bias):
+        raise ValueError("Dense logit bias must be finite.")
+    logits = np.clip(scores * logit_scale + logit_bias, -80.0, 80.0)
+    probabilities = 1.0 / (1.0 + np.exp(-logits))
+    return np.asarray(probabilities, dtype=np.float32)
+
+
 def binary_mask_iou(target_mask: np.ndarray, prediction_mask: np.ndarray) -> float:
     """Return IoU for equal-sized Masks while retaining empty misses.
 

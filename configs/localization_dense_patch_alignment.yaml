@@ -1,0 +1,9 @@
+learning_rate: 0.0002
+weight_decay: 0.01
+training_steps: 300
+batch_size: 32
+seed: 312
+initial_logit_scale: 14.2857142857
+max_logit_scale: 100.0
+initial_logit_bias: 0.0
+probability_threshold: 0.5
