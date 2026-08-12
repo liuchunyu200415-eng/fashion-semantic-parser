@@ -7,6 +7,7 @@ import pytest
 from scripts.smoke_sam_hq_box_prompt_recall import (
     _expand_box,
     _parse_expansion_ratios,
+    _scaled_crop_box,
 )
 
 
@@ -34,3 +35,19 @@ def test_box_expansion_clamps_each_side_to_the_image() -> None:
         image_width=100,
         image_height=100,
     ) == (0.0, 0.0, 12.0, 12.0)
+
+
+def test_scaled_crop_box_preserves_context_and_image_bounds() -> None:
+    """ROI crops should add symmetric context and clamp at image edges."""
+    assert _scaled_crop_box(
+        (10.0, 20.0, 30.0, 40.0),
+        2.0,
+        image_width=100,
+        image_height=100,
+    ) == (0, 10, 40, 50)
+    assert _scaled_crop_box(
+        (0.0, 0.0, 10.0, 10.0),
+        4.0,
+        image_width=100,
+        image_height=100,
+    ) == (0, 0, 25, 25)

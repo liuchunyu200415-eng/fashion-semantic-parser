@@ -6,65 +6,14 @@ import sys
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Protocol, TypedDict
 
 import numpy as np
 
-
-class _TargetRow(TypedDict):
-    """One unique Fashionpedia target used by the oracle diagnostic."""
-
-    annotation_id: int
-    label: str
-    mask: np.ndarray
-    box: tuple[float, float, float, float]
-
-
-class _ImageGroup(TypedDict):
-    """One decoded image and its unique annotation targets."""
-
-    image_rgb: np.ndarray | None
-    targets: dict[int, _TargetRow]
-
-
-class _CaseRow(TypedDict):
-    """One persisted target-level oracle refinement result."""
-
-    source_image_id: int
-    source_annotation_id: int
-    target_label: str
-    target_area_pixels: int
-    target_area_ratio: float
-    prompt_box: tuple[float, float, float, float]
-    mask_box: tuple[float, float, float, float] | None
-    mask_quality: float
-    mask_iou: float
-    box_expansion_ratio: float
-    candidate_count: int
-    score_selected_candidate_index: int
-    oracle_best_candidate_index: int
-    oracle_best_mask_iou: float
-
-
-class _ImageRow(TypedDict):
-    """One persisted image-level runtime result."""
-
-    source_image_id: int
-    target_count: int
-    prompt_count: int
-    elapsed_seconds: float
-
-
-class _DatasetProtocol(Protocol):
-    """Minimal map-style dataset contract used by the diagnostic."""
-
-    def __len__(self) -> int:
-        """Return the selected query count."""
-        ...
-
-    def __getitem__(self, index: int) -> Any:
-        """Return one loaded referring item."""
-        ...
+try:
+    from scripts import sam_hq_oracle_types as oracle_types
+except ModuleNotFoundError:
+    # Support direct ``python scripts/...`` execution and package-style tests.
+    import sam_hq_oracle_types as oracle_types  # type: ignore[no-redef]
 
 
 def add_src_to_python_path() -> None:
@@ -105,6 +54,12 @@ def parse_args() -> argparse.Namespace:
         help="Retain ambiguity-aware SAM-HQ Mask candidates for oracle analysis.",
     )
     parser.add_argument(
+        "--roi-crop-scale",
+        type=float,
+        default=0.0,
+        help="Crop around each GT Box before refinement; zero keeps the full image.",
+    )
+    parser.add_argument(
         "--config",
         default="configs/localization_sam_hq_proposals.yaml",
     )
@@ -126,6 +81,10 @@ def main() -> None:
         raise ValueError("--image-limit must be at least one")
     if args.image_offset < 0:
         raise ValueError("--image-offset cannot be negative")
+    if args.roi_crop_scale != 0.0 and not 1.0 <= args.roi_crop_scale <= 16.0:
+        raise ValueError("--roi-crop-scale must be zero or in [1, 16]")
+    if args.roi_crop_scale and args.box_expansion_ratios != (0.0,):
+        raise ValueError("ROI crop mode cannot be combined with Box expansion.")
     add_src_to_python_path()
 
     from fashion_semantic_parser.common.paths import PROJECT_ROOT, resolve_project_path
@@ -165,48 +124,85 @@ def main() -> None:
         raise ValueError("SAM-HQ Box prompt smoke loaded no images.")
 
     refiner = SAMHQBoxPromptRefiner(load_sam_hq_proposal_settings(args.config))
-    cases: list[_CaseRow] = []
-    image_rows: list[_ImageRow] = []
+    cases: list[oracle_types.CaseRow] = []
+    image_rows: list[oracle_types.ImageRow] = []
     latencies: list[float] = []
     for image_number, (image_id, group) in enumerate(groups.items(), start=1):
         targets = [group["targets"][key] for key in sorted(group["targets"])]
         image_rgb = group["image_rgb"]
         if image_rgb is None:
             raise ValueError(f"Image {image_id} has no decoded pixels.")
-        prompt_rows = [
-            (
-                target,
-                ratio,
-                _expand_box(
+        started = time.perf_counter()
+        prompt_rows: list[oracle_types.PromptRow] = []
+        candidate_groups = []
+        if args.roi_crop_scale:
+            for target in targets:
+                crop_box = _scaled_crop_box(
                     target["box"],
-                    ratio,
+                    args.roi_crop_scale,
                     image_width=int(image_rgb.shape[1]),
                     image_height=int(image_rgb.shape[0]),
-                ),
+                )
+                x_min, y_min, x_max, y_max = crop_box
+                local_box = (
+                    target["box"][0] - x_min,
+                    target["box"][1] - y_min,
+                    target["box"][2] - x_min,
+                    target["box"][3] - y_min,
+                )
+                prompt_rows.append(
+                    {
+                        "target": target,
+                        "box_expansion_ratio": 0.0,
+                        "prompt_box": local_box,
+                        "evaluation_mask": target["mask"][y_min:y_max, x_min:x_max],
+                        "crop_box": crop_box,
+                    }
+                )
+                result = refiner.refine_candidates(
+                    image_rgb[y_min:y_max, x_min:x_max],
+                    [local_box],
+                    multimask_output=args.multimask_output,
+                )
+                candidate_groups.append(result[0])
+        else:
+            prompt_rows = [
+                {
+                    "target": target,
+                    "box_expansion_ratio": ratio,
+                    "prompt_box": _expand_box(
+                        target["box"],
+                        ratio,
+                        image_width=int(image_rgb.shape[1]),
+                        image_height=int(image_rgb.shape[0]),
+                    ),
+                    "evaluation_mask": target["mask"],
+                    "crop_box": None,
+                }
+                for ratio in args.box_expansion_ratios
+                for target in targets
+            ]
+            candidate_groups = refiner.refine_candidates(
+                image_rgb,
+                [row["prompt_box"] for row in prompt_rows],
+                multimask_output=args.multimask_output,
             )
-            for ratio in args.box_expansion_ratios
-            for target in targets
-        ]
-        boxes = [row[2] for row in prompt_rows]
-        started = time.perf_counter()
-        candidate_groups = refiner.refine_candidates(
-            image_rgb,
-            boxes,
-            multimask_output=args.multimask_output,
-        )
         refiner.synchronize()
         elapsed = time.perf_counter() - started
         latencies.append(elapsed)
         if len(candidate_groups) != len(prompt_rows):
             raise ValueError("SAM-HQ did not preserve the Box prompt count.")
-        for (target, ratio, _box), refinements in zip(
+        for prompt_row, refinements in zip(
             prompt_rows,
             candidate_groups,
             strict=True,
         ):
+            target = prompt_row["target"]
+            ratio = prompt_row["box_expansion_ratio"]
             target_mask = target["mask"]
             candidate_ious = [
-                _mask_iou(target_mask, refinement.mask) for refinement in refinements
+                _mask_iou(prompt_row["evaluation_mask"], refinement.mask)
+                for refinement in refinements
             ]
             selected_index = max(
                 range(len(refinements)),
@@ -233,6 +229,8 @@ def main() -> None:
                     "score_selected_candidate_index": selected_index,
                     "oracle_best_candidate_index": oracle_index,
                     "oracle_best_mask_iou": candidate_ious[oracle_index],
+                    "roi_crop_scale": args.roi_crop_scale,
+                    "crop_box": prompt_row["crop_box"],
                 }
             )
         image_rows.append(
@@ -259,9 +257,11 @@ def main() -> None:
         print(f"{key}: {value}")
 
 
-def _load_unique_targets(dataset: _DatasetProtocol) -> dict[int, _ImageGroup]:
+def _load_unique_targets(
+    dataset: oracle_types.DatasetProtocol,
+) -> dict[int, oracle_types.ImageGroup]:
     """Group unique annotation targets by image from repeated query rows."""
-    groups: dict[int, _ImageGroup] = defaultdict(
+    groups: dict[int, oracle_types.ImageGroup] = defaultdict(
         lambda: {"image_rgb": None, "targets": {}}
     )
     for item_index in range(len(dataset)):
@@ -282,7 +282,7 @@ def _load_unique_targets(dataset: _DatasetProtocol) -> dict[int, _ImageGroup]:
             strict=True,
         ):
             target = target_by_id[annotation_id]
-            row: _TargetRow = {
+            row: oracle_types.TargetRow = {
                 "annotation_id": annotation_id,
                 "label": target.label,
                 "mask": np.asarray(mask, dtype=bool),
@@ -353,9 +353,30 @@ def _expand_box(
     )
 
 
+def _scaled_crop_box(
+    box: tuple[float, float, float, float],
+    scale: float,
+    *,
+    image_width: int,
+    image_height: int,
+) -> tuple[int, int, int, int]:
+    """Return an integer ROI centered on a Box at the requested size scale."""
+    x_min, y_min, x_max, y_max = box
+    center_x = (x_min + x_max) / 2.0
+    center_y = (y_min + y_max) / 2.0
+    half_width = (x_max - x_min) * scale / 2.0
+    half_height = (y_max - y_min) * scale / 2.0
+    return (
+        max(0, int(np.floor(center_x - half_width))),
+        max(0, int(np.floor(center_y - half_height))),
+        min(image_width, int(np.ceil(center_x + half_width))),
+        min(image_height, int(np.ceil(center_y + half_height))),
+    )
+
+
 def _summarize(
-    cases: list[_CaseRow],
-    image_rows: list[_ImageRow],
+    cases: list[oracle_types.CaseRow],
+    image_rows: list[oracle_types.ImageRow],
     args: argparse.Namespace,
 ) -> dict[str, object]:
     """Build JSON-safe oracle-Box refinement metrics."""
@@ -397,6 +418,7 @@ def _summarize(
         "oracle_multimask_recall75": baseline["oracle_best_recall75"],
         "oracle_multimask_mean_mask_iou": baseline["oracle_best_mean_mask_iou"],
         "multimask_output": args.multimask_output,
+        "roi_crop_scale": args.roi_crop_scale,
         "box_expansion_ratios": args.box_expansion_ratios,
         "by_box_expansion_ratio": by_expansion_ratio,
         "first_image_including_model_load_seconds": float(latencies[0]),

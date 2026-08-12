@@ -1736,3 +1736,31 @@ must be learned or redesigned; improvement from Box expansion identifies prompt
 geometry as the issue. Failure in both columns rejects this ViT-B refinement
 setting for neckline-like parts. Sweep timing contains three Box variants and
 must not be compared directly with the single-variant `89.75 ms` measurement.
+
+On the first sweep, the unexpanded multimask baseline raised Recall50 from
+`60%` to `80%`, because one neckline reached `52.68%`, but the other remained at
+`36.04%`. Score-selected and oracle-best metrics were identical for every Box
+variant, so quality-score selection did not hide a better Mask. Ten-percent
+expansion retained `80%` Recall50 while lowering mean IoU; twenty-percent
+expansion reduced Recall50 to `40%`. Plain Box expansion is therefore rejected.
+
+The next accuracy-only diagnostic changes image encoding resolution rather than
+prompt geometry. Crop each exact Box with two times context before SAM-HQ:
+
+```bash
+OMP_NUM_THREADS=1 \
+conda run -n fashion-prd-312 \
+  python -u scripts/smoke_sam_hq_box_prompt_recall.py \
+  --split validation \
+  --image-limit 2 \
+  --multimask-output \
+  --roi-crop-scale 2.0 \
+  --output-dir outputs/localization/sam_hq_roi_crop2_multimask_images2
+```
+
+ROI mode evaluates each Mask in crop coordinates while preserving the original
+GT target area in `cases.json`. It re-encodes each target crop separately, so
+its runtime is an accuracy ceiling and is not comparable with batched full-image
+latency. If crop scale `2.0` still leaves a neckline below IoU `0.50`, test scale
+`4.0`; do not tune more scales on these same five development targets. A useful
+scale must then be frozen and verified on a disjoint image-complete group.
