@@ -1666,6 +1666,9 @@ ViT-B checkpoint against its published SHA256 checksum, and confirms that the
 The official source declares `timm` as an optional all-feature dependency; this
 project pins `timm==0.9.16` in the exact environment and the setup repairs a
 missing installation before the import check.
+Python import caches inside the external checkout are allowed as untracked
+runtime files; tracked SAM-HQ source modifications still stop the setup before
+the pinned checkout is changed.
 
 The primary gate is `proposal_recall50`, accompanied by `proposal_recall75`
 and all-GT mean best Mask IoU. This is independent best-proposal recall rather

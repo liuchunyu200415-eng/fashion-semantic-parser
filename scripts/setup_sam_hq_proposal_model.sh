@@ -27,14 +27,14 @@ if [[ "$remote_url" != *"SysCV/sam-hq.git" ]]; then
   echo "Unexpected SAM-HQ origin: $remote_url" >&2
   exit 1
 fi
-if [[ -n "$(git -C "$repo_path" status --porcelain)" ]]; then
+if [[ -n "$(git -C "$repo_path" status --porcelain --untracked-files=no)" ]]; then
   echo "Refusing to change a dirty SAM-HQ checkout: $repo_path" >&2
   exit 1
 fi
 
 git -C "$repo_path" fetch --depth 1 origin "$repo_commit"
 git -C "$repo_path" checkout --detach "$repo_commit"
-if [[ -n "$(git -C "$repo_path" status --porcelain)" ]]; then
+if [[ -n "$(git -C "$repo_path" status --porcelain --untracked-files=no)" ]]; then
   echo "SAM-HQ checkout is dirty after pinned checkout: $repo_path" >&2
   exit 1
 fi
