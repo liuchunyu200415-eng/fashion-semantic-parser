@@ -1678,3 +1678,31 @@ and all-GT mean best Mask IoU. This is independent best-proposal recall rather
 than one-to-one query accuracy: it answers whether the proposal bank contains a
 usable target before DINOv2/BGE-M3 ranking. Language selection, independent
 manual acceptance, complete `30 ms` timing, and `60 QPS` remain unevaluated.
+
+The first two-image run completed over five unique official part Masks. It
+generated 236 automatic Masks but reached only `20%` proposal Recall50 and
+Recall75, with all-GT mean best Mask IoU `27.14%`. The second-image warm runtime
+was `4.54 s`. This rejects the automatic Mask generator as an online candidate
+path: it is both below the required proposal ceiling and orders of magnitude
+above the complete `30 ms` localization target. Expanding this exact setting to
+more images would not resolve either failure.
+
+Before designing the DINOv2 dense candidate path, isolate the downstream
+refinement ceiling with exact Fashionpedia GT boxes:
+
+```bash
+OMP_NUM_THREADS=1 \
+conda run -n fashion-prd-312 \
+  python -u scripts/smoke_sam_hq_box_prompt_recall.py \
+  --split validation \
+  --image-limit 2 \
+  --output-dir outputs/localization/sam_hq_box_prompt_recall_images2
+```
+
+This is deliberately an oracle diagnostic, not a PRD accuracy result. If its
+`box_prompt_recall50` is high, proposal generation is the isolated bottleneck
+and the next implementation should derive coarse boxes from aligned dense
+DINOv2 patch features before SAM-HQ refinement. If it remains low even with
+exact boxes, SAM-HQ input resolution, Box expansion, or the selected checkpoint
+must be corrected before building the candidate path. In either case,
+`prd_accuracy_92_passed` and `prd_localization_30ms_passed` remain `null`.

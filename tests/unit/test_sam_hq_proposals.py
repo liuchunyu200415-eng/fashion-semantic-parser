@@ -13,6 +13,7 @@ from fashion_semantic_parser.service.sam_hq_proposals import (
     SAMHQProposalSettings,
     best_proposal_mask_iou,
     load_sam_hq_proposal_settings,
+    validate_local_sam_hq_assets,
 )
 
 
@@ -188,8 +189,8 @@ def test_local_assets_require_pinned_source_and_checkpoint(
         )
     )
 
-    generator._validate_local_assets(repo_path, weights_path)
+    validate_local_sam_hq_assets(generator.settings, repo_path, weights_path)
 
     weights_path.write_bytes(b"drifted")
     with pytest.raises(ModelNotReadyError, match="checksum mismatch"):
-        generator._validate_local_assets(repo_path, weights_path)
+        validate_local_sam_hq_assets(generator.settings, repo_path, weights_path)

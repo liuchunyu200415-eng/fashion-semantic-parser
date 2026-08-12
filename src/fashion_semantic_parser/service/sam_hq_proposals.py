@@ -52,6 +52,7 @@ class SAMHQProposalSettings(BaseModel):
     crop_n_points_downscale_factor: int = Field(default=2, ge=1, le=8)
     min_mask_region_area: int = Field(default=16, ge=0)
     max_regions: int = Field(default=200, ge=1, le=1000)
+    hq_token_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -176,7 +177,7 @@ class SAMHQAutomaticProposalGenerator:
                 self.settings.sam_hq_weights,
                 "SAM-HQ weights",
             )
-            self._validate_local_assets(repo_path, weights_path)
+            validate_local_sam_hq_assets(self.settings, repo_path, weights_path)
             module = _load_sam_hq_module(self.settings.sam_hq_module)
             try:
                 import torch  # type: ignore[import-not-found]
@@ -216,32 +217,6 @@ class SAMHQAutomaticProposalGenerator:
                     "SAM-HQ automatic proposal generator could not be loaded."
                 ) from error
         return self._generator
-
-    def _validate_local_assets(self, repo_path: Path, weights_path: Path) -> None:
-        """Reject drifting official source or an unverified SAM-HQ checkpoint."""
-        head_path = repo_path / ".git" / "HEAD"
-        if not head_path.is_file():
-            raise ModelNotReadyError(
-                "Pinned SAM-HQ checkout is missing; run "
-                "scripts/setup_sam_hq_proposal_model.sh."
-            )
-        actual_commit = head_path.read_text(encoding="utf-8").strip()
-        if actual_commit != self.settings.sam_hq_repo_commit:
-            raise ModelNotReadyError(
-                "SAM-HQ checkout is not at the pinned commit: "
-                f"expected={self.settings.sam_hq_repo_commit} actual={actual_commit}"
-            )
-        digest = hashlib.sha256()
-        with weights_path.open("rb") as weights_file:
-            for chunk in iter(lambda: weights_file.read(1024 * 1024), b""):
-                digest.update(chunk)
-        actual_sha256 = digest.hexdigest()
-        if actual_sha256 != self.settings.sam_hq_weights_sha256:
-            raise ModelNotReadyError(
-                "SAM-HQ weights checksum mismatch: "
-                f"expected={self.settings.sam_hq_weights_sha256} "
-                f"actual={actual_sha256}"
-            )
 
     def _validate_proposal(
         self,
@@ -285,6 +260,45 @@ class SAMHQAutomaticProposalGenerator:
             area=area,
             predicted_iou=predicted_iou,
             stability_score=stability_score,
+        )
+
+
+def validate_local_sam_hq_assets(
+    settings: SAMHQProposalSettings,
+    repo_path: Path,
+    weights_path: Path,
+) -> None:
+    """Reject drifting official source or an unverified SAM-HQ checkpoint.
+
+    Args:
+        settings: Expected source commit and checkpoint checksum.
+        repo_path: Pinned official SAM-HQ checkout.
+        weights_path: Downloaded SAM-HQ checkpoint.
+
+    Raises:
+        ModelNotReadyError: If source or checkpoint provenance is invalid.
+    """
+    head_path = repo_path / ".git" / "HEAD"
+    if not head_path.is_file():
+        raise ModelNotReadyError(
+            "Pinned SAM-HQ checkout is missing; run "
+            "scripts/setup_sam_hq_proposal_model.sh."
+        )
+    actual_commit = head_path.read_text(encoding="utf-8").strip()
+    if actual_commit != settings.sam_hq_repo_commit:
+        raise ModelNotReadyError(
+            "SAM-HQ checkout is not at the pinned commit: "
+            f"expected={settings.sam_hq_repo_commit} actual={actual_commit}"
+        )
+    digest = hashlib.sha256()
+    with weights_path.open("rb") as weights_file:
+        for chunk in iter(lambda: weights_file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    actual_sha256 = digest.hexdigest()
+    if actual_sha256 != settings.sam_hq_weights_sha256:
+        raise ModelNotReadyError(
+            "SAM-HQ weights checksum mismatch: "
+            f"expected={settings.sam_hq_weights_sha256} actual={actual_sha256}"
         )
 
 

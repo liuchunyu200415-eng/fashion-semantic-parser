@@ -12,6 +12,10 @@ from fashion_semantic_parser.service.sam_hq_proposals import (
     SAMHQMaskProposal,
     SAMHQProposalSettings,
 )
+from fashion_semantic_parser.service.sam_hq_refinement import (
+    SAMHQBoxPromptRefiner,
+    SAMHQBoxPromptResult,
+)
 from fashion_semantic_parser.service.segmentation_baseline import (
     Detectron2SegmentationBaseline,
     SegmentationBaselineSettings,
@@ -35,6 +39,8 @@ __all__ = [
     "PersonROIDetectorSettings",
     "RegionLocalizationRuntime",
     "SAMHQAutomaticProposalGenerator",
+    "SAMHQBoxPromptRefiner",
+    "SAMHQBoxPromptResult",
     "SAMHQMaskProposal",
     "SAMHQProposalSettings",
     "SegmentationBaselineSettings",

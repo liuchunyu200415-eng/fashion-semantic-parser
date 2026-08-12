@@ -16,3 +16,4 @@ crop_nms_thresh: 0.70
 crop_n_points_downscale_factor: 2
 min_mask_region_area: 16
 max_regions: 200
+hq_token_only: false

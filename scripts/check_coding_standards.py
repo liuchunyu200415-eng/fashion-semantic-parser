@@ -101,7 +101,9 @@ def analyze_python_files(
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 _add_public_docstring_metrics(node, values)
             elif isinstance(node, ast.ClassDef):
-                if not node.name.startswith("_") and ast.get_docstring(node) is None:
+                if node.name.startswith("_"):
+                    continue
+                if ast.get_docstring(node) is None:
                     values["missing_public_docstrings"] += 1
                 for child in node.body:
                     if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
