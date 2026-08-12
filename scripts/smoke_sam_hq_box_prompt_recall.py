@@ -130,6 +130,7 @@ def main() -> None:
         raise ValueError("SAM-HQ Box prompt smoke loaded no images.")
 
     refiner = SAMHQBoxPromptRefiner(load_sam_hq_proposal_settings(args.config))
+    args.hq_token_only = refiner.settings.hq_token_only
     cases: list[oracle_types.CaseRow] = []
     image_rows: list[oracle_types.ImageRow] = []
     latencies: list[float] = []
@@ -468,6 +469,8 @@ def _summarize(
         "multimask_output": args.multimask_output,
         "roi_crop_scale": args.roi_crop_scale,
         "oracle_positive_point": args.oracle_positive_point,
+        "hq_token_only": args.hq_token_only,
+        "config": args.config,
         "box_expansion_ratios": args.box_expansion_ratios,
         "by_box_expansion_ratio": by_expansion_ratio,
         "first_image_including_model_load_seconds": float(latencies[0]),

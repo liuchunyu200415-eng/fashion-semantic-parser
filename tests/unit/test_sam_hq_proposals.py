@@ -50,6 +50,13 @@ def test_project_config_uses_high_recall_official_sam_hq_path() -> None:
     assert settings.points_per_side == 32
     assert settings.crop_n_layers == 1
     assert settings.max_regions == 200
+    assert settings.hq_token_only is False
+
+    hq_only = load_sam_hq_proposal_settings(
+        "configs/localization_sam_hq_proposals_hq_only.yaml"
+    )
+    assert hq_only.hq_token_only is True
+    assert hq_only.sam_hq_weights == settings.sam_hq_weights
 
 
 def test_proposals_are_validated_ranked_and_capped() -> None:

@@ -1792,3 +1792,41 @@ and an interior foreground point, further prompt heuristics on these five
 targets stop. The current SAM-HQ ViT-B refinement setting then lacks the Mask
 ceiling required by PRD 3.1.2 and must be reconsidered before candidate-path or
 latency optimization.
+
+The positive-point run also failed the stop gate: Recall50 was `60%`, Recall75
+was `40%`, and the two neckline Masks were `43.30%` and `46.76%`. Exact Box,
+multimask output, an interior foreground point, Box expansion, and ROI crop have
+now all been exhausted on this development group. No additional prompt
+heuristics are tuned on these five targets.
+
+The final model-setting comparison uses a disjoint ten-image group. The default
+SAM-HQ combination output and official HQ-token-only output share the same
+pinned ViT-B checkpoint and all other settings. The separate config makes the
+ablation explicit in every saved `metrics.json`:
+
+```bash
+for MODE in combined hq_only; do
+  if [ "$MODE" = combined ]; then
+    CONFIG=configs/localization_sam_hq_proposals.yaml
+  else
+    CONFIG=configs/localization_sam_hq_proposals_hq_only.yaml
+  fi
+
+  OMP_NUM_THREADS=1 \
+  conda run -n fashion-prd-312 \
+    python -u scripts/smoke_sam_hq_box_prompt_recall.py \
+    --split validation \
+    --image-offset 2 \
+    --image-limit 10 \
+    --multimask-output \
+    --config "$CONFIG" \
+    --output-dir "outputs/localization/sam_hq_disjoint10_${MODE}"
+done
+```
+
+This comparison uses exact GT boxes and remains an oracle Mask-ceiling test.
+Select a setting only if it improves overall Recall50 and mean IoU without a
+systematic category regression. It cannot establish `92%` language-localization
+accuracy or `30 ms` latency. If both remain materially below the required Mask
+ceiling, current SAM-HQ ViT-B is rejected and the next decision is a PRD-stack
+checkpoint/architecture review, not more prompt tuning.
