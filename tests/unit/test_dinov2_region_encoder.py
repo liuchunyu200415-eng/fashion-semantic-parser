@@ -46,6 +46,31 @@ def test_letterbox_rejects_misaligned_masks() -> None:
         letterbox_image_and_masks(image, masks, output_size=28)
 
 
+def test_letterbox_preserves_target_smaller_than_one_output_pixel() -> None:
+    """A valid tiny Fashionpedia part must remain an evaluable candidate."""
+    image = np.zeros((1000, 1000, 3), dtype=np.uint8)
+    masks = np.zeros((1, 1000, 1000), dtype=np.uint8)
+    masks[0, 999, 999] = 1
+
+    _, resized_masks = letterbox_image_and_masks(
+        image,
+        masks,
+        output_size=28,
+    )
+
+    assert resized_masks.sum() == 1
+    assert resized_masks[0, 27, 27]
+
+
+def test_letterbox_rejects_empty_source_target() -> None:
+    """Target preservation cannot turn an invalid empty annotation into a part."""
+    image = np.zeros((10, 20, 3), dtype=np.uint8)
+    masks = np.zeros((1, 10, 20), dtype=np.uint8)
+
+    with pytest.raises(ValueError, match="source target Mask"):
+        letterbox_image_and_masks(image, masks, output_size=28)
+
+
 def test_region_settings_require_exact_patch_grid() -> None:
     """The input must map to a deterministic DINOv2 patch-token grid."""
     with pytest.raises(ValidationError, match="divisible"):

@@ -1619,3 +1619,11 @@ encoding therefore uses an explicit maximum batch size of `32` from
 `configs/localization_bge_m3_text.yaml` instead of using the entire query set as
 one CUDA batch. Smaller smokes still run as one batch. This is a memory-safety
 bound for feature extraction, not a throughput or PRD latency optimization.
+
+The later image-complete audit exposed valid Fashionpedia parts smaller than
+one output pixel after whole-image letterboxing. Nearest-neighbor resizing could
+otherwise delete such a Mask and abort evaluation. The DINOv2 preprocessing path
+now preserves one centroid-mapped pixel only when a non-empty source Mask would
+become empty; genuinely empty source Masks are still rejected. This keeps tiny
+targets in the scored candidate set instead of silently excluding difficult
+examples. It does not establish that the resulting patch feature is accurate.

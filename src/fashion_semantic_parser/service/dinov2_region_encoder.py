@@ -196,6 +196,9 @@ def letterbox_image_and_masks(
         raise ValueError("DINOv2 input image must be an HxWx3 uint8 RGB array.")
     if masks.ndim != 3 or masks.shape[1:] != image.shape[:2] or not len(masks):
         raise ValueError("Target Masks must be a non-empty NxHxW array.")
+    binary_masks = masks != 0
+    if not np.all(binary_masks.any(axis=(1, 2))):
+        raise ValueError("Every source target Mask must contain at least one pixel.")
     if output_size < 1:
         raise ValueError("output_size must be positive.")
     height, width = image.shape[:2]
@@ -209,12 +212,12 @@ def letterbox_image_and_masks(
     )
     resized_masks = np.stack(
         [
-            cv2.resize(
-                np.asarray(mask != 0, dtype=np.uint8),
-                (resized_width, resized_height),
-                interpolation=cv2.INTER_NEAREST,
+            _resize_binary_mask_preserving_target(
+                mask,
+                output_height=resized_height,
+                output_width=resized_width,
             )
-            for mask in masks
+            for mask in binary_masks
         ],
         axis=0,
     )
@@ -235,6 +238,34 @@ def letterbox_image_and_masks(
     if not np.all(mask_canvas.any(axis=(1, 2))):
         raise ValueError("Letterbox resize removed at least one target Mask.")
     return canvas, mask_canvas
+
+
+def _resize_binary_mask_preserving_target(
+    mask: np.ndarray,
+    *,
+    output_height: int,
+    output_width: int,
+) -> np.ndarray:
+    """Resize one valid Mask without deleting a sub-pixel target entirely."""
+    binary_mask = np.asarray(mask, dtype=np.uint8)
+    resized = cv2.resize(
+        binary_mask,
+        (output_width, output_height),
+        interpolation=cv2.INTER_NEAREST,
+    )
+    if resized.any():
+        return resized
+
+    source_y, source_x = np.nonzero(binary_mask)
+    source_height, source_width = binary_mask.shape
+    center_y = float(source_y.mean())
+    center_x = float(source_x.mean())
+    target_y = round((center_y + 0.5) * output_height / source_height - 0.5)
+    target_x = round((center_x + 0.5) * output_width / source_width - 0.5)
+    target_y = min(output_height - 1, max(0, target_y))
+    target_x = min(output_width - 1, max(0, target_x))
+    resized[target_y, target_x] = 1
+    return resized
 
 
 def masks_to_patch_occupancy(
