@@ -1627,3 +1627,38 @@ now preserves one centroid-mapped pixel only when a non-empty source Mask would
 become empty; genuinely empty source Masks are still rejected. This keeps tiny
 targets in the scored candidate set instead of silently excluding difficult
 examples. It does not establish that the resulting patch feature is accurate.
+
+### Class-Agnostic SAM-HQ Proposal Recall
+
+The 300-image global alignment head is frozen as the current oracle-candidate
+development checkpoint. On a previously unused 100-image validation group it
+reached `92.32%` competitive Top-1 and `89.26%` competitive exact-set over
+`1,406` queries. English and Chinese Top-1 were `92.43%` and `92.16%`, while
+spatial Top-1 remained `88.78%`. These numbers assume that every official
+Fashionpedia target Mask is already in the candidate bank, so they do not
+establish PRD localization accuracy.
+
+The next PRD-main-path gate replaces that oracle bank with class-agnostic
+SAM-HQ automatic Masks. `configs/localization_sam_hq_proposals.yaml` starts in a
+high-recall diagnostic mode with a 32-by-32 point grid, one crop layer, relaxed
+quality thresholds, and at most 200 retained proposals per image. This mode is
+deliberately an accuracy-ceiling experiment, not a latency configuration. Each
+valid official part Mask remains in the denominator even when SAM-HQ returns no
+overlapping proposal.
+
+Run a two-image bounded smoke before expanding the proposal-recall audit:
+
+```bash
+OMP_NUM_THREADS=1 \
+conda run -n fashion-prd-312 \
+  python -u scripts/smoke_sam_hq_proposal_recall.py \
+  --split validation \
+  --image-limit 2 \
+  --output-dir outputs/localization/sam_hq_proposal_recall_images2
+```
+
+The primary gate is `proposal_recall50`, accompanied by `proposal_recall75`
+and all-GT mean best Mask IoU. This is independent best-proposal recall rather
+than one-to-one query accuracy: it answers whether the proposal bank contains a
+usable target before DINOv2/BGE-M3 ranking. Language selection, independent
+manual acceptance, complete `30 ms` timing, and `60 QPS` remain unevaluated.

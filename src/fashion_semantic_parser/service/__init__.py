@@ -15,6 +15,11 @@ from fashion_semantic_parser.service.segmentation_runtime import (
     GarmentSegmentationService,
     SegmentationRuntime,
 )
+from fashion_semantic_parser.service.sam_hq_proposals import (
+    SAMHQAutomaticProposalGenerator,
+    SAMHQMaskProposal,
+    SAMHQProposalSettings,
+)
 from fashion_semantic_parser.service.subject_roi import (
     Detectron2PersonROIDetector,
     PersonROIDetectorSettings,
@@ -29,6 +34,9 @@ __all__ = [
     "Mask2FormerPartLocalizationService",
     "PersonROIDetectorSettings",
     "RegionLocalizationRuntime",
+    "SAMHQAutomaticProposalGenerator",
+    "SAMHQMaskProposal",
+    "SAMHQProposalSettings",
     "SegmentationBaselineSettings",
     "SegmentationRuntime",
     "UnavailableRegionLocalizationService",

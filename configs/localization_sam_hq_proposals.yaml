@@ -1,0 +1,16 @@
+sam_hq_repo: external/sam-hq
+sam_hq_weights: models/checkpoints/localization/sam_hq_vit_b.pth
+sam_hq_model_type: vit_b
+sam_hq_module: auto
+device: cuda
+precision: fp16
+points_per_side: 32
+points_per_batch: 64
+pred_iou_thresh: 0.75
+stability_score_thresh: 0.80
+box_nms_thresh: 0.70
+crop_n_layers: 1
+crop_nms_thresh: 0.70
+crop_n_points_downscale_factor: 2
+min_mask_region_area: 16
+max_regions: 200
