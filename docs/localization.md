@@ -1830,3 +1830,62 @@ systematic category regression. It cannot establish `92%` language-localization
 accuracy or `30 ms` latency. If both remain materially below the required Mask
 ceiling, current SAM-HQ ViT-B is rejected and the next decision is a PRD-stack
 checkpoint/architecture review, not more prompt tuning.
+
+The disjoint comparison completed over 41 official part Masks. The default
+combined SAM-HQ output reached `68.29%` Recall50, `29.27%` Recall75, and
+`56.46%` mean Mask IoU. HQ-token-only fell to `63.41%`, `24.39%`, and `50.93%`
+respectively, with the same `79 ms` warm runtime. The oracle-best and
+score-selected Recall50 values were identical, so multimask ranking did not
+hide better candidates. Combined output remains the stronger configuration,
+but an exact-GT-Box ceiling of `68.29%` rejects this SAM-HQ ViT-B setting as the
+sole producer of final local-region Masks. Neckline (`25%` Recall50 over eight
+targets) and the available zipper target (`0%`) are the clearest failures.
+
+### Full-Image DINOv2 Dense Mask Baseline
+
+The PRD requires language-conditioned local-region `Mask + Box` output and
+names DINOv2 region/text similarity as the localization mechanism. It includes
+SAM-HQ in the required computer-vision stack, but does not require every final
+Mask to be generated solely by SAM-HQ. After the exact-Box ceiling failure, the
+next bounded baseline therefore converts the required DINOv2/text similarity
+field directly into a full-image coarse Mask and derives its tight Box. This
+does not introduce a model outside the PRD stack.
+
+For each source image, the smoke encodes the complete image once into a
+`37 x 37` normalized DINOv2 patch grid. It projects every complete BGE-M3 query
+with the frozen 300-image alignment head, computes patch-to-query cosine
+similarity, removes letterbox padding, and restores the similarity map to the
+source image. Fixed score quantiles form Mask candidates without Fashionpedia
+candidate Masks, GT boxes, category lookup, or a fixed-part classifier. The
+development sweep retains every failed query in the Mask/Box denominator.
+
+Run the first bounded threshold scan on AutoDL:
+
+```bash
+OMP_NUM_THREADS=1 \
+TOKENIZERS_PARALLELISM=false \
+TRANSFORMERS_OFFLINE=1 \
+HF_HUB_OFFLINE=1 \
+conda run -n fashion-prd-312 \
+  python -u scripts/smoke_dinov2_dense_localization.py \
+  --split validation \
+  --image-limit 2 \
+  --checkpoint \
+    outputs/localization/dinov2_bge_alignment_train_images300_global/alignment_head_smoke.pt \
+  --output-dir outputs/localization/dinov2_dense_localization_images2
+```
+
+`metrics.json` reports Mask Recall50/Recall75, mean Mask IoU, Box Recall50,
+explicit numerators, startup timing, DINOv2 image-encoding time, and dense
+scoring time for every quantile. Select at most one quantile by Mask Recall50,
+then mean Mask IoU, freeze it, and verify it on a disjoint image-complete group.
+The initial two-image sweep is threshold-development evidence, not the manual
+PRD acceptance set, so both PRD pass flags remain `null` regardless of its
+score.
+
+If the dense coarse Mask passes the bounded coverage gate, combined SAM-HQ may
+be evaluated only as an optional boundary refinement against that frozen coarse
+Mask; it must be retained only when it improves the disjoint Mask result.
+Mask2Former remains an auxiliary known-part/proposal path. The complete
+production request, ONNX/TensorRT optimization, independent manual `92%`
+acceptance, and end-to-end `30 ms` timing remain separate later gates.

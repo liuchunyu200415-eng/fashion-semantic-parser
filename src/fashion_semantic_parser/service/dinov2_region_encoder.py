@@ -1,6 +1,7 @@
 """Extract Mask-pooled local-region features with the official DINOv2 model."""
 
 from contextlib import nullcontext
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -38,6 +39,27 @@ class DinoV2RegionEncoderSettings(BaseModel):
         if self.device == "cpu" and self.precision == "fp16":
             raise ValueError("DINOv2 fp16 smoke requires the CUDA device.")
         return self
+
+
+@dataclass(frozen=True)
+class DinoV2LetterboxGeometry:
+    """Coordinate transform between a source image and square model input."""
+
+    original_height: int
+    original_width: int
+    resized_height: int
+    resized_width: int
+    top: int
+    left: int
+    output_size: int
+
+
+@dataclass(frozen=True)
+class DinoV2DenseFeatureMap:
+    """Unit-normalized DINOv2 patch features with source-image geometry."""
+
+    features: np.ndarray
+    geometry: DinoV2LetterboxGeometry
 
 
 class DinoV2RegionEncoder:
@@ -111,20 +133,7 @@ class DinoV2RegionEncoder:
             target_masks,
             output_size=self.settings.input_size,
         )
-        image_tensor = torch.from_numpy(image).to(
-            device=self.settings.device,
-            dtype=torch.float32,
-        )
-        image_tensor = image_tensor.permute(2, 0, 1).unsqueeze(0) / 255.0
-        mean = torch.tensor(
-            [0.485, 0.456, 0.406],
-            device=self.settings.device,
-        ).view(1, 3, 1, 1)
-        std = torch.tensor(
-            [0.229, 0.224, 0.225],
-            device=self.settings.device,
-        ).view(1, 3, 1, 1)
-        image_tensor = (image_tensor - mean) / std
+        image_tensor = self._normalized_image_tensor(image)
         occupancy_array = masks_to_patch_occupancy(
             masks,
             patch_size=self.settings.patch_size,
@@ -152,7 +161,7 @@ class DinoV2RegionEncoder:
             ):
                 raise ValueError(
                     "Unexpected DINOv2 patch-token shape: "
-                    f"{tuple(patch_tokens.shape)}"
+                    + f"{tuple(patch_tokens.shape)}"
                 )
             weights = occupancy.to(dtype=patch_tokens.dtype)
             features = weights @ patch_tokens
@@ -160,6 +169,77 @@ class DinoV2RegionEncoder:
             features = torch.nn.functional.normalize(features.float(), dim=1)
         result: np.ndarray = np.asarray(features.cpu().numpy(), dtype=np.float32)
         return result
+
+    def encode_dense(self, image_rgb: np.ndarray) -> DinoV2DenseFeatureMap:
+        """Return a normalized patch-feature grid for one complete RGB image.
+
+        Args:
+            image_rgb: Source ``HxWx3`` uint8 RGB image.
+
+        Returns:
+            Dense patch features and the reversible letterbox geometry.
+
+        Raises:
+            RuntimeError: If the model runtime cannot be initialized.
+            ValueError: If the image or returned patch-token shape is invalid.
+        """
+        self.load()
+        torch = self._torch
+        model = self._model
+        if torch is None or model is None:
+            raise RuntimeError("DINOv2 model did not initialize.")
+        image, geometry = letterbox_image(
+            image_rgb,
+            output_size=self.settings.input_size,
+        )
+        image_tensor = self._normalized_image_tensor(image)
+        grid_size = self.settings.input_size // self.settings.patch_size
+        autocast_context = (
+            torch.autocast(device_type="cuda", dtype=torch.float16)
+            if self.settings.precision == "fp16"
+            else nullcontext()
+        )
+        with torch.inference_mode(), autocast_context:
+            output = model.forward_features(image_tensor)
+            patch_tokens = output["x_norm_patchtokens"][0]
+            if patch_tokens.shape != (
+                grid_size * grid_size,
+                self.settings.feature_dimension,
+            ):
+                raise ValueError(
+                    "Unexpected DINOv2 patch-token shape: "
+                    f"{tuple(patch_tokens.shape)}"
+                )
+            features = torch.nn.functional.normalize(patch_tokens.float(), dim=1)
+        values = np.asarray(features.cpu().numpy(), dtype=np.float32)
+        return DinoV2DenseFeatureMap(
+            features=values.reshape(
+                grid_size,
+                grid_size,
+                self.settings.feature_dimension,
+            ),
+            geometry=geometry,
+        )
+
+    def _normalized_image_tensor(self, image: np.ndarray) -> Any:
+        """Convert one square uint8 image into normalized model input."""
+        torch = self._torch
+        if torch is None:
+            raise RuntimeError("DINOv2 PyTorch runtime did not initialize.")
+        image_tensor = torch.from_numpy(image).to(
+            device=self.settings.device,
+            dtype=torch.float32,
+        )
+        image_tensor = image_tensor.permute(2, 0, 1).unsqueeze(0) / 255.0
+        mean = torch.tensor(
+            [0.485, 0.456, 0.406],
+            device=self.settings.device,
+        ).view(1, 3, 1, 1)
+        std = torch.tensor(
+            [0.229, 0.224, 0.225],
+            device=self.settings.device,
+        ).view(1, 3, 1, 1)
+        return (image_tensor - mean) / std
 
     def synchronize(self) -> None:
         """Synchronize CUDA so smoke latency excludes queued GPU work."""
@@ -201,10 +281,12 @@ def letterbox_image_and_masks(
         raise ValueError("Every source target Mask must contain at least one pixel.")
     if output_size < 1:
         raise ValueError("output_size must be positive.")
-    height, width = image.shape[:2]
-    scale = output_size / max(height, width)
-    resized_height = min(output_size, max(1, round(height * scale)))
-    resized_width = min(output_size, max(1, round(width * scale)))
+    geometry = letterbox_geometry(
+        (int(image.shape[0]), int(image.shape[1])),
+        output_size=output_size,
+    )
+    resized_height = geometry.resized_height
+    resized_width = geometry.resized_width
     resized_image = cv2.resize(
         image,
         (resized_width, resized_height),
@@ -221,8 +303,8 @@ def letterbox_image_and_masks(
         ],
         axis=0,
     )
-    top = (output_size - resized_height) // 2
-    left = (output_size - resized_width) // 2
+    top = geometry.top
+    left = geometry.left
     canvas = np.empty((output_size, output_size, 3), dtype=np.uint8)
     canvas[:, :] = [124, 116, 104]
     canvas[top : top + resized_height, left : left + resized_width] = resized_image
@@ -238,6 +320,114 @@ def letterbox_image_and_masks(
     if not np.all(mask_canvas.any(axis=(1, 2))):
         raise ValueError("Letterbox resize removed at least one target Mask.")
     return canvas, mask_canvas
+
+
+def letterbox_image(
+    image_rgb: np.ndarray,
+    *,
+    output_size: int,
+) -> tuple[np.ndarray, DinoV2LetterboxGeometry]:
+    """Letterbox one RGB image and return its reversible geometry.
+
+    Args:
+        image_rgb: Source ``HxWx3`` uint8 RGB image.
+        output_size: Positive square model-input side length.
+
+    Returns:
+        Letterboxed image and its reversible coordinate transform.
+
+    Raises:
+        ValueError: If image type, shape, or output size is invalid.
+    """
+    image = np.asarray(image_rgb)
+    if image.ndim != 3 or image.shape[2] != 3 or image.dtype != np.uint8:
+        raise ValueError("DINOv2 input image must be an HxWx3 uint8 RGB array.")
+    geometry = letterbox_geometry(
+        (int(image.shape[0]), int(image.shape[1])),
+        output_size=output_size,
+    )
+    resized = cv2.resize(
+        image,
+        (geometry.resized_width, geometry.resized_height),
+        interpolation=cv2.INTER_LINEAR,
+    )
+    canvas = np.empty((output_size, output_size, 3), dtype=np.uint8)
+    canvas[:, :] = [124, 116, 104]
+    canvas[
+        geometry.top : geometry.top + geometry.resized_height,
+        geometry.left : geometry.left + geometry.resized_width,
+    ] = resized
+    return canvas, geometry
+
+
+def letterbox_geometry(
+    image_shape: tuple[int, int],
+    *,
+    output_size: int,
+) -> DinoV2LetterboxGeometry:
+    """Return the deterministic aspect-preserving square-input transform.
+
+    Args:
+        image_shape: Positive source ``(height, width)`` pair.
+        output_size: Positive square model-input side length.
+
+    Returns:
+        Integer resize and padding geometry.
+
+    Raises:
+        ValueError: If any source or output dimension is not positive.
+    """
+    height, width = image_shape
+    if height < 1 or width < 1 or output_size < 1:
+        raise ValueError("Letterbox dimensions must be positive.")
+    scale = output_size / max(height, width)
+    resized_height = min(output_size, max(1, round(height * scale)))
+    resized_width = min(output_size, max(1, round(width * scale)))
+    return DinoV2LetterboxGeometry(
+        original_height=height,
+        original_width=width,
+        resized_height=resized_height,
+        resized_width=resized_width,
+        top=(output_size - resized_height) // 2,
+        left=(output_size - resized_width) // 2,
+        output_size=output_size,
+    )
+
+
+def patch_scores_to_image(
+    patch_scores: np.ndarray,
+    geometry: DinoV2LetterboxGeometry,
+) -> np.ndarray:
+    """Upsample one patch-score grid into original-image coordinates.
+
+    Args:
+        patch_scores: Non-empty finite two-dimensional patch score grid.
+        geometry: Letterbox transform produced for the source image.
+
+    Returns:
+        Float32 similarity map with the source image height and width.
+
+    Raises:
+        ValueError: If the patch-score grid is empty, non-finite, or not 2D.
+    """
+    scores = np.asarray(patch_scores, dtype=np.float32)
+    if scores.ndim != 2 or not scores.size or not np.all(np.isfinite(scores)):
+        raise ValueError("Patch scores must be one non-empty finite 2D grid.")
+    square = cv2.resize(
+        scores,
+        (geometry.output_size, geometry.output_size),
+        interpolation=cv2.INTER_LINEAR,
+    )
+    content = square[
+        geometry.top : geometry.top + geometry.resized_height,
+        geometry.left : geometry.left + geometry.resized_width,
+    ]
+    result = cv2.resize(
+        content,
+        (geometry.original_width, geometry.original_height),
+        interpolation=cv2.INTER_LINEAR,
+    )
+    return np.asarray(result, dtype=np.float32)
 
 
 def _resize_binary_mask_preserving_target(

@@ -9,9 +9,12 @@ from pydantic import ValidationError
 from fashion_semantic_parser.service.dinov2_region_encoder import (
     DinoV2RegionEncoder,
     DinoV2RegionEncoderSettings,
+    letterbox_geometry,
+    letterbox_image,
     letterbox_image_and_masks,
     load_dinov2_region_settings,
     masks_to_patch_occupancy,
+    patch_scores_to_image,
 )
 
 
@@ -44,6 +47,35 @@ def test_letterbox_rejects_misaligned_masks() -> None:
 
     with pytest.raises(ValueError, match="NxHxW"):
         letterbox_image_and_masks(image, masks, output_size=28)
+
+
+def test_dense_letterbox_geometry_restores_patch_scores() -> None:
+    """Dense patch scores must return to the source image without padding."""
+    image = np.zeros((10, 20, 3), dtype=np.uint8)
+
+    letterboxed, geometry = letterbox_image(image, output_size=28)
+    restored = patch_scores_to_image(
+        np.asarray([[0.0, 1.0], [0.0, 1.0]], dtype=np.float32),
+        geometry,
+    )
+
+    assert letterboxed.shape == (28, 28, 3)
+    assert geometry == letterbox_geometry((10, 20), output_size=28)
+    assert geometry.top == 7
+    assert geometry.left == 0
+    assert restored.shape == (10, 20)
+    assert np.all(np.isfinite(restored))
+    assert restored[:, -1].mean() > restored[:, 0].mean()
+
+
+def test_dense_geometry_rejects_invalid_dimensions_and_scores() -> None:
+    """Invalid source geometry and non-finite score grids must fail early."""
+    with pytest.raises(ValueError, match="positive"):
+        letterbox_geometry((0, 20), output_size=28)
+
+    geometry = letterbox_geometry((10, 20), output_size=28)
+    with pytest.raises(ValueError, match="finite 2D"):
+        patch_scores_to_image(np.asarray([[np.nan]]), geometry)
 
 
 def test_letterbox_preserves_target_smaller_than_one_output_pixel() -> None:
