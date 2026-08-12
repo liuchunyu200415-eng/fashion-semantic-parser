@@ -12,6 +12,7 @@ from fashion_semantic_parser.service.sam_hq_refinement import SAMHQBoxPromptRefi
 
 class _FakeTorch:
     float32 = np.float32
+    int64 = np.int64
 
     @staticmethod
     def as_tensor(value: object, **_: object) -> np.ndarray:
@@ -26,8 +27,11 @@ class _FakePredictor:
         """Create an identity transform and deterministic Mask outputs."""
         self.transform = SimpleNamespace(
             apply_boxes_torch=lambda boxes, _shape: boxes,
+            apply_coords_torch=lambda points, _shape: points,
         )
         self.image_shape: tuple[int, ...] | None = None
+        self.last_point_coords: object = None
+        self.last_point_labels: object = None
 
     def set_image(self, image: np.ndarray) -> None:
         """Retain the image shape for output construction."""
@@ -36,6 +40,8 @@ class _FakePredictor:
     def predict_torch(self, **kwargs: object) -> tuple[np.ndarray, np.ndarray, None]:
         """Return one rectangular Mask per transformed Box prompt."""
         boxes = np.asarray(kwargs["boxes"], dtype=np.int32)
+        self.last_point_coords = kwargs["point_coords"]
+        self.last_point_labels = kwargs["point_labels"]
         assert self.image_shape is not None
         candidate_count = 3 if kwargs["multimask_output"] else 1
         masks = np.zeros(
@@ -91,6 +97,34 @@ def test_multimask_refinement_preserves_candidate_groups() -> None:
 
     assert [len(group) for group in groups] == [3, 3]
     assert all(candidate.mask.sum() > 0 for group in groups for candidate in group)
+
+
+def test_positive_points_are_transformed_with_matching_labels() -> None:
+    """One foreground point per Box should reach the external predictor."""
+    predictor = _FakePredictor()
+    refiner = SAMHQBoxPromptRefiner(
+        SAMHQProposalSettings(device="cpu", precision="fp32"),
+        predictor=predictor,
+        torch_module=_FakeTorch(),
+    )
+
+    groups = refiner.refine_candidates(
+        np.zeros((20, 30, 3), dtype=np.uint8),
+        [(1.0, 2.0, 5.0, 7.0)],
+        multimask_output=True,
+        positive_points=[(3.0, 4.0)],
+    )
+
+    assert len(groups[0]) == 3
+    assert np.array_equal(predictor.last_point_coords, [[[3.0, 4.0]]])
+    assert np.array_equal(predictor.last_point_labels, [[1]])
+    with pytest.raises(ValueError, match="count must match"):
+        refiner.refine_candidates(
+            np.zeros((20, 30, 3), dtype=np.uint8),
+            [(1.0, 2.0, 5.0, 7.0)],
+            multimask_output=True,
+            positive_points=[],
+        )
 
 
 def test_box_prompt_refinement_rejects_invalid_output_shape() -> None:

@@ -2,10 +2,12 @@
 
 import argparse
 
+import numpy as np
 import pytest
 
 from scripts.smoke_sam_hq_box_prompt_recall import (
     _expand_box,
+    _interior_positive_point,
     _parse_expansion_ratios,
     _scaled_crop_box,
 )
@@ -51,3 +53,15 @@ def test_scaled_crop_box_preserves_context_and_image_bounds() -> None:
         image_width=100,
         image_height=100,
     ) == (0, 0, 25, 25)
+
+
+def test_interior_positive_point_stays_inside_target_mask() -> None:
+    """The oracle point should select a deepest foreground pixel."""
+    mask = np.zeros((9, 9), dtype=np.uint8)
+    mask[2:7, 2:7] = 1
+
+    point = _interior_positive_point(mask)
+
+    assert point == (4.0, 4.0)
+    with pytest.raises(ValueError, match="non-empty"):
+        _interior_positive_point(np.zeros((3, 3), dtype=np.uint8))

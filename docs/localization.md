@@ -1764,3 +1764,31 @@ its runtime is an accuracy ceiling and is not comparable with batched full-image
 latency. If crop scale `2.0` still leaves a neckline below IoU `0.50`, test scale
 `4.0`; do not tune more scales on these same five development targets. A useful
 scale must then be frozen and verified on a disjoint image-complete group.
+
+Crop scale `2.0` reduced Recall50 to `60%` and mean IoU to `58.43%`; crop scale
+`4.0` recovered `80%` Recall50 but reached only `63.27%` mean IoU, still below
+the `69.33%` full-image multimask baseline. The difficult neckline fell to
+`4.20%` and `2.35%` respectively. ROI crop/upscale is therefore rejected, and
+no further crop scales are tuned on this development sample.
+
+The remaining prompt-level ambiguity diagnostic adds one positive point chosen
+at the maximum interior distance of each official GT Mask. This is still an
+oracle ceiling, but it matches a prompt that a future dense DINOv2 heatmap could
+produce without introducing another model family:
+
+```bash
+OMP_NUM_THREADS=1 \
+conda run -n fashion-prd-312 \
+  python -u scripts/smoke_sam_hq_box_prompt_recall.py \
+  --split validation \
+  --image-limit 2 \
+  --multimask-output \
+  --oracle-positive-point \
+  --output-dir outputs/localization/sam_hq_box_point_multimask_images2
+```
+
+If the same difficult neckline remains below IoU `0.50` even with an exact Box
+and an interior foreground point, further prompt heuristics on these five
+targets stop. The current SAM-HQ ViT-B refinement setting then lacks the Mask
+ceiling required by PRD 3.1.2 and must be reconsidered before candidate-path or
+latency optimization.

@@ -7,6 +7,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 try:
@@ -58,6 +59,11 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.0,
         help="Crop around each GT Box before refinement; zero keeps the full image.",
+    )
+    parser.add_argument(
+        "--oracle-positive-point",
+        action="store_true",
+        help="Add one maximum-interior-distance GT foreground point per Box.",
     )
     parser.add_argument(
         "--config",
@@ -150,6 +156,11 @@ def main() -> None:
                     target["box"][2] - x_min,
                     target["box"][3] - y_min,
                 )
+                positive_point = _interior_positive_point(target["mask"])
+                local_point = (
+                    positive_point[0] - x_min,
+                    positive_point[1] - y_min,
+                )
                 prompt_rows.append(
                     {
                         "target": target,
@@ -157,12 +168,18 @@ def main() -> None:
                         "prompt_box": local_box,
                         "evaluation_mask": target["mask"][y_min:y_max, x_min:x_max],
                         "crop_box": crop_box,
+                        "positive_point": (
+                            local_point if args.oracle_positive_point else None
+                        ),
                     }
                 )
                 result = refiner.refine_candidates(
                     image_rgb[y_min:y_max, x_min:x_max],
                     [local_box],
                     multimask_output=args.multimask_output,
+                    positive_points=(
+                        [local_point] if args.oracle_positive_point else None
+                    ),
                 )
                 candidate_groups.append(result[0])
         else:
@@ -178,6 +195,11 @@ def main() -> None:
                     ),
                     "evaluation_mask": target["mask"],
                     "crop_box": None,
+                    "positive_point": (
+                        _interior_positive_point(target["mask"])
+                        if args.oracle_positive_point
+                        else None
+                    ),
                 }
                 for ratio in args.box_expansion_ratios
                 for target in targets
@@ -186,6 +208,11 @@ def main() -> None:
                 image_rgb,
                 [row["prompt_box"] for row in prompt_rows],
                 multimask_output=args.multimask_output,
+                positive_points=(
+                    _required_positive_points(prompt_rows)
+                    if args.oracle_positive_point
+                    else None
+                ),
             )
         refiner.synchronize()
         elapsed = time.perf_counter() - started
@@ -231,6 +258,7 @@ def main() -> None:
                     "oracle_best_mask_iou": candidate_ious[oracle_index],
                     "roi_crop_scale": args.roi_crop_scale,
                     "crop_box": prompt_row["crop_box"],
+                    "positive_point": prompt_row["positive_point"],
                 }
             )
         image_rows.append(
@@ -374,6 +402,26 @@ def _scaled_crop_box(
     )
 
 
+def _interior_positive_point(mask: np.ndarray) -> tuple[float, float]:
+    """Return the pixel deepest inside one non-empty binary target Mask."""
+    binary = np.asarray(mask, dtype=np.uint8)
+    if binary.ndim != 2 or not binary.any():
+        raise ValueError("Positive point selection requires a non-empty 2D Mask.")
+    distances = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
+    y_value, x_value = np.unravel_index(int(np.argmax(distances)), distances.shape)
+    return (float(x_value), float(y_value))
+
+
+def _required_positive_points(
+    prompt_rows: list[oracle_types.PromptRow],
+) -> list[tuple[float, float]]:
+    """Return populated point prompts or reject an inconsistent diagnostic."""
+    points = [row["positive_point"] for row in prompt_rows]
+    if any(point is None for point in points):
+        raise ValueError("Oracle positive point mode produced an empty point.")
+    return [point for point in points if point is not None]
+
+
 def _summarize(
     cases: list[oracle_types.CaseRow],
     image_rows: list[oracle_types.ImageRow],
@@ -419,6 +467,7 @@ def _summarize(
         "oracle_multimask_mean_mask_iou": baseline["oracle_best_mean_mask_iou"],
         "multimask_output": args.multimask_output,
         "roi_crop_scale": args.roi_crop_scale,
+        "oracle_positive_point": args.oracle_positive_point,
         "box_expansion_ratios": args.box_expansion_ratios,
         "by_box_expansion_ratio": by_expansion_ratio,
         "first_image_including_model_load_seconds": float(latencies[0]),

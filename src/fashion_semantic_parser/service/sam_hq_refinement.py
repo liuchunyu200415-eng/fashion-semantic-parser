@@ -86,6 +86,7 @@ class SAMHQBoxPromptRefiner:
         boxes: list[tuple[float, float, float, float]],
         *,
         multimask_output: bool,
+        positive_points: list[tuple[float, float]] | None = None,
     ) -> list[list[SAMHQBoxPromptResult]]:
         """Return every SAM-HQ candidate generated for each Box prompt.
 
@@ -93,6 +94,7 @@ class SAMHQBoxPromptRefiner:
             image_rgb: Input uint8 RGB image.
             boxes: Positive-area ``xyxy`` prompts in image coordinates.
             multimask_output: Whether to request ambiguity-aware Mask candidates.
+            positive_points: Optional one-per-Box foreground point prompts.
 
         Returns:
             Candidate groups preserving Box prompt order.
@@ -108,6 +110,12 @@ class SAMHQBoxPromptRefiner:
             )
         normalized_boxes = _validate_prompt_boxes(
             boxes,
+            image_width=int(image.shape[1]),
+            image_height=int(image.shape[0]),
+        )
+        normalized_points = _validate_prompt_points(
+            positive_points,
+            expected_count=len(normalized_boxes),
             image_width=int(image.shape[1]),
             image_height=int(image.shape[0]),
         )
@@ -133,9 +141,26 @@ class SAMHQBoxPromptRefiner:
                     input_boxes,
                     image.shape[:2],
                 )
+                transformed_points = None
+                point_labels = None
+                if normalized_points is not None:
+                    input_points = torch.as_tensor(
+                        [[point] for point in normalized_points],
+                        dtype=torch.float32,
+                        device=predictor.device,
+                    )
+                    transformed_points = predictor.transform.apply_coords_torch(
+                        input_points,
+                        image.shape[:2],
+                    )
+                    point_labels = torch.as_tensor(
+                        [[1] for _point in normalized_points],
+                        dtype=torch.int64,
+                        device=predictor.device,
+                    )
                 masks, mask_scores, _ = predictor.predict_torch(
-                    point_coords=None,
-                    point_labels=None,
+                    point_coords=transformed_points,
+                    point_labels=point_labels,
                     boxes=transformed_boxes,
                     mask_input=None,
                     multimask_output=multimask_output,
@@ -275,6 +300,29 @@ def _validate_prompt_boxes(
         if clamped[2] <= clamped[0] or clamped[3] <= clamped[1]:
             raise ValueError("SAM-HQ prompt boxes must have positive in-image area.")
         normalized.append(clamped)
+    return normalized
+
+
+def _validate_prompt_points(
+    points: list[tuple[float, float]] | None,
+    *,
+    expected_count: int,
+    image_width: int,
+    image_height: int,
+) -> list[tuple[float, float]] | None:
+    """Validate optional one-per-Box positive point prompts."""
+    if points is None:
+        return None
+    if len(points) != expected_count:
+        raise ValueError("SAM-HQ positive point count must match the Box count.")
+    normalized = []
+    for point in points:
+        if len(point) != 2 or not all(math.isfinite(float(value)) for value in point):
+            raise ValueError("SAM-HQ positive points require two finite coordinates.")
+        x_value, y_value = (float(value) for value in point)
+        if not 0.0 <= x_value < image_width or not 0.0 <= y_value < image_height:
+            raise ValueError("SAM-HQ positive points must fall inside the image.")
+        normalized.append((x_value, y_value))
     return normalized
 
 

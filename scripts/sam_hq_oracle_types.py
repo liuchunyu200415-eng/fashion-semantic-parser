@@ -40,6 +40,7 @@ class CaseRow(TypedDict):
     oracle_best_mask_iou: float
     roi_crop_scale: float
     crop_box: tuple[int, int, int, int] | None
+    positive_point: tuple[float, float] | None
 
 
 class ImageRow(TypedDict):
@@ -59,6 +60,7 @@ class PromptRow(TypedDict):
     prompt_box: tuple[float, float, float, float]
     evaluation_mask: np.ndarray
     crop_box: tuple[int, int, int, int] | None
+    positive_point: tuple[float, float] | None
 
 
 class DatasetProtocol(Protocol):
