@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from threading import Lock
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol, cast
 
 import yaml
 
@@ -200,16 +200,19 @@ class GarmentSegmentationService:
             raise InvalidImageInputError(str(error)) from error
         if not resolved_path.is_file():
             raise InvalidImageInputError(f"Input image not found: {image_path}")
-        return resolved_path
+        return Path(resolved_path)
 
 
 def _build_default_subject_roi_detector(
     settings: SegmentationBaselineSettings,
 ) -> SubjectROIDetector:
     """Build a COCO person detector aligned with segmentation device settings."""
-    return Detectron2PersonROIDetector(
-        PersonROIDetectorSettings(
-            device=settings.device,
-            precision=settings.precision,
-        )
+    return cast(
+        SubjectROIDetector,
+        Detectron2PersonROIDetector(
+            PersonROIDetectorSettings(
+                device=settings.device,
+                precision=settings.precision,
+            )
+        ),
     )

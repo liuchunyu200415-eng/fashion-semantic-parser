@@ -1,6 +1,7 @@
 """Render a compact eight-region PRD 3.1.2 API acceptance overview."""
 
 import argparse
+import importlib
 import json
 import math
 import sys
@@ -10,19 +11,20 @@ from typing import Any, cast
 import cv2
 import numpy as np
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+try:
+    _comparison = importlib.import_module("scripts.visualize_localization_comparison")
+except ModuleNotFoundError:
+    _comparison = importlib.import_module("visualize_localization_comparison")
 
-from scripts.visualize_localization_comparison import (
-    GROUND_TRUTH_COLOR,
-    PREDICTION_COLORS,
-    _blend_masks,
-    _draw_box_and_label,
-    _draw_prediction,
-    _polygons_to_mask,
-    _prediction_masks,
-)
+GROUND_TRUTH_COLOR = _comparison.GROUND_TRUTH_COLOR
+PREDICTION_COLORS = _comparison.PREDICTION_COLORS
+_blend_masks = _comparison._blend_masks
+_draw_box_and_label = _comparison._draw_box_and_label
+_draw_prediction = _comparison._draw_prediction
+_polygons_to_mask = _comparison._polygons_to_mask
+_prediction_masks = _comparison._prediction_masks
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 HEADER_HEIGHT = 58
 CARD_HEADER_HEIGHT = 42
@@ -371,7 +373,7 @@ def _draw_ground_truth_panel(
             str(ground_truth.get("category_label", "ground truth")),
             GROUND_TRUTH_COLOR,
         )
-    return result
+    return cast(np.ndarray, result)
 
 
 def _read_json(path: Path) -> dict[str, Any]:

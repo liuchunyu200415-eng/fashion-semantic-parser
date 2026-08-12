@@ -126,7 +126,7 @@ def _coco_category_mask_iou_stats(
     ground_truth_count = 0
     prediction_count = 0
     matched_ious: list[float] = []
-    area_stats = {
+    area_stats: dict[str, dict[str, Any]] = {
         area_name: {"matched_ious": [], "ground_truth_count": 0}
         for area_name in _COCO_AREA_RANGES
     }

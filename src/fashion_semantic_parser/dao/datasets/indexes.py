@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, cast
 
 from pydantic import BaseModel, Field
 
@@ -169,7 +169,7 @@ def _item_to_index_record(item: FashionItemAnnotation) -> dict[str, object]:
 
 def _question_to_index_record(question: FashionAIQuestion) -> dict[str, object]:
     """Convert a FashionAI question row to an index record."""
-    return question.model_dump()
+    return cast(dict[str, object], question.model_dump())
 
 
 def _index_file(

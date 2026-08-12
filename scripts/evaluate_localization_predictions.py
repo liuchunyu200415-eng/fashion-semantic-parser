@@ -8,7 +8,7 @@ import sys
 from collections import defaultdict
 from contextlib import redirect_stdout
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 DEFAULT_VALIDATION_JSON = (
     "data/processed/autodl/localization/fashionpedia_parts_validation.json"
@@ -210,29 +210,32 @@ def evaluate_localization_categories(
         if precision is not None and recall is not None and precision + recall > 0.0
         else None
     )
-    return _json_safe(
-        {
-            "validation_json": str(validation_path),
-            "predictions_json": str(prediction_path),
-            "run_summary_json": (
-                str(summary_path)
-                if summary_path is not None and summary_path.is_file()
-                else None
-            ),
-            "categories": category_names,
-            "category_ids": category_ids,
-            "image_count": len(image_ids),
-            "ground_truth_count": ground_truth_count,
-            "candidate_count_before_filter": len(relevant_predictions),
-            "candidate_count_after_filter": len(filtered_predictions),
-            "score_threshold": score_threshold,
-            "top_k": top_k,
-            "segm_coco": coco_metrics,
-            "segm_direct_iou": {
-                **direct_metrics,
-                "F1_50": f1,
+    return cast(
+        dict[str, Any],
+        _json_safe(
+            {
+                "validation_json": str(validation_path),
+                "predictions_json": str(prediction_path),
+                "run_summary_json": (
+                    str(summary_path)
+                    if summary_path is not None and summary_path.is_file()
+                    else None
+                ),
+                "categories": category_names,
+                "category_ids": category_ids,
+                "image_count": len(image_ids),
+                "ground_truth_count": ground_truth_count,
+                "candidate_count_before_filter": len(relevant_predictions),
+                "candidate_count_after_filter": len(filtered_predictions),
+                "score_threshold": score_threshold,
+                "top_k": top_k,
+                "segm_coco": coco_metrics,
+                "segm_direct_iou": {
+                    **direct_metrics,
+                    "F1_50": f1,
+                },
             },
-        }
+        ),
     )
 
 

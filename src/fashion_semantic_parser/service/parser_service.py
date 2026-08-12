@@ -1,6 +1,8 @@
 """High-level orchestration service for multimodal fashion parsing."""
 
 import math
+from collections.abc import Callable
+from typing import cast
 
 from fashion_semantic_parser.common.exceptions import InvalidImageInputError
 from fashion_semantic_parser.dao.localization.taxonomy import (
@@ -126,7 +128,12 @@ class FashionParserService:
             None,
         )
         if callable(localize_with_garment_prediction):
-            localization = localize_with_garment_prediction(
+            localization_callable = cast(
+                Callable[..., RegionLocalizationPrediction],
+                localize_with_garment_prediction,
+            )
+            # getattr plus callable performs the runtime protocol narrowing.
+            localization = localization_callable(  # pylint: disable=not-callable
                 request.image_path,
                 request.query,
                 segmentation,

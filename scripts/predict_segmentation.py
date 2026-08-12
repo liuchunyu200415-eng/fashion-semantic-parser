@@ -71,11 +71,11 @@ def main() -> None:
     add_src_to_python_path()
 
     from fashion_semantic_parser.common.paths import resolve_project_path
+    from fashion_semantic_parser.models.segmentation import SegmentationSubjectROI
     from fashion_semantic_parser.service.segmentation_baseline import (
         Detectron2SegmentationBaseline,
         SegmentationBaselineSettings,
     )
-    from fashion_semantic_parser.models.segmentation import SegmentationSubjectROI
     from fashion_semantic_parser.service.subject_roi import (
         Detectron2PersonROIDetector,
         PersonROIDetectorSettings,

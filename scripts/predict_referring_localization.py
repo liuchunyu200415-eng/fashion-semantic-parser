@@ -6,7 +6,7 @@ import sys
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -233,7 +233,7 @@ def build_case_response(
     includes_model_load: bool,
 ) -> dict[str, Any]:
     """Attach benchmark metadata to one typed localization prediction."""
-    response = prediction.model_dump(mode="json")
+    response = cast(dict[str, Any], prediction.model_dump(mode="json"))
     response.update(
         {
             "case_id": case.id,

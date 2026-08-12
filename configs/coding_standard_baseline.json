@@ -1,0 +1,16 @@
+{
+  "missing_module_docstrings": 0,
+  "missing_public_docstrings": 32,
+  "google_docstring_section_gaps": 450,
+  "oversized_modules": 7,
+  "functions_over_five_parameters": 26,
+  "complex_any_dict_annotations": 232,
+  "implicit_string_concatenations": 156,
+  "mutable_default_arguments": 0,
+  "bare_except_handlers": 0,
+  "relative_imports": 0,
+  "wildcard_imports": 0,
+  "test_print_calls": 0,
+  "tab_characters": 0,
+  "invalid_eof_newlines": 0
+}

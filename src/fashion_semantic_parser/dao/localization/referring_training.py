@@ -32,6 +32,7 @@ from fashion_semantic_parser.dao.localization.taxonomy import (
 from fashion_semantic_parser.models.localization import LocalizationBoundingBox
 
 TrainingLanguage = Literal["zh", "en"]
+TrainingSplit = Literal["train", "validation"]
 
 
 class ReferringTrainingTarget(BaseModel):
@@ -166,7 +167,7 @@ _GARMENT_NAMES: dict[str, tuple[str, str]] = {
 def prepare_fashionpedia_referring_training_data(
     *,
     root: Path,
-    split: str,
+    split: TrainingSplit,
     output_path: Path,
     summary_output_path: Path,
     limit: int | None = None,
@@ -340,7 +341,7 @@ def prepare_fashionpedia_referring_training_data(
 
 def build_referring_samples_for_image(
     *,
-    split: str,
+    split: TrainingSplit,
     image_path: str,
     source_image_id: int,
     width: int,
@@ -477,6 +478,7 @@ def _source_rows_for_image(
             ):
                 invalid_part_count += 1
                 continue
+            assert isinstance(annotation_id, int)
             raw_attributes = annotation.get("attribute_ids")
             if not isinstance(raw_attributes, list):
                 raw_attributes = []
@@ -485,7 +487,7 @@ def _source_rows_for_image(
             )[:max_attributes_per_annotation]
             parts.append(
                 _PartRow(
-                    annotation_id=annotation_id,
+                    annotation_id=int(annotation_id),
                     category=category,
                     bbox=tuple(bbox),
                     attribute_ids=tuple(attributes),
@@ -496,9 +498,10 @@ def _source_rows_for_image(
         garment_names = _GARMENT_NAMES.get(category_name)
         if garment_names is None or not is_integer(annotation_id) or bbox is None:
             continue
+        assert isinstance(annotation_id, int)
         garments.append(
             _GarmentRow(
-                annotation_id=annotation_id,
+                annotation_id=int(annotation_id),
                 source_name=category_name,
                 english_name=garment_names[0],
                 chinese_name=garment_names[1],
@@ -510,7 +513,7 @@ def _source_rows_for_image(
 
 def _spatial_samples(
     *,
-    split: str,
+    split: TrainingSplit,
     image_path: str,
     source_image_id: int,
     category: FashionpediaPartCategory,
@@ -586,7 +589,7 @@ def _spatial_samples(
 
 def _bilingual_samples(
     *,
-    split: str,
+    split: TrainingSplit,
     image_path: str,
     source_image_id: int,
     category: FashionpediaPartCategory,
@@ -599,6 +602,10 @@ def _bilingual_samples(
     reference_category: str | None = None,
 ) -> list[ReferringTrainingSample]:
     """Create paired Chinese and English expressions for the same targets."""
+    language_queries: tuple[tuple[TrainingLanguage, str], ...] = (
+        ("zh", zh_query),
+        ("en", en_query),
+    )
     return [
         _sample(
             split=split,
@@ -613,13 +620,13 @@ def _bilingual_samples(
             reference_frame=reference_frame,
             reference_category=reference_category,
         )
-        for language, query in (("zh", zh_query), ("en", en_query))
+        for language, query in language_queries
     ]
 
 
 def _sample(
     *,
-    split: str,
+    split: TrainingSplit,
     image_path: str,
     source_image_id: int,
     category: FashionpediaPartCategory,
@@ -679,9 +686,10 @@ def _attribute_names_by_id(records: list[dict[str, Any]]) -> dict[int, str]:
         name = record.get("name")
         if not is_integer(attribute_id) or not isinstance(name, str):
             continue
+        assert isinstance(attribute_id, int)
         normalized = " ".join(name.strip().split())
         if normalized:
-            values[attribute_id] = normalized
+            values[int(attribute_id)] = normalized
     return values
 
 

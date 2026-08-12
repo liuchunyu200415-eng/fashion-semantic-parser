@@ -6,7 +6,7 @@ import logging
 import math
 from pathlib import Path
 from threading import Lock
-from typing import Any, Callable, Literal, Sequence
+from typing import Any, Callable, Literal, Sequence, cast
 
 import cv2
 from pydantic import BaseModel, Field, model_validator
@@ -419,14 +419,14 @@ class Detectron2SegmentationBaseline:
         if self.settings.weights:
             return self.settings.weights
         if self.settings.config_source == "detectron2_model_zoo":
-            return model_zoo.get_checkpoint_url(self.settings.model_zoo_config)
+            return str(model_zoo.get_checkpoint_url(self.settings.model_zoo_config))
         return ""
 
     def _resolve_config_file(self, model_zoo: Any) -> str:
         """Resolve a Detectron2 model-zoo or local config path."""
         config_file = self.settings.config_file or self.settings.model_zoo_config
         if self.settings.config_source == "detectron2_model_zoo":
-            return model_zoo.get_config_file(config_file)
+            return str(model_zoo.get_config_file(config_file))
 
         path = Path(config_file)
         if path.is_absolute():
@@ -1061,18 +1061,22 @@ def _build_mask2former_optimizer(
 def _mask2former_optimizer_class(cfg: Any, torch: Any) -> type:
     """Return SGD or AdamW with Mask2Former full-model gradient clipping."""
     optimizer_type = cfg.SOLVER.OPTIMIZER
-    optimizer_class = torch.optim.SGD if optimizer_type == "SGD" else torch.optim.AdamW
+    optimizer_class: Any = (
+        torch.optim.SGD if optimizer_type == "SGD" else torch.optim.AdamW
+    )
     clip_config = cfg.SOLVER.CLIP_GRADIENTS
     if not (
         clip_config.ENABLED
         and clip_config.CLIP_TYPE == "full_model"
         and clip_config.CLIP_VALUE > 0.0
     ):
-        return optimizer_class
+        return cast(type, optimizer_class)
 
     clip_value = clip_config.CLIP_VALUE
 
-    class FullModelGradientClippingOptimizer(optimizer_class):  # type: ignore[misc]
+    class FullModelGradientClippingOptimizer(  # type: ignore[misc, valid-type]
+        optimizer_class
+    ):
         """Apply one global norm clip before each optimizer step."""
 
         def step(self, closure: Any = None) -> Any:
@@ -1088,9 +1092,9 @@ def _mask2former_optimizer_class(cfg: Any, torch: Any) -> type:
 def _tensor_to_list(value: Any) -> list[Any]:
     """Convert tensor-like values to plain Python lists."""
     if hasattr(value, "numpy"):
-        return value.numpy().tolist()
+        return cast(list[Any], value.numpy().tolist())
     if hasattr(value, "tolist"):
-        return value.tolist()
+        return cast(list[Any], value.tolist())
     return list(value)
 
 
@@ -1108,7 +1112,7 @@ def _box_overlap_ratio(
     box_area = max(0.0, box.x_max - box.x_min) * max(0.0, box.y_max - box.y_min)
     if box_area <= 0.0:
         return 0.0
-    return (intersection_width * intersection_height) / box_area
+    return float((intersection_width * intersection_height) / box_area)
 
 
 def _box_center_in_roi(
@@ -1118,7 +1122,9 @@ def _box_center_in_roi(
     """Return whether a prediction box center falls inside the subject ROI."""
     center_x = (box.x_min + box.x_max) / 2.0
     center_y = (box.y_min + box.y_max) / 2.0
-    return roi.x_min <= center_x <= roi.x_max and roi.y_min <= center_y <= roi.y_max
+    return bool(
+        roi.x_min <= center_x <= roi.x_max and roi.y_min <= center_y <= roi.y_max
+    )
 
 
 def _boxes_with_mask_fallback(

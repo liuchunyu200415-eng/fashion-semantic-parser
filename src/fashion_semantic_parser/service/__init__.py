@@ -7,6 +7,11 @@ from fashion_semantic_parser.service.region_localization import (
     RegionLocalizationRuntime,
     UnavailableRegionLocalizationService,
 )
+from fashion_semantic_parser.service.sam_hq_proposals import (
+    SAMHQAutomaticProposalGenerator,
+    SAMHQMaskProposal,
+    SAMHQProposalSettings,
+)
 from fashion_semantic_parser.service.segmentation_baseline import (
     Detectron2SegmentationBaseline,
     SegmentationBaselineSettings,
@@ -14,11 +19,6 @@ from fashion_semantic_parser.service.segmentation_baseline import (
 from fashion_semantic_parser.service.segmentation_runtime import (
     GarmentSegmentationService,
     SegmentationRuntime,
-)
-from fashion_semantic_parser.service.sam_hq_proposals import (
-    SAMHQAutomaticProposalGenerator,
-    SAMHQMaskProposal,
-    SAMHQProposalSettings,
 )
 from fashion_semantic_parser.service.subject_roi import (
     Detectron2PersonROIDetector,

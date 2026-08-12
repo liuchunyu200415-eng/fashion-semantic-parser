@@ -9,7 +9,9 @@ uvicorn[standard]>=0.29.0
 # Development and quality checks
 black>=24.4.0
 flake8>=7.0.0
-isort>=5.13.0
+isort>=5.13.0,<7
 mypy>=1.10.0
+pylint>=3.3.0,<4
 pytest>=8.2.0
+pytest-cov>=6.0.0,<7
 types-PyYAML>=6.0.12

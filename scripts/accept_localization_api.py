@@ -247,13 +247,16 @@ def summarize_query_response(
         expected_source in str(region.get("matched_text", ""))
         for region in matching_regions
     )
-    ground_truth = case.get("ground_truth")
+    raw_ground_truth = case.get("ground_truth")
+    ground_truth: dict[str, Any] | None = (
+        raw_ground_truth if isinstance(raw_ground_truth, dict) else None
+    )
     quality_checked = (
-        isinstance(ground_truth, dict) and case.get("ground_truth_role") == "exact"
+        ground_truth is not None and case.get("ground_truth_role") == "exact"
     )
     best_mask_iou = (
         _best_direct_mask_iou(matching_regions, ground_truth)
-        if quality_checked
+        if quality_checked and ground_truth is not None
         else None
     )
     quality_passed = (
@@ -402,7 +405,7 @@ def _segmentation_to_mask(
             polygons.append(np.rint(points).astype(np.int32))
         if not polygons:
             return None
-        cv2.fillPoly(mask, polygons, 1)
+        cv2.fillPoly(mask, polygons, (1,))
         return mask.astype(bool)
     if isinstance(segmentation, dict):
         from pycocotools import mask as mask_utils  # type: ignore[import-untyped]

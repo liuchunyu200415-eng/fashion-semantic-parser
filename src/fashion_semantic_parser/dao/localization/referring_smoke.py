@@ -3,7 +3,7 @@
 import json
 import math
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -40,7 +40,9 @@ class ReferringSmokeTarget(BaseModel):
         if isinstance(self.segmentation, (dict, list)) and not self.segmentation:
             raise ValueError("Target segmentation cannot be empty.")
         if isinstance(self.segmentation, list):
-            for polygon in self.segmentation:
+            polygons = cast(list[Any], self.segmentation)
+            # Pydantic narrows this runtime union, but Pylint cannot infer the cast.
+            for polygon in polygons:  # pylint: disable=not-an-iterable
                 if (
                     not isinstance(polygon, list)
                     or len(polygon) < 6

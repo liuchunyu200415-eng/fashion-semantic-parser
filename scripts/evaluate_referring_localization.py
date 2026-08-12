@@ -443,7 +443,7 @@ def _segmentation_to_mask(
             polygons.append(np.rint(points).astype(np.int32))
         if not polygons:
             return None
-        cv2.fillPoly(mask, polygons, 1)
+        cv2.fillPoly(mask, polygons, (1,))
         return mask.astype(bool)
     if isinstance(segmentation, dict):
         try:

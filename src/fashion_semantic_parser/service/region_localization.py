@@ -3,7 +3,7 @@
 import math
 from pathlib import Path
 from threading import Lock
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol, cast
 
 import cv2
 import numpy as np
@@ -281,7 +281,7 @@ class GroundedSAMHQRegionLocalizationService:
             raise InvalidImageInputError(str(error)) from error
         if not resolved_path.is_file():
             raise InvalidImageInputError(f"Input image not found: {image_path}")
-        return resolved_path
+        return Path(resolved_path)
 
 
 _SUPERVISED_PART_LABELS = frozenset(
@@ -725,11 +725,14 @@ def _build_default_subject_roi_detector(
     settings: GroundedSAMHQSettings,
 ) -> SubjectROIDetector:
     """Build the same COCO-person ROI detector used by PRD 3.1.1."""
-    return Detectron2PersonROIDetector(
-        PersonROIDetectorSettings(
-            device=settings.device,
-            precision=settings.precision,
-        )
+    return cast(
+        SubjectROIDetector,
+        Detectron2PersonROIDetector(
+            PersonROIDetectorSettings(
+                device=settings.device,
+                precision=settings.precision,
+            )
+        ),
     )
 
 
@@ -973,7 +976,7 @@ def _localized_region_to_local_mask(
         polygons.append(np.rint(points).astype(np.int32))
     if not polygons:
         return None, (float(x_min), float(y_min))
-    cv2.fillPoly(mask, polygons, 1)
+    cv2.fillPoly(mask, polygons, (1,))
     if not mask.any():
         return None, (float(x_min), float(y_min))
     return mask.astype(bool), (float(x_min), float(y_min))
@@ -1007,7 +1010,7 @@ def _derive_hems_from_garments(
         key=lambda instance: instance.confidence,
         reverse=True,
     )
-    candidates = []
+    candidates: list[SegmentationInstance] = []
     for instance in eligible_instances:
         if any(
             _segmentation_box_iou(instance, retained) >= 0.7 for retained in candidates

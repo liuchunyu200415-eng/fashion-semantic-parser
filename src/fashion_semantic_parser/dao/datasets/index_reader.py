@@ -88,7 +88,7 @@ class DatasetIndexReader:
                 index_path = Path(index_file.path)
                 if index_path.is_absolute():
                     return index_path
-                return resolve_project_path(index_path)
+                return Path(resolve_project_path(index_path))
         raise KeyError(f"Unknown dataset index: {index_name}")
 
     @staticmethod

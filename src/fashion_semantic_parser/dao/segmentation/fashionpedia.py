@@ -286,7 +286,7 @@ def _source_category_name(
     category_by_id: dict[int, dict[str, Any]],
 ) -> str:
     """Resolve one source category name or a stable unknown marker."""
-    return source_category_name(annotation, category_by_id)
+    return str(source_category_name(annotation, category_by_id))
 
 
 def _contains_ambiguous_main_apparel(

@@ -368,7 +368,7 @@ def _required_asset(relative_path: str, label: str) -> Path:
         raise ModelNotReadyError(f"{label} path is invalid: {relative_path}") from error
     if not path.exists():
         raise ModelNotReadyError(f"{label} not found: {relative_path}")
-    return path
+    return Path(path)
 
 
 def _load_torch_module() -> Any:
