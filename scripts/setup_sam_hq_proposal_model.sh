@@ -10,6 +10,7 @@ repo_commit="e696978d60352dc9a26b12631cd91781502c6546"
 weights_path="$project_root/models/checkpoints/localization/sam_hq_vit_b.pth"
 weights_sha256="14a9d662cd6f5a9c2dba6d40ab0058d88d287e4a18fd6fdc6ad5fb1a3fdeaa57"
 conda_executable="${CONDA_EXE:-/root/miniconda3/bin/conda}"
+timm_version="0.9.16"
 
 mkdir -p "$(dirname "$repo_path")"
 
@@ -45,11 +46,20 @@ if [[ ! -s "$weights_path" ]]; then
 fi
 echo "$weights_sha256  $weights_path" | sha256sum -c -
 
+if ! "$conda_executable" run --name fashion-prd-312 \
+  python -c \
+  "import timm; assert timm.__version__ == '$timm_version'" \
+  >/dev/null 2>&1; then
+  "$conda_executable" run --name fashion-prd-312 \
+    python -m pip install --disable-pip-version-check "timm==$timm_version"
+fi
+
 PYTHONPATH="$repo_path${PYTHONPATH:+:$PYTHONPATH}" \
   "$conda_executable" run --name fashion-prd-312 \
   python -c \
   "from segment_anything import SamAutomaticMaskGenerator; print('sam_hq_import: ready')"
 
 echo "sam_hq_commit: $(git -C "$repo_path" rev-parse HEAD)"
+echo "timm_version: $timm_version"
 echo "sam_hq_repo: $repo_path"
 echo "sam_hq_weights: $weights_path"

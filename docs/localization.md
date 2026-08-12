@@ -1663,6 +1663,9 @@ The setup pins the official SAM-HQ source checkout to
 `e696978d60352dc9a26b12631cd91781502c6546`, validates the already downloaded
 ViT-B checkpoint against its published SHA256 checksum, and confirms that the
 `segment_anything` automatic generator is importable in `fashion-prd-312`.
+The official source declares `timm` as an optional all-feature dependency; this
+project pins `timm==0.9.16` in the exact environment and the setup repairs a
+missing installation before the import check.
 
 The primary gate is `proposal_recall50`, accompanied by `proposal_recall75`
 and all-GT mean best Mask IoU. This is independent best-proposal recall rather
