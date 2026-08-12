@@ -142,15 +142,25 @@ def main() -> None:
     items = [dataset[index] for index in range(len(dataset))]
     if not items:
         raise ValueError("Dense patch training loaded no queries.")
+    print(
+        f"dataset_ready: queries={len(items)} "
+        + f"images={len({item.sample.source_image_id for item in items})}"
+    )
 
     extraction_started = time.perf_counter()
     bge_encoder = BgeM3TextEncoder(load_bge_m3_text_settings())
     text_embeddings = bge_encoder.encode([item.sample.query for item in items])
     bge_encoder.synchronize()
+    print(f"text_features_ready: shape={tuple(text_embeddings.shape)}")
     dinov2_encoder = DinoV2RegionEncoder(load_dinov2_region_settings())
     cache = build_dense_patch_training_cache(items, dinov2_encoder)
     dinov2_encoder.synchronize()
     feature_extraction_seconds = time.perf_counter() - extraction_started
+    print(
+        "dense_features_ready: "
+        + f"shape={tuple(cache.image_features.shape)} "
+        + f"seconds={feature_extraction_seconds:.3f}"
+    )
     query_count = len(items)
     selected_image_count = len(cache.image_ids)
     del items, dataset, bge_encoder, dinov2_encoder
@@ -201,7 +211,7 @@ def main() -> None:
     rng = np.random.default_rng(dense_settings.seed)
     training_started = time.perf_counter()
     projection.train()
-    for _ in range(steps):
+    for step in range(1, steps + 1):
         batch_indices = rng.choice(
             query_count,
             size=min(batch_size, query_count),
@@ -225,6 +235,8 @@ def main() -> None:
             raise RuntimeError("Dense patch training produced a non-finite loss.")
         loss.backward()
         optimizer.step()
+        if step == 1 or step % 50 == 0 or step == steps:
+            print(f"[train {step}/{steps}] loss={float(loss.item()):.6f}")
     projection.eval()
     if device == "cuda":
         torch.cuda.synchronize()
