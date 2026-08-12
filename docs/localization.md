@@ -1649,6 +1649,8 @@ overlapping proposal.
 Run a two-image bounded smoke before expanding the proposal-recall audit:
 
 ```bash
+bash scripts/setup_sam_hq_proposal_model.sh
+
 OMP_NUM_THREADS=1 \
 conda run -n fashion-prd-312 \
   python -u scripts/smoke_sam_hq_proposal_recall.py \
@@ -1656,6 +1658,11 @@ conda run -n fashion-prd-312 \
   --image-limit 2 \
   --output-dir outputs/localization/sam_hq_proposal_recall_images2
 ```
+
+The setup pins the official SAM-HQ source checkout to
+`e696978d60352dc9a26b12631cd91781502c6546`, validates the already downloaded
+ViT-B checkpoint against its published SHA256 checksum, and confirms that the
+`segment_anything` automatic generator is importable in `fashion-prd-312`.
 
 The primary gate is `proposal_recall50`, accompanied by `proposal_recall75`
 and all-GT mean best Mask IoU. This is independent best-proposal recall rather

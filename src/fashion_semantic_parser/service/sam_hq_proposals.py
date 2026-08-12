@@ -1,5 +1,6 @@
 """Generate class-agnostic high-recall region proposals with official SAM-HQ."""
 
+import hashlib
 import math
 import sys
 from contextlib import nullcontext
@@ -28,7 +29,15 @@ class SAMHQProposalSettings(BaseModel):
     """Validated settings for class-agnostic SAM-HQ candidate generation."""
 
     sam_hq_repo: str | None = "external/sam-hq"
+    sam_hq_repo_commit: str = Field(
+        default="e696978d60352dc9a26b12631cd91781502c6546",
+        pattern=r"^[0-9a-f]{40}$",
+    )
     sam_hq_weights: str = "models/checkpoints/localization/sam_hq_vit_b.pth"
+    sam_hq_weights_sha256: str = Field(
+        default="14a9d662cd6f5a9c2dba6d40ab0058d88d287e4a18fd6fdc6ad5fb1a3fdeaa57",
+        pattern=r"^[0-9a-f]{64}$",
+    )
     sam_hq_model_type: Literal["vit_b", "vit_l", "vit_h", "vit_tiny"] = "vit_b"
     sam_hq_module: Literal["auto", "segment_anything_hq", "segment_anything"] = "auto"
     device: str = "cuda"
@@ -158,10 +167,16 @@ class SAMHQAutomaticProposalGenerator:
         with self._model_init_lock:
             if self._generator is not None:
                 return self._generator
+            if not self.settings.sam_hq_repo:
+                raise ModelNotReadyError(
+                    "SAM-HQ proposal generation requires the pinned source checkout."
+                )
+            repo_path = resolve_project_path(self.settings.sam_hq_repo)
             weights_path = _required_asset(
                 self.settings.sam_hq_weights,
                 "SAM-HQ weights",
             )
+            self._validate_local_assets(repo_path, weights_path)
             module = _load_sam_hq_module(self.settings.sam_hq_module)
             try:
                 import torch  # type: ignore[import-not-found]
@@ -201,6 +216,32 @@ class SAMHQAutomaticProposalGenerator:
                     "SAM-HQ automatic proposal generator could not be loaded."
                 ) from error
         return self._generator
+
+    def _validate_local_assets(self, repo_path: Path, weights_path: Path) -> None:
+        """Reject drifting official source or an unverified SAM-HQ checkpoint."""
+        head_path = repo_path / ".git" / "HEAD"
+        if not head_path.is_file():
+            raise ModelNotReadyError(
+                "Pinned SAM-HQ checkout is missing; run "
+                "scripts/setup_sam_hq_proposal_model.sh."
+            )
+        actual_commit = head_path.read_text(encoding="utf-8").strip()
+        if actual_commit != self.settings.sam_hq_repo_commit:
+            raise ModelNotReadyError(
+                "SAM-HQ checkout is not at the pinned commit: "
+                f"expected={self.settings.sam_hq_repo_commit} actual={actual_commit}"
+            )
+        digest = hashlib.sha256()
+        with weights_path.open("rb") as weights_file:
+            for chunk in iter(lambda: weights_file.read(1024 * 1024), b""):
+                digest.update(chunk)
+        actual_sha256 = digest.hexdigest()
+        if actual_sha256 != self.settings.sam_hq_weights_sha256:
+            raise ModelNotReadyError(
+                "SAM-HQ weights checksum mismatch: "
+                f"expected={self.settings.sam_hq_weights_sha256} "
+                f"actual={actual_sha256}"
+            )
 
     def _validate_proposal(
         self,

@@ -1,5 +1,7 @@
 sam_hq_repo: external/sam-hq
+sam_hq_repo_commit: e696978d60352dc9a26b12631cd91781502c6546
 sam_hq_weights: models/checkpoints/localization/sam_hq_vit_b.pth
+sam_hq_weights_sha256: 14a9d662cd6f5a9c2dba6d40ab0058d88d287e4a18fd6fdc6ad5fb1a3fdeaa57
 sam_hq_model_type: vit_b
 sam_hq_module: auto
 device: cuda

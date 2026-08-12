@@ -1,5 +1,8 @@
 """Tests for class-agnostic SAM-HQ proposal generation."""
 
+import hashlib
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -42,6 +45,7 @@ def test_project_config_uses_high_recall_official_sam_hq_path() -> None:
     settings = load_sam_hq_proposal_settings()
 
     assert settings.sam_hq_model_type == "vit_b"
+    assert settings.sam_hq_repo_commit == "e696978d60352dc9a26b12631cd91781502c6546"
     assert settings.points_per_side == 32
     assert settings.crop_n_layers == 1
     assert settings.max_regions == 200
@@ -132,3 +136,30 @@ def test_best_proposal_iou_retains_misses_in_recall_ceiling() -> None:
     assert best_iou == 1.0
     assert best_index == 1
     assert best_proposal_mask_iou(target, []) == (0.0, None)
+
+
+def test_local_assets_require_pinned_source_and_checkpoint(
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "sam-hq"
+    head_path = repo_path / ".git" / "HEAD"
+    head_path.parent.mkdir(parents=True)
+    commit = "a" * 40
+    head_path.write_text(commit + "\n", encoding="utf-8")
+    weights_path = tmp_path / "weights.pth"
+    weights_path.write_bytes(b"official-test-weights")
+    checksum = hashlib.sha256(weights_path.read_bytes()).hexdigest()
+    generator = SAMHQAutomaticProposalGenerator(
+        SAMHQProposalSettings(
+            device="cpu",
+            precision="fp32",
+            sam_hq_repo_commit=commit,
+            sam_hq_weights_sha256=checksum,
+        )
+    )
+
+    generator._validate_local_assets(repo_path, weights_path)
+
+    weights_path.write_bytes(b"drifted")
+    with pytest.raises(ModelNotReadyError, match="checksum mismatch"):
+        generator._validate_local_assets(repo_path, weights_path)
