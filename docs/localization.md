@@ -2153,3 +2153,24 @@ number of touched patches. Neither is an inference result or PRD acceptance
 metric. If the pixel oracle fails but support succeeds, full-patch selection is
 too coarse for thin parts; if both succeed, the learned area head is the primary
 failure; if both fail, decoder ranking/localization remains the bottleneck.
+
+On the 754-query development group, learned-area selection reached `9.42%`
+Recall50 and `20.90%` mean IoU. The GT pixel-area oracle improved to only
+`21.09%` and `27.38%`; the GT patch-support oracle reached `8.75%` and
+`23.36%`. Median predicted-to-target pixel fraction was already `1.14x`.
+Therefore better area calibration alone cannot exceed the schema-two baseline
+(`21.35%` Recall50), and the area-control route is frozen. Oracle computation
+also raised warm image time from about `0.134 s` to `0.326 s`; that diagnostic
+CPU overhead is not an inference latency result.
+
+The next resolution-only feasibility check keeps the frozen 1,000-image
+schema-two checkpoint and all PRD models unchanged, but evaluates DINOv2 at
+`728 x 728` (`52 x 52` patches) instead of `518 x 518` (`37 x 37`). The
+fully-convolutional decoder can consume either grid. Its inference Mask does not
+retrain, scan a threshold, or use oracle area; separate GT diagnostics remain
+reported but do not affect the prediction. The test cannot claim acceptance and determines
+whether added patch density improves small-part localization enough to justify a
+coarse-to-fine crop implementation. Use
+`configs/localization_dinov2_region_728.yaml` through the evaluator's
+`--dinov2-config` option, first on two images and then on the frozen 50-image
+group only if checkpoint restoration succeeds.

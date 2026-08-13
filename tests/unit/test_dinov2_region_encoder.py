@@ -109,6 +109,18 @@ def test_region_settings_require_exact_patch_grid() -> None:
         DinoV2RegionEncoderSettings(input_size=512)
 
 
+def test_high_resolution_config_preserves_prd_dinov2_contract() -> None:
+    """Resolution smoke may change token density but not the PRD backbone."""
+    settings = load_dinov2_region_settings(
+        "configs/localization_dinov2_region_728.yaml"
+    )
+
+    assert settings.input_size == 728
+    assert settings.input_size // settings.patch_size == 52
+    assert settings.model_name == "dinov2_vits14"
+    assert settings.feature_dimension == 384
+
+
 def test_patch_occupancy_preserves_one_pixel_target() -> None:
     """Small accessories cannot disappear when Masks become patch selectors."""
     masks = np.zeros((1, 28, 28), dtype=np.uint8)

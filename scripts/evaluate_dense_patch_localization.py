@@ -1,7 +1,6 @@
 """Evaluate supervised full-query DINOv2 patch Masks on complete images."""
 
 import argparse
-import json
 import math
 import sys
 import time
@@ -43,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image-offset", type=int, default=0)
     parser.add_argument("--index", default=None)
     parser.add_argument("--annotations", default=None)
+    parser.add_argument("--dinov2-config", default=None)
     parser.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT)
     parser.add_argument(
         "--output-dir",
@@ -86,6 +86,7 @@ def main() -> None:
         oracle_area_topk_masks,
         topk_patch_masks,
     )
+    from fashion_semantic_parser.service.dense_patch_metrics import write_dense_json
     from fashion_semantic_parser.service.dense_region_localization import (
         binary_mask_iou,
         box_iou,
@@ -144,7 +145,11 @@ def main() -> None:
     groups: dict[int, list[int]] = defaultdict(list)
     for item_index, item in enumerate(items):
         groups[item.sample.source_image_id].append(item_index)
-    image_encoder = DinoV2RegionEncoder(load_dinov2_region_settings())
+    image_encoder = DinoV2RegionEncoder(
+        load_dinov2_region_settings(
+            args.dinov2_config or "configs/localization_dinov2_region.yaml"
+        )
+    )
     cases: list[dict[str, object]] = []
     image_rows: list[dict[str, object]] = []
     threshold = checkpoint.dense_settings.probability_threshold
@@ -271,6 +276,7 @@ def main() -> None:
             "model_type": checkpoint.model_type,
             "logit_scale": checkpoint.logit_scale,
             "logit_bias": checkpoint.logit_bias,
+            "dinov2_input_size": image_encoder.settings.input_size,
             "text_encoding_seconds": text_seconds,
             "text_projection_seconds": projection_seconds,
             "first_image_including_dinov2_load_seconds": image_rows[0][
@@ -292,9 +298,9 @@ def main() -> None:
     )
     output_dir = resolve_project_path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    _write_json(output_dir / "metrics.json", summary)
-    _write_json(output_dir / "cases.json", cases)
-    _write_json(output_dir / "images.json", image_rows)
+    write_dense_json(output_dir / "metrics.json", summary)
+    write_dense_json(output_dir / "cases.json", cases)
+    write_dense_json(output_dir / "images.json", image_rows)
     for key in (
         "query_count",
         "mask_recall50_count",
@@ -485,14 +491,6 @@ def _warm_mean(image_rows: list[dict[str, object]]) -> float | None:
         return None
     return float(
         np.mean([cast(float, row["total_image_seconds"]) for row in image_rows[1:]])
-    )
-
-
-def _write_json(path: Path, value: object) -> None:
-    """Write one deterministic UTF-8 JSON artifact."""
-    path.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
     )
 
 

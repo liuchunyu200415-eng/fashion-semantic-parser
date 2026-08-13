@@ -1,6 +1,22 @@
-"""Training-only threshold selection metrics for dense patch Masks."""
+"""Metrics and artifact helpers for dense patch localization."""
+
+import json
+from pathlib import Path
 
 import numpy as np
+
+
+def write_dense_json(path: Path, value: object) -> None:
+    """Write one deterministic UTF-8 dense-localization JSON artifact.
+
+    Args:
+        path: Destination artifact path with an existing parent directory.
+        value: JSON-serializable artifact value.
+    """
+    path.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def patch_probability_metrics(
