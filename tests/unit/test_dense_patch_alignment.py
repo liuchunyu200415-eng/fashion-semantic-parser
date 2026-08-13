@@ -254,6 +254,7 @@ def test_schema_two_checkpoint_restores_multiscale_decoder(
     assert checkpoint.model_type == "multiscale_decoder"
     assert checkpoint.decoder is not None
     assert checkpoint.area_predictor is None
+    assert checkpoint.training_input_size == 518
 
 
 def test_schema_three_checkpoint_restores_query_area_predictor(
@@ -296,6 +297,7 @@ def test_schema_three_checkpoint_restores_query_area_predictor(
             "dinov2_model": "dinov2_vits14",
             "text_model": "BAAI/bge-m3",
             "model_type": "multiscale_area_decoder",
+            "dinov2_input_size": 728,
         },
         path,
     )
@@ -309,3 +311,4 @@ def test_schema_three_checkpoint_restores_query_area_predictor(
     assert checkpoint.model_type == "multiscale_area_decoder"
     assert checkpoint.decoder is not None
     assert checkpoint.area_predictor is not None
+    assert checkpoint.training_input_size == 728

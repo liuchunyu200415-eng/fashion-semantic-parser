@@ -2184,3 +2184,19 @@ continuous-probability order for schema one/two and retains binary top-k
 restoration only for schema three. A regression test freezes this compatibility
 contract. The rejected `19.89%` versus `23.47%` Recall50 pair is not evidence for
 high-resolution training; both resolutions must be rerun after the fix.
+
+After restoring the original probability interpolation order, the paired
+754-query rerun recovered the frozen `518` result exactly: `25.73%` Recall50,
+`1.99%` Recall75, `28.81%` mean IoU, and `41.38%` Box Recall50. Without
+retraining, `728` reached `27.72%`, `5.97%`, `31.62%`, and `38.33%`
+respectively. Higher patch density therefore improves Mask overlap and Recall75
+but slightly weakens Box recall; its target-discovery improvement remains small.
+
+The next controlled run trains the same decoder on 300 images and 500 steps at
+`728`, using `--dinov2-config configs/localization_dinov2_region_728.yaml`, then
+evaluates at `728` on the same offset-two group. Checkpoints now record
+`dinov2_input_size`; older checkpoints default to their historical `518` value
+when loaded. Continue to a 1,000-image high-resolution run only if same-resolution
+training materially improves both Recall50 and mean IoU without a further Box
+recall collapse. Otherwise stop full-image resolution scaling and implement
+query-conditioned coarse-to-fine crops.

@@ -276,6 +276,7 @@ def main() -> None:
             "logit_scale": checkpoint.logit_scale,
             "logit_bias": checkpoint.logit_bias,
             "dinov2_input_size": image_encoder.settings.input_size,
+            "checkpoint_training_input_size": checkpoint.training_input_size,
             "text_encoding_seconds": text_seconds,
             "text_projection_seconds": projection_seconds,
             "first_image_including_dinov2_load_seconds": image_rows[0][

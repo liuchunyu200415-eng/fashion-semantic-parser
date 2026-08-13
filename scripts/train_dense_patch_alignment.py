@@ -42,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--index", default=None)
     parser.add_argument("--annotations", default=None)
     parser.add_argument("--config", default=None)
+    parser.add_argument("--dinov2-config", default=None)
     parser.add_argument("--initial-checkpoint", default=DEFAULT_INITIAL_CHECKPOINT)
     parser.add_argument(
         "--model-type",
@@ -162,7 +163,12 @@ def main() -> None:
     text_embeddings = bge_encoder.encode([item.sample.query for item in items])
     bge_encoder.synchronize()
     print(f"text_features_ready: shape={tuple(text_embeddings.shape)}")
-    dinov2_encoder = DinoV2RegionEncoder(load_dinov2_region_settings())
+    dinov2_encoder = DinoV2RegionEncoder(
+        load_dinov2_region_settings(
+            args.dinov2_config or "configs/localization_dinov2_region.yaml"
+        )
+    )
+    dinov2_input_size = dinov2_encoder.settings.input_size
     cache = build_dense_patch_training_cache(items, dinov2_encoder)
     dinov2_encoder.synchronize()
     feature_extraction_seconds = time.perf_counter() - extraction_started
@@ -327,6 +333,7 @@ def main() -> None:
         "base_encoders_frozen": True,
         "dinov2_model": "dinov2_vits14",
         "text_model": "BAAI/bge-m3",
+        "dinov2_input_size": dinov2_input_size,
         "model_type": args.model_type,
         "initial_checkpoint": str(resolve_project_path(args.initial_checkpoint)),
     }
@@ -348,6 +355,7 @@ def main() -> None:
         "steps": steps,
         "batch_size": min(batch_size, query_count),
         "patch_count_per_image": int(cache.image_features.shape[1]),
+        "dinov2_input_size": dinov2_input_size,
         "initial_mean_loss": initial_summary["mean_loss"],
         "final_mean_loss": final_default_summary["mean_loss"],
         "initial_patch_recall50": initial_summary["patch_recall50"],

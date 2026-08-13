@@ -108,6 +108,7 @@ class DensePatchAlignmentCheckpoint:
     model_type: str
     decoder: Any | None
     area_predictor: Any | None
+    training_input_size: int
 
 
 def load_dense_patch_alignment_settings(
@@ -377,6 +378,13 @@ def load_dense_patch_alignment_checkpoint(
     dense_settings = DensePatchAlignmentSettings.model_validate(
         payload.get("dense_settings")
     )
+    training_input_size = payload.get("dinov2_input_size", 518)
+    if (
+        not isinstance(training_input_size, int)
+        or training_input_size < 14
+        or training_input_size % 14
+    ):
+        raise ValueError("Dense checkpoint DINOv2 input size is invalid.")
     state_dict = payload.get("projection_state_dict")
     if not isinstance(state_dict, dict):
         raise ValueError("Dense patch projection state is missing or invalid.")
@@ -441,4 +449,5 @@ def load_dense_patch_alignment_checkpoint(
         model_type=model_type,
         decoder=decoder,
         area_predictor=area_predictor,
+        training_input_size=training_input_size,
     )
