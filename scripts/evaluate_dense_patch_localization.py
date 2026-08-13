@@ -91,11 +91,11 @@ def main() -> None:
         binary_mask_iou,
         box_iou,
         mask_box,
+        patch_scores_to_mask,
     )
     from fashion_semantic_parser.service.dinov2_region_encoder import (
         DinoV2RegionEncoder,
         load_dinov2_region_settings,
-        patch_scores_to_image,
     )
 
     project_settings = load_settings()
@@ -176,16 +176,18 @@ def main() -> None:
             target_mask = np.asarray(item.target_masks.any(axis=0), dtype=bool)
             if selected_patch_masks is None:
                 patch_selection = probabilities[local_index] >= threshold
+                predicted_mask = patch_scores_to_mask(
+                    probabilities[local_index],
+                    dense.geometry,
+                    threshold=threshold,
+                )
             else:
                 patch_selection = selected_patch_masks[local_index]
-            predicted_mask = np.asarray(
-                patch_scores_to_image(
+                predicted_mask = patch_scores_to_mask(
                     np.asarray(patch_selection, dtype=np.float32),
                     dense.geometry,
+                    threshold=0.5,
                 )
-                >= 0.5,
-                dtype=bool,
-            )
             target_patch_fractions = mask_to_patch_fractions(
                 target_mask,
                 dense.geometry,
@@ -196,13 +198,10 @@ def main() -> None:
                 target_patch_fractions,
             )
             oracle_masks = [
-                np.asarray(
-                    patch_scores_to_image(
-                        np.asarray(selection, dtype=np.float32),
-                        dense.geometry,
-                    )
-                    >= 0.5,
-                    dtype=bool,
+                patch_scores_to_mask(
+                    np.asarray(selection, dtype=np.float32),
+                    dense.geometry,
+                    threshold=0.5,
                 )
                 for selection in oracle_selections
             ]

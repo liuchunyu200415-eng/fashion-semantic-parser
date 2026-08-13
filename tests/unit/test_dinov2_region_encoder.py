@@ -6,6 +6,9 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
+from fashion_semantic_parser.service.dense_region_localization import (
+    patch_scores_to_mask,
+)
 from fashion_semantic_parser.service.dinov2_region_encoder import (
     DinoV2RegionEncoder,
     DinoV2RegionEncoderSettings,
@@ -66,6 +69,19 @@ def test_dense_letterbox_geometry_restores_patch_scores() -> None:
     assert restored.shape == (10, 20)
     assert np.all(np.isfinite(restored))
     assert restored[:, -1].mean() > restored[:, 0].mean()
+
+
+def test_patch_mask_threshold_is_applied_after_continuous_restoration() -> None:
+    """Schema-one/two inference must preserve probability interpolation order."""
+    geometry = letterbox_geometry((5, 13), output_size=28)
+    scores = np.asarray([[0.4, 0.6], [0.4, 0.6]], dtype=np.float32)
+
+    restored = patch_scores_to_mask(scores, geometry, threshold=0.5)
+
+    expected = patch_scores_to_image(scores, geometry) >= 0.5
+    assert np.array_equal(restored, expected)
+    with pytest.raises(ValueError, match="finite"):
+        patch_scores_to_mask(scores, geometry, threshold=np.nan)
 
 
 def test_dense_geometry_rejects_invalid_dimensions_and_scores() -> None:

@@ -15,6 +15,40 @@ class DenseMaskCandidate:
     box: tuple[float, float, float, float] | None
 
 
+def patch_scores_to_mask(
+    patch_scores: np.ndarray,
+    geometry: object,
+    *,
+    threshold: float,
+) -> np.ndarray:
+    """Restore continuous patch scores before applying a binary threshold.
+
+    Args:
+        patch_scores: Non-empty finite two-dimensional patch score grid.
+        geometry: DINOv2 letterbox geometry for the source image.
+        threshold: Finite source-image probability boundary.
+
+    Returns:
+        Boolean Mask in original-image coordinates.
+
+    Raises:
+        ValueError: If the threshold is not finite.
+    """
+    if not np.isfinite(threshold):
+        raise ValueError("Patch Mask threshold must be finite.")
+    from fashion_semantic_parser.service.dinov2_region_encoder import (
+        DinoV2LetterboxGeometry,
+        patch_scores_to_image,
+    )
+
+    if not isinstance(geometry, DinoV2LetterboxGeometry):
+        raise ValueError("Patch Mask geometry must be a DINOv2 letterbox transform.")
+    return np.asarray(
+        patch_scores_to_image(patch_scores, geometry) >= threshold,
+        dtype=bool,
+    )
+
+
 def dense_similarity_scores(
     patch_features: np.ndarray,
     query_features: np.ndarray,

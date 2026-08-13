@@ -2174,3 +2174,13 @@ coarse-to-fine crop implementation. Use
 `configs/localization_dinov2_region_728.yaml` through the evaluator's
 `--dinov2-config` option, first on two images and then on the frozen 50-image
 group only if checkpoint restoration succeeds.
+
+The first 50-image resolution comparison was rejected before model selection.
+Its `518` result drifted from the frozen historical checkpoint result because
+the schema-three area integration had inadvertently changed schema-one/two Mask
+restoration from “continuous probability upsample, then threshold” to “patch
+threshold, then binary upsample.” The evaluator now restores the original
+continuous-probability order for schema one/two and retains binary top-k
+restoration only for schema three. A regression test freezes this compatibility
+contract. The rejected `19.89%` versus `23.47%` Recall50 pair is not evidence for
+high-resolution training; both resolutions must be rerun after the fix.
