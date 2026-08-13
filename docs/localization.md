@@ -2231,3 +2231,16 @@ threshold changes on the previously unused validation offset-52 group. That
 result tests generalization only; it is still not the independent manually
 annotated PRD acceptance set and cannot establish the `92%` requirement or
 complete-request `30 ms` latency.
+
+The frozen checkpoint generalized on the previously unused offset-52 group
+(`762` queries): `41.60%` Mask Recall50, `9.19%` Recall75, `38.25%` mean Mask
+IoU, and `55.64%` Box Recall50. Relative to the earlier 1,000-image `518`
+checkpoint on the same group (`35.43%`, `6.17%`, `34.16%`, and `51.71%`), the
+high-resolution trained model improved every localization metric. The GT
+pixel-area oracle reached `43.70%` Recall50, only `2.10` percentage points above
+inference, again confirming that target-area calibration is not the principal
+remaining limitation. Warm image time was `0.361 s`, but this run includes two
+GT-dependent oracle restorations per query and is not a valid production latency
+measurement. The model generalizes across held-out images, but remains far below
+PRD acceptance; full-image scaling is now frozen and the next architecture must
+improve query-to-location ranking through local re-encoding.
