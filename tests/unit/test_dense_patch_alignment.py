@@ -12,6 +12,8 @@ from fashion_semantic_parser.service.dense_patch_alignment import (
     dense_patch_logits,
     load_dense_patch_alignment_settings,
     mask_to_patch_fractions,
+    patch_probability_metrics,
+    select_patch_probability_threshold,
 )
 from fashion_semantic_parser.service.dinov2_region_encoder import (
     DinoV2DenseFeatureMap,
@@ -105,6 +107,8 @@ def test_dense_patch_settings_match_committed_training_contract() -> None:
     assert settings.training_steps == 300
     assert settings.batch_size == 32
     assert settings.probability_threshold == 0.5
+    assert settings.calibration_thresholds[0] == 0.5
+    assert settings.calibration_thresholds[-1] == 0.99
 
 
 def test_dense_patch_loss_trains_calibrated_similarity() -> None:
@@ -134,3 +138,53 @@ def test_dense_patch_loss_trains_calibrated_similarity() -> None:
         aligned_logits,
         targets,
     ) < balanced_patch_mask_loss(reversed_logits, targets)
+
+
+def test_training_threshold_selection_prefers_tighter_equal_recall_mask() -> None:
+    """Training calibration should reduce overprediction without validation GT."""
+    probabilities = np.asarray(
+        [
+            [0.99, 0.90, 0.70, 0.60],
+            [0.95, 0.85, 0.40, 0.30],
+        ],
+        dtype=np.float32,
+    )
+    targets = np.asarray(
+        [
+            [1.0, 1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+
+    selected, audit = select_patch_probability_threshold(
+        probabilities,
+        targets,
+        (0.5, 0.8, 0.9),
+    )
+
+    assert selected == 0.8
+    assert audit["0.800"]["patch_recall50"] == 1.0
+    assert audit["0.800"]["mean_patch_iou"] == 1.0
+    assert (
+        patch_probability_metrics(
+            probabilities,
+            targets,
+            threshold=selected,
+        )["patch_recall50_count"]
+        == 2
+    )
+
+
+def test_patch_probability_metrics_retain_empty_prediction_misses() -> None:
+    """An overly strict threshold must leave every missed query in the denominator."""
+    metrics = patch_probability_metrics(
+        np.asarray([[0.4, 0.3]], dtype=np.float32),
+        np.asarray([[1.0, 0.0]], dtype=np.float32),
+        threshold=0.9,
+    )
+
+    assert metrics["query_count"] == 1
+    assert metrics["patch_recall50_count"] == 0
+    assert metrics["patch_recall50"] == 0.0
+    assert metrics["mean_patch_iou"] == 0.0

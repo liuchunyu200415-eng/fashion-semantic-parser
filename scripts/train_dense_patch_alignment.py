@@ -100,6 +100,8 @@ def main() -> None:
         build_dense_patch_training_cache,
         dense_patch_logits,
         load_dense_patch_alignment_settings,
+        patch_probability_metrics,
+        select_patch_probability_threshold,
     )
     from fashion_semantic_parser.service.dinov2_region_encoder import (
         DinoV2RegionEncoder,
@@ -241,12 +243,32 @@ def main() -> None:
     if device == "cuda":
         torch.cuda.synchronize()
     training_seconds = time.perf_counter() - training_started
-    final_summary = _evaluate_training_cache(runtime)
-    if cast(float, final_summary["mean_loss"]) >= cast(
+    final_default_summary = _evaluate_training_cache(runtime)
+    if cast(float, final_default_summary["mean_loss"]) >= cast(
         float,
         initial_summary["mean_loss"],
     ):
         raise RuntimeError("Dense patch loss did not decrease during training.")
+    training_probabilities, training_targets = _training_cache_probabilities(runtime)
+    selected_threshold, threshold_metrics = select_patch_probability_threshold(
+        training_probabilities,
+        training_targets,
+        dense_settings.calibration_thresholds,
+    )
+    selected_summary = patch_probability_metrics(
+        training_probabilities,
+        training_targets,
+        threshold=selected_threshold,
+    )
+    calibrated_settings = dense_settings.model_copy(
+        update={"probability_threshold": selected_threshold}
+    )
+    print(
+        "threshold_calibrated: "
+        + f"selected={selected_threshold:.3f} "
+        + f"R50={selected_summary['patch_recall50']:.6f} "
+        + f"meanIoU={selected_summary['mean_patch_iou']:.6f}"
+    )
 
     output_dir = resolve_project_path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -260,7 +282,7 @@ def main() -> None:
         {
             "schema_version": 1,
             "alignment_settings": alignment_settings.model_dump(mode="json"),
-            "dense_settings": dense_settings.model_dump(mode="json"),
+            "dense_settings": calibrated_settings.model_dump(mode="json"),
             "projection_state_dict": projection.state_dict(),
             "logit_scale": final_scale,
             "logit_bias": final_bias,
@@ -281,12 +303,17 @@ def main() -> None:
         "batch_size": min(batch_size, query_count),
         "patch_count_per_image": int(cache.image_features.shape[1]),
         "initial_mean_loss": initial_summary["mean_loss"],
-        "final_mean_loss": final_summary["mean_loss"],
+        "final_mean_loss": final_default_summary["mean_loss"],
         "initial_patch_recall50": initial_summary["patch_recall50"],
-        "final_patch_recall50": final_summary["patch_recall50"],
+        "final_default_patch_recall50": final_default_summary["patch_recall50"],
+        "final_patch_recall50": selected_summary["patch_recall50"],
         "initial_mean_patch_iou": initial_summary["mean_patch_iou"],
-        "final_mean_patch_iou": final_summary["mean_patch_iou"],
-        "probability_threshold": dense_settings.probability_threshold,
+        "final_default_mean_patch_iou": final_default_summary["mean_patch_iou"],
+        "final_mean_patch_iou": selected_summary["mean_patch_iou"],
+        "default_probability_threshold": dense_settings.probability_threshold,
+        "probability_threshold": selected_threshold,
+        "threshold_calibration_scope": "training_patch_grid",
+        "threshold_metrics": threshold_metrics,
         "logit_scale": final_scale,
         "logit_bias": final_bias,
         "feature_extraction_seconds": feature_extraction_seconds,
@@ -378,6 +405,43 @@ def _evaluate_training_cache(
         "patch_recall50": float(np.mean(np.asarray(ious) >= 0.50)),
         "mean_patch_iou": float(np.mean(ious)),
     }
+
+
+def _training_cache_probabilities(
+    runtime: DenseTrainingRuntime,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Collect calibrated probabilities and targets for threshold freezing."""
+    try:
+        import torch  # type: ignore[import-not-found]
+    except ImportError as error:
+        raise RuntimeError("PyTorch is required for threshold calibration.") from error
+    from fashion_semantic_parser.service.dense_patch_alignment import (
+        dense_patch_logits,
+    )
+
+    runtime.projection.eval()
+    probability_batches: list[np.ndarray] = []
+    query_count = len(runtime.cache.query_image_indices)
+    with torch.inference_mode():
+        for start in range(0, query_count, runtime.settings.batch_size):
+            stop = min(query_count, start + runtime.settings.batch_size)
+            batch_indices = np.arange(start, stop, dtype=np.int64)
+            patch_tensor, _, query_indices = _training_batch(runtime, batch_indices)
+            projected = runtime.projection(runtime.text_tensor[query_indices])
+            logits = dense_patch_logits(
+                patch_tensor,
+                projected,
+                runtime.log_scale,
+                runtime.logit_bias,
+                max_logit_scale=runtime.settings.max_logit_scale,
+            )
+            probability_batches.append(
+                np.asarray(torch.sigmoid(logits).cpu().numpy(), dtype=np.float32)
+            )
+    return (
+        np.concatenate(probability_batches, axis=0),
+        np.asarray(runtime.cache.target_patch_fractions, dtype=np.float32),
+    )
 
 
 if __name__ == "__main__":

@@ -1933,8 +1933,14 @@ nohup env \
 
 Training reports only patch-grid metrics on the training set. They demonstrate
 optimization behavior but cannot establish full-image localization accuracy.
-The saved checkpoint freezes a learned `0.5` probability threshold; validation
-does not scan quantiles or use target areas.
+Because foreground-balanced BCE deliberately changes the foreground prior,
+`0.5` is only the default probability boundary, not a calibrated target-area
+threshold. After optimization, the trainer evaluates a committed list of
+thresholds using training patch Masks only. It freezes the value with the
+highest training patch Recall50, then mean patch IoU, then the tighter threshold
+as deterministic tie-breakers. The selected threshold and every candidate
+metric are stored in the checkpoint and `metrics.json`; validation does not
+scan thresholds or use target areas.
 
 Evaluate that fixed checkpoint on the same two-image architecture-debug set:
 
@@ -1964,3 +1970,14 @@ its pass flags remain `null`. Its immediate gate is improvement over the raw
 `16.67%` Mask Recall50 baseline at the fixed threshold. A successful result is
 then frozen and evaluated on a larger disjoint image-complete set before any
 SAM-HQ refinement comparison.
+
+The first uncalibrated `0.5` evaluation did not pass that gate. Training patch
+Recall50 rose from `0.21%` to `26.04%` and mean patch IoU from `5.08%` to
+`35.46%`, confirming learnable foreground signal. On the 24 validation queries,
+however, Mask Recall50 was `12.50%`, mean Mask IoU `21.95%`, and Box Recall50
+`25%`. Every category was over-segmented: predicted-to-GT area ranged from
+`1.70x` to `4.11x` for sleeves, `5.82x` to `8.54x` for applique, and `11.73x`
+to `29.38x` for necklines. This is consistent with an uncalibrated threshold
+under foreground-balanced loss. More optimization steps, validation threshold
+scans, and connected-component rules are stopped until the training-only
+threshold calibration is rerun and independently evaluated.
