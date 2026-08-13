@@ -2295,3 +2295,17 @@ which must remain an explicit secondary regression. Pixelwise
 ratio to `2.28x`; that fusion branch is rejected. The frozen `local_only`
 branch now proceeds unchanged to the offset-52 held-out group. That evaluation
 tests image generalization only and still cannot establish PRD acceptance.
+
+The unchanged `local_only` branch also generalized on the offset-52 held-out
+group (`762` queries). Relative to `coarse`, Mask Recall50 improved from
+`41.60%` to `43.44%`, Recall75 from `9.19%` to `18.64%`, and mean Mask IoU from
+`38.25%` to `43.43%`; the median predicted-to-target area ratio decreased from
+`1.61x` to `1.14x`. This reproduces the development-group Mask-quality gain
+without threshold or crop changes, so `30%` Top-3 `local_only` is frozen as the
+current coarse-to-fine Mask path. Box Recall50 regressed from `55.64%` to
+`41.99%`; therefore the coarse localization Box must remain the auxiliary Box
+output instead of deriving it from the local Mask. `coarse_local_max` is
+rejected: it did not improve Recall50 and increased the area ratio to `1.96x`.
+These Fashionpedia generated-query results establish architecture progress,
+not the PRD `92%` acceptance result. Independent manual referring-expression
+evaluation and complete-request latency measurement remain required.
