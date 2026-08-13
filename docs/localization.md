@@ -2356,3 +2356,13 @@ one coarse DINOv2 pass, three sequential local DINOv2 passes, scoring, and
 polygon/Box postprocessing; model loading and HTTP transport are excluded.
 The next optimization batches the three fixed local crops into one DINOv2
 forward pass without changing the model, query, crops, threshold, or output.
+
+The repeated benchmark after batched crop encoding still failed the target:
+warm mean latency was `102.16-106.54 ms` and P95 was `107.33-113.14 ms`.
+This is not a material improvement over the sequential baseline, so batching
+alone is not an accepted optimization. The benchmark supports an explicit
+`--profile-stages` diagnostic mode that reports non-overlapping image decode,
+query projection, coarse DINOv2, crop preparation, batched local DINOv2,
+scoring/restoration, and polygon/schema times. Diagnostic CUDA boundaries are
+synchronized for attribution; this mode is excluded from PRD latency
+acceptance and does not add synchronization to the normal service path.

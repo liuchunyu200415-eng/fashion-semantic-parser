@@ -7,8 +7,23 @@ import pytest
 
 from scripts.benchmark_localization_latency import (
     _latency_summary,
+    _localization_operation,
     _resolve_benchmark_images,
 )
+
+
+class _ProfiledService:
+    def localize_profiled(
+        self,
+        image_path: str,
+        query: str,
+        *,
+        auto_subject_roi: bool,
+    ) -> tuple[str, dict[str, float]]:
+        return (
+            f"{image_path}:{query}:{auto_subject_roi}",
+            {"coarse_dinov2": 12.5},
+        )
 
 
 def test_latency_summary_reports_p95_and_request_rate() -> None:
@@ -43,3 +58,19 @@ def test_validation_images_are_selected_deterministically(tmp_path: Path) -> Non
     )
 
     assert paths == ["first.jpg"]
+
+
+def test_profiled_operation_preserves_stage_timings() -> None:
+    """Diagnostic mode must return both prediction and stage measurements."""
+    operation = _localization_operation(
+        service=_ProfiledService(),
+        image_paths=["first.jpg"],
+        query="左边的袖口",
+        auto_subject_roi=False,
+        profile_stages=True,
+    )
+
+    prediction, stages = operation(0)
+
+    assert prediction == "first.jpg:左边的袖口:False"
+    assert stages == {"coarse_dinov2": 12.5}

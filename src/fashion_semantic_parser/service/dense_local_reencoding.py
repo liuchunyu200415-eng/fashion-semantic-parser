@@ -28,6 +28,10 @@ from fashion_semantic_parser.service.dense_crop_audit import (
     restore_crop_score_map,
     select_query_peak_crops,
 )
+from fashion_semantic_parser.service.dense_local_profiling import (
+    record_profile_stage,
+    start_profile_stage,
+)
 from fashion_semantic_parser.service.dense_local_runtime import (
     DenseLocalReencodingSettings,
     DenseLocalRuntimeBundle,
@@ -74,6 +78,34 @@ class DenseLocalReencodingEngine:
         Raises:
             ValueError: If query, image, or model output geometry is invalid.
         """
+        result, _ = self._predict(image_rgb, query, stage_timings=None)
+        return result
+
+    def predict_profiled(
+        self,
+        image_rgb: np.ndarray,
+        query: str,
+    ) -> tuple[DenseLocalMaskResult, dict[str, float]]:
+        """Predict one result and return diagnostic stage milliseconds.
+
+        Args:
+            image_rgb: Complete or subject-cropped uint8 RGB image.
+            query: Unmodified complete language expression.
+
+        Returns:
+            Prediction and non-overlapping engine-stage measurements.
+        """
+        stage_timings: dict[str, float] = {}
+        return self._predict(image_rgb, query, stage_timings=stage_timings)
+
+    def _predict(
+        self,
+        image_rgb: np.ndarray,
+        query: str,
+        *,
+        stage_timings: dict[str, float] | None,
+    ) -> tuple[DenseLocalMaskResult, dict[str, float]]:
+        """Run one optional-profile inference implementation."""
         normalized_query = query.strip()
         if not normalized_query:
             raise ValueError("Complete localization query cannot be empty.")
@@ -82,8 +114,13 @@ class DenseLocalReencodingEngine:
             raise ValueError("Dense localization expects an HxWx3 uint8 RGB image.")
         runtime = self._get_runtime()
         with self._inference_lock:
+            started = start_profile_stage(stage_timings)
             projected_query = runtime.projector.project(query)
+            record_profile_stage(stage_timings, "query_projection", started)
+            started = start_profile_stage(stage_timings)
             coarse_dense = runtime.image_encoder.encode_dense(image)
+            record_profile_stage(stage_timings, "coarse_dinov2", started)
+            started = start_profile_stage(stage_timings)
             coarse_probabilities = runtime.scorer.score(
                 coarse_dense.features,
                 projected_query,
@@ -92,6 +129,8 @@ class DenseLocalReencodingEngine:
                 coarse_probabilities,
                 coarse_dense.geometry,
             )
+            record_profile_stage(stage_timings, "coarse_scoring_restore", started)
+            started = start_profile_stage(stage_timings)
             crops = select_query_peak_crops(
                 coarse_probabilities,
                 coarse_dense.geometry,
@@ -99,10 +138,14 @@ class DenseLocalReencodingEngine:
                 max_crops=self.settings.max_crops,
             )
             crop_images = [extract_crop_image(image, crop) for crop in crops]
+            record_profile_stage(stage_timings, "crop_preparation", started)
+            started = start_profile_stage(stage_timings)
             crop_features = runtime.image_encoder.encode_dense_batch(crop_images)
+            record_profile_stage(stage_timings, "local_batch_dinov2", started)
             if len(crop_features) != len(crops):
                 raise ValueError("Dense crop batch returned an invalid result count.")
             restored_maps = []
+            started = start_profile_stage(stage_timings)
             for crop, crop_dense in zip(crops, crop_features, strict=True):
                 crop_probabilities = runtime.scorer.score(
                     crop_dense.features,
@@ -119,6 +162,8 @@ class DenseLocalReencodingEngine:
                         image.shape[:2],
                     )
                 )
+            record_profile_stage(stage_timings, "local_scoring_restore", started)
+        started = start_profile_stage(stage_timings)
         local_scores = fuse_crop_score_maps(restored_maps)
         local_mask = np.asarray(
             local_scores >= runtime.scorer.threshold,
@@ -133,11 +178,13 @@ class DenseLocalReencodingEngine:
         confidence = (
             float(np.mean(local_scores[local_mask])) if local_mask.any() else 0.0
         )
-        return DenseLocalMaskResult(
+        result = DenseLocalMaskResult(
             local_mask=local_mask,
             coarse_box=mask_box(coarse_mask) or mask_box(local_mask),
             confidence=max(0.0, min(1.0, confidence)),
         )
+        record_profile_stage(stage_timings, "mask_postprocess", started)
+        return result, stage_timings or {}
 
     def _get_runtime(self) -> DenseLocalRuntimeBundle:
         """Build and retain the heavy production runtime on first use."""
@@ -218,17 +265,66 @@ class DenseLocalReencodingRegionLocalizationService:
             InvalidImageInputError: If input or requested geometry is invalid.
             ModelNotReadyError: If pinned runtime assets cannot be loaded.
         """
+        prediction, _ = self._localize(
+            image_path,
+            query,
+            subject_roi=subject_roi,
+            auto_subject_roi=auto_subject_roi,
+            profile_stages=False,
+        )
+        return prediction
+
+    def localize_profiled(
+        self,
+        image_path: str,
+        query: str,
+        subject_roi: SegmentationSubjectROI | None = None,
+        auto_subject_roi: bool = True,
+    ) -> tuple[RegionLocalizationPrediction, dict[str, float]]:
+        """Localize and return non-overlapping diagnostic stage timings.
+
+        Args:
+            image_path: Project-relative source image path.
+            query: Complete language expression.
+            subject_roi: Optional manually supplied subject rectangle.
+            auto_subject_roi: Whether automatic subject selection is requested.
+
+        Returns:
+            API prediction and diagnostic milliseconds by stage.
+        """
+        return self._localize(
+            image_path,
+            query,
+            subject_roi=subject_roi,
+            auto_subject_roi=auto_subject_roi,
+            profile_stages=True,
+        )
+
+    def _localize(
+        self,
+        image_path: str,
+        query: str,
+        *,
+        subject_roi: SegmentationSubjectROI | None,
+        auto_subject_roi: bool,
+        profile_stages: bool,
+    ) -> tuple[RegionLocalizationPrediction, dict[str, float]]:
+        """Run the shared service implementation with optional diagnostics."""
         if subject_roi is not None and auto_subject_roi:
             raise InvalidImageInputError(
                 "subject_roi and auto_subject_roi cannot be used together"
             )
+        stage_timings: dict[str, float] | None = {} if profile_stages else None
+        started = start_profile_stage(stage_timings)
         resolved_path = _resolve_image_path(image_path)
         image_bgr = cv2.imread(str(resolved_path))
         if image_bgr is None:
             raise InvalidImageInputError(f"Unable to read image: {image_path}")
+        record_profile_stage(stage_timings, "path_and_image_decode", started)
         effective_roi = subject_roi
         roi_source: SubjectROISource | None = "manual" if subject_roi else None
         try:
+            started = start_profile_stage(stage_timings)
             if auto_subject_roi and not self.requires_full_image:
                 effective_roi = self._get_subject_roi_detector().detect(resolved_path)
                 roi_source = "detected" if effective_roi else "full_image_fallback"
@@ -239,10 +335,17 @@ class DenseLocalReencodingRegionLocalizationService:
                 effective_roi,
                 margin=self._get_settings().subject_roi_margin,
             )
-            result = self._get_engine().predict(
-                cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB),
-                query,
-            )
+            crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+            record_profile_stage(stage_timings, "roi_and_color_prepare", started)
+            if profile_stages:
+                result, engine_timings = self._get_engine().predict_profiled(
+                    crop_rgb,
+                    query,
+                )
+                assert stage_timings is not None
+                stage_timings.update(engine_timings)
+            else:
+                result = self._get_engine().predict(crop_rgb, query)
         except InvalidImageInputError:
             raise
         except (FileNotFoundError, OSError, RuntimeError, TypeError) as error:
@@ -251,14 +354,17 @@ class DenseLocalReencodingRegionLocalizationService:
             ) from error
         except ValueError as error:
             raise InvalidImageInputError(str(error)) from error
+        started = start_profile_stage(stage_timings)
         regions = _result_to_regions(result, query=query, offset=offset)
-        return RegionLocalizationPrediction(
+        prediction = RegionLocalizationPrediction(
             image_path=image_path,
             query=query,
             regions=regions,
             subject_roi=effective_roi,
             subject_roi_source=roi_source,
         )
+        record_profile_stage(stage_timings, "polygon_and_schema", started)
+        return prediction, stage_timings or {}
 
     def _get_settings(self) -> DenseLocalReencodingSettings:
         """Load and cache validated deployment settings."""

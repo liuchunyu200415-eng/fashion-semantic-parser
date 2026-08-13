@@ -5,7 +5,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import numpy as np
 
@@ -79,6 +79,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--warmup-runs", type=int, default=5)
     parser.add_argument("--runs", type=int, default=100)
+    parser.add_argument("--profile-stages", action="store_true")
     parser.add_argument("--output", default=None)
     return parser.parse_args()
 
@@ -143,18 +144,22 @@ def main() -> None:
             image_paths=image_paths,
             query=query,
             auto_subject_roi=args.roi_mode == "auto",
+            profile_stages=args.profile_stages,
         )
         for run_index in range(args.warmup_runs):
             operation(run_index)
         _synchronize_cuda(torch)
 
         latencies = []
+        stage_samples: dict[str, list[float]] = {}
         for run_index in range(args.runs):
             _synchronize_cuda(torch)
             started_at = time.perf_counter()
-            prediction = operation(run_index)
+            prediction, stage_timings = operation(run_index)
             _synchronize_cuda(torch)
             latencies.append((time.perf_counter() - started_at) * 1000.0)
+            for name, elapsed_ms in stage_timings.items():
+                stage_samples.setdefault(name, []).append(elapsed_ms)
         all_latencies.extend(latencies)
         summary = _latency_summary(latencies)
         route_results.append(
@@ -163,6 +168,10 @@ def main() -> None:
                 "resolved_region": prompt.region_label,
                 "last_region_count": len(prediction.regions),
                 "latency_ms": summary,
+                "stage_latency_ms": {
+                    name: _latency_summary(values)
+                    for name, values in stage_samples.items()
+                },
                 "p95_target_ms": LATENCY_TARGET_MS,
                 "passed": summary["p95"] <= LATENCY_TARGET_MS,
             }
@@ -172,6 +181,15 @@ def main() -> None:
             f"p95={summary['p95']:.2f}ms passed={summary['p95'] <= LATENCY_TARGET_MS}",
             flush=True,
         )
+        if stage_samples:
+            print(
+                "stages: "
+                + " ".join(
+                    f"{name}={np.mean(values):.2f}ms"
+                    for name, values in stage_samples.items()
+                ),
+                flush=True,
+            )
 
     aggregate = _latency_summary(all_latencies)
     result = {
@@ -188,6 +206,7 @@ def main() -> None:
         "warmup_runs_per_query": args.warmup_runs,
         "measured_runs_per_query": args.runs,
         "roi_mode": args.roi_mode,
+        "stage_profiling_enabled": args.profile_stages,
         "measurement_boundary": {
             "included": [
                 "project path validation",
@@ -242,14 +261,31 @@ def _localization_operation(
     image_paths: list[str],
     query: str,
     auto_subject_roi: bool,
-) -> Callable[[int], Any]:
+    profile_stages: bool,
+) -> Callable[[int], tuple[Any, dict[str, float]]]:
     """Build a stable round-robin service operation for warm timing."""
 
-    def operation(run_index: int) -> Any:
-        return service.localize(
-            image_paths[run_index % len(image_paths)],
-            query,
-            auto_subject_roi=auto_subject_roi,
+    def operation(run_index: int) -> tuple[Any, dict[str, float]]:
+        image_path = image_paths[run_index % len(image_paths)]
+        if profile_stages:
+            profiled = getattr(service, "localize_profiled", None)
+            if not callable(profiled):
+                raise ValueError("Selected backend does not support stage profiling.")
+            return cast(
+                tuple[Any, dict[str, float]],
+                profiled(  # pylint: disable=not-callable
+                    image_path,
+                    query,
+                    auto_subject_roi=auto_subject_roi,
+                ),
+            )
+        return (
+            service.localize(
+                image_path,
+                query,
+                auto_subject_roi=auto_subject_roi,
+            ),
+            {},
         )
 
     return operation
