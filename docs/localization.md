@@ -2366,3 +2366,24 @@ query projection, coarse DINOv2, crop preparation, batched local DINOv2,
 scoring/restoration, and polygon/schema times. Diagnostic CUDA boundaries are
 synchronized for attribution; this mode is excluded from PRD latency
 acceptance and does not add synchronization to the normal service path.
+
+The synchronized profile attributes `99.80-103.12 ms` warm means as follows:
+query projection `18.91-19.09 ms`, coarse DINOv2 `16.53-17.19 ms`, and batched
+local DINOv2 `40.14-41.99 ms`. Those three model stages alone consume roughly
+`76-78 ms`; image decode, score restoration, and output construction cannot
+close the gap to `30 ms`. The next deployment gate is therefore the PRD-listed
+ONNX Runtime `1.17` and TensorRT `8.6.1` path, followed by numerical-parity,
+accuracy, and complete latency reruns. Repeated-query or repeated-image caches
+must not be used to claim cold unique-request latency compliance.
+
+Before exporting models, audit the active AutoDL runtime rather than assuming
+that an installed package exposes CUDA execution:
+
+```bash
+python scripts/check_prd_312_deployment_env.py
+```
+
+The audit requires Python `3.10.12`, an active RTX 3090, ONNX Runtime `1.17.x`
+with `CUDAExecutionProvider`, and TensorRT `8.6.1.x`. It checks only environment
+readiness and cannot establish engine conversion, numerical parity, `92%`,
+`30 ms`, or `60 QPS` compliance.
