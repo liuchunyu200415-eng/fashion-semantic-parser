@@ -48,6 +48,9 @@ class DensePatchAlignmentSettings(BaseModel):
     decoder_branch_dimension: int = Field(default=48, ge=8)
     decoder_dilations: tuple[int, ...] = (1, 2, 4)
     decoder_dropout: float = Field(default=0.10, ge=0.0, lt=1.0)
+    area_hidden_dimension: int = Field(default=128, ge=8)
+    area_dropout: float = Field(default=0.10, ge=0.0, lt=1.0)
+    area_loss_weight: float = Field(default=0.25, gt=0.0)
 
     @model_validator(mode="after")
     def validate_calibration_thresholds(self) -> "DensePatchAlignmentSettings":
@@ -74,6 +77,7 @@ class DensePatchAlignmentSettings(BaseModel):
             or not self.decoder_dilations
             or tuple(sorted(set(self.decoder_dilations))) != self.decoder_dilations
             or any(value < 1 for value in self.decoder_dilations)
+            or self.area_hidden_dimension % 8
         ):
             raise ValueError(
                 "Decoder dimensions must be divisible by eight and dilations must "
@@ -103,6 +107,7 @@ class DensePatchAlignmentCheckpoint:
     logit_bias: float
     model_type: str
     decoder: Any | None
+    area_predictor: Any | None
 
 
 def load_dense_patch_alignment_settings(
@@ -358,7 +363,7 @@ def load_dense_patch_alignment_checkpoint(
     if not path.is_file():
         raise FileNotFoundError(f"Dense patch checkpoint does not exist: {path}")
     payload = torch.load(path, map_location=device)
-    if not isinstance(payload, dict) or payload.get("schema_version") not in {1, 2}:
+    if not isinstance(payload, dict) or payload.get("schema_version") not in {1, 2, 3}:
         raise ValueError("Unsupported dense patch checkpoint schema.")
     if payload.get("base_encoders_frozen") is not True:
         raise ValueError("Dense patch checkpoint must record frozen base encoders.")
@@ -388,9 +393,14 @@ def load_dense_patch_alignment_checkpoint(
     projection.load_state_dict(state_dict, strict=True)
     model_type = str(payload.get("model_type", "cosine_calibration"))
     decoder = None
-    if payload.get("schema_version") == 2:
-        if model_type != "multiscale_decoder":
-            raise ValueError("Dense patch schema two requires the multiscale decoder.")
+    area_predictor = None
+    schema_version = payload.get("schema_version")
+    if schema_version in {2, 3}:
+        expected_type = (
+            "multiscale_decoder" if schema_version == 2 else "multiscale_area_decoder"
+        )
+        if model_type != expected_type:
+            raise ValueError("Dense patch schema and model type are inconsistent.")
         decoder_state = payload.get("decoder_state_dict")
         if not isinstance(decoder_state, dict):
             raise ValueError("Dense multiscale decoder state is missing or invalid.")
@@ -404,6 +414,22 @@ def load_dense_patch_alignment_checkpoint(
         ).to(device)
         decoder.load_state_dict(decoder_state, strict=True)
         decoder.eval()
+        if schema_version == 3:
+            area_state = payload.get("area_predictor_state_dict")
+            if not isinstance(area_state, dict):
+                raise ValueError(
+                    "Dense query area predictor state is missing or invalid."
+                )
+            from fashion_semantic_parser.service.dense_patch_area import (
+                build_query_area_predictor,
+            )
+
+            area_predictor = build_query_area_predictor(
+                alignment_settings.region_dimension,
+                dense_settings,
+            ).to(device)
+            area_predictor.load_state_dict(area_state, strict=True)
+            area_predictor.eval()
     elif model_type != "cosine_calibration":
         raise ValueError("Dense patch schema one requires cosine calibration.")
     return DensePatchAlignmentCheckpoint(
@@ -414,4 +440,5 @@ def load_dense_patch_alignment_checkpoint(
         logit_bias=float(logit_bias),
         model_type=model_type,
         decoder=decoder,
+        area_predictor=area_predictor,
     )

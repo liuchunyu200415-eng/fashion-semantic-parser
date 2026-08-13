@@ -25,3 +25,6 @@ decoder_dilations:
   - 2
   - 4
 decoder_dropout: 0.10
+area_hidden_dimension: 128
+area_dropout: 0.10
+area_loss_weight: 0.25

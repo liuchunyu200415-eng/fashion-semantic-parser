@@ -15,6 +15,9 @@ from fashion_semantic_parser.service.dense_patch_alignment import (
     load_dense_patch_alignment_settings,
     mask_to_patch_fractions,
 )
+from fashion_semantic_parser.service.dense_patch_area import (
+    build_query_area_predictor,
+)
 from fashion_semantic_parser.service.dense_patch_decoder import (
     build_multiscale_patch_decoder,
 )
@@ -250,3 +253,59 @@ def test_schema_two_checkpoint_restores_multiscale_decoder(
 
     assert checkpoint.model_type == "multiscale_decoder"
     assert checkpoint.decoder is not None
+    assert checkpoint.area_predictor is None
+
+
+def test_schema_three_checkpoint_restores_query_area_predictor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Schema three must restore decoder and open-query area control.
+
+    Args:
+        tmp_path: Isolated checkpoint directory.
+        monkeypatch: Resolver patch fixture.
+    """
+    torch = pytest.importorskip("torch")
+    path = tmp_path / "dense_area_decoder.pt"
+    alignment = RegionTextAlignmentSettings(
+        text_dimension=4,
+        region_dimension=4,
+        hidden_dimension=4,
+    )
+    dense = DensePatchAlignmentSettings(
+        decoder_hidden_dimension=8,
+        decoder_branch_dimension=8,
+        decoder_dilations=(1,),
+        area_hidden_dimension=8,
+    )
+    projection = build_text_projection(alignment)
+    decoder = build_multiscale_patch_decoder(4, dense)
+    area_predictor = build_query_area_predictor(4, dense)
+    torch.save(
+        {
+            "schema_version": 3,
+            "alignment_settings": alignment.model_dump(mode="json"),
+            "dense_settings": dense.model_dump(mode="json"),
+            "projection_state_dict": projection.state_dict(),
+            "decoder_state_dict": decoder.state_dict(),
+            "area_predictor_state_dict": area_predictor.state_dict(),
+            "logit_scale": 1.0,
+            "logit_bias": 0.0,
+            "base_encoders_frozen": True,
+            "dinov2_model": "dinov2_vits14",
+            "text_model": "BAAI/bge-m3",
+            "model_type": "multiscale_area_decoder",
+        },
+        path,
+    )
+    monkeypatch.setattr(
+        "fashion_semantic_parser.service.dense_patch_alignment.resolve_project_path",
+        lambda _: path,
+    )
+
+    checkpoint = load_dense_patch_alignment_checkpoint(path, device="cpu")
+
+    assert checkpoint.model_type == "multiscale_area_decoder"
+    assert checkpoint.decoder is not None
+    assert checkpoint.area_predictor is not None

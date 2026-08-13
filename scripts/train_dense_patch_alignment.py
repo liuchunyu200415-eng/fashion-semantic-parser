@@ -6,9 +6,8 @@ import json
 import math
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import numpy as np
 
@@ -16,21 +15,6 @@ DEFAULT_INITIAL_CHECKPOINT = (
     "outputs/localization/dinov2_bge_alignment_train_images300_global/"
     + "alignment_head_smoke.pt"
 )
-
-
-@dataclass
-class DenseTrainingRuntime:
-    """Tensors and models shared by dense training and audit evaluation."""
-
-    projection: Any
-    decoder: Any | None
-    model_type: str
-    log_scale: Any
-    logit_bias: Any
-    text_tensor: Any
-    cache: Any
-    settings: Any
-    device: str
 
 
 def add_src_to_python_path() -> None:
@@ -61,7 +45,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--initial-checkpoint", default=DEFAULT_INITIAL_CHECKPOINT)
     parser.add_argument(
         "--model-type",
-        choices=("cosine_calibration", "multiscale_decoder"),
+        choices=(
+            "cosine_calibration",
+            "multiscale_decoder",
+            "multiscale_area_decoder",
+        ),
         default="cosine_calibration",
     )
     parser.add_argument(
@@ -103,9 +91,11 @@ def main() -> None:
         load_bge_m3_text_settings,
     )
     from fashion_semantic_parser.service.dense_patch_alignment import (
-        balanced_patch_mask_loss,
         build_dense_patch_training_cache,
         load_dense_patch_alignment_settings,
+    )
+    from fashion_semantic_parser.service.dense_patch_area import (
+        build_query_area_predictor,
     )
     from fashion_semantic_parser.service.dense_patch_decoder import (
         build_multiscale_patch_decoder,
@@ -113,6 +103,13 @@ def main() -> None:
     from fashion_semantic_parser.service.dense_patch_metrics import (
         patch_probability_metrics,
         select_patch_probability_threshold,
+    )
+    from fashion_semantic_parser.service.dense_patch_training import (
+        DenseTrainingRuntime,
+        evaluate_training_cache,
+        runtime_loss,
+        training_batch,
+        training_cache_outputs,
     )
     from fashion_semantic_parser.service.dinov2_region_encoder import (
         DinoV2RegionEncoder,
@@ -193,13 +190,19 @@ def main() -> None:
         raise ValueError("Initial logit scale exceeds its configured maximum.")
     text_tensor = torch.from_numpy(text_embeddings).to(device=device)
     decoder = None
+    area_predictor = None
     initial_logit_scale = dense_settings.initial_logit_scale
-    if args.model_type == "multiscale_decoder":
+    if args.model_type in {"multiscale_decoder", "multiscale_area_decoder"}:
         decoder = build_multiscale_patch_decoder(
             alignment_settings.region_dimension,
             dense_settings,
         ).to(device)
         initial_logit_scale = 1.0
+    if args.model_type == "multiscale_area_decoder":
+        area_predictor = build_query_area_predictor(
+            alignment_settings.region_dimension,
+            dense_settings,
+        ).to(device)
     log_scale = torch.nn.Parameter(
         torch.tensor(
             math.log(initial_logit_scale),
@@ -217,6 +220,7 @@ def main() -> None:
     runtime = DenseTrainingRuntime(
         projection=projection,
         decoder=decoder,
+        area_predictor=area_predictor,
         model_type=args.model_type,
         log_scale=log_scale,
         logit_bias=logit_bias,
@@ -225,10 +229,12 @@ def main() -> None:
         settings=dense_settings,
         device=device,
     )
-    initial_summary = _evaluate_training_cache(runtime)
+    initial_summary = evaluate_training_cache(runtime)
     optimization_parameters = [*projection.parameters(), log_scale, logit_bias]
     if decoder is not None:
         optimization_parameters.extend(decoder.parameters())
+    if area_predictor is not None:
+        optimization_parameters.extend(area_predictor.parameters())
     optimizer = torch.optim.AdamW(
         optimization_parameters,
         lr=dense_settings.learning_rate,
@@ -239,20 +245,21 @@ def main() -> None:
     projection.train()
     if decoder is not None:
         decoder.train()
+    if area_predictor is not None:
+        area_predictor.train()
     for step in range(1, steps + 1):
         batch_indices = rng.choice(
             query_count,
             size=min(batch_size, query_count),
             replace=False,
         )
-        patch_tensor, target_tensor, query_indices = _training_batch(
+        patch_tensor, target_tensor, query_indices = training_batch(
             runtime,
             batch_indices,
         )
         optimizer.zero_grad(set_to_none=True)
         projected = projection(text_tensor[query_indices])
-        logits = _runtime_logits(runtime, patch_tensor, projected)
-        loss = balanced_patch_mask_loss(logits, target_tensor)
+        loss = runtime_loss(runtime, patch_tensor, projected, target_tensor)
         if not torch.isfinite(loss):
             raise RuntimeError("Dense patch training produced a non-finite loss.")
         loss.backward()
@@ -262,32 +269,42 @@ def main() -> None:
     projection.eval()
     if decoder is not None:
         decoder.eval()
+    if area_predictor is not None:
+        area_predictor.eval()
     if device == "cuda":
         torch.cuda.synchronize()
     training_seconds = time.perf_counter() - training_started
-    final_default_summary = _evaluate_training_cache(runtime)
+    final_default_summary = evaluate_training_cache(runtime)
     if cast(float, final_default_summary["mean_loss"]) >= cast(
         float,
         initial_summary["mean_loss"],
     ):
         raise RuntimeError("Dense patch loss did not decrease during training.")
-    training_probabilities, training_targets = _training_cache_probabilities(runtime)
-    selected_threshold, threshold_metrics = select_patch_probability_threshold(
-        training_probabilities,
-        training_targets,
-        dense_settings.calibration_thresholds,
+    training_probabilities, training_targets, area_fractions = training_cache_outputs(
+        runtime
     )
-    selected_summary = patch_probability_metrics(
-        training_probabilities,
-        training_targets,
-        threshold=selected_threshold,
-    )
+    selected_threshold = dense_settings.probability_threshold
+    threshold_metrics: dict[str, dict[str, float | int]] = {}
+    selected_summary = final_default_summary
+    mask_selection_mode = "query_area_topk"
+    if area_fractions is None:
+        selected_threshold, threshold_metrics = select_patch_probability_threshold(
+            training_probabilities,
+            training_targets,
+            dense_settings.calibration_thresholds,
+        )
+        selected_summary = patch_probability_metrics(
+            training_probabilities,
+            training_targets,
+            threshold=selected_threshold,
+        )
+        mask_selection_mode = "global_probability_threshold"
     calibrated_settings = dense_settings.model_copy(
         update={"probability_threshold": selected_threshold}
     )
     print(
-        "threshold_calibrated: "
-        + f"selected={selected_threshold:.3f} "
+        "mask_selection_ready: "
+        + f"mode={mask_selection_mode} "
         + f"R50={selected_summary['patch_recall50']:.6f} "
         + f"meanIoU={selected_summary['mean_patch_iou']:.6f}"
     )
@@ -301,7 +318,7 @@ def main() -> None:
     )
     final_bias = float(logit_bias.detach().cpu().item())
     checkpoint_payload: dict[str, object] = {
-        "schema_version": 2 if decoder is not None else 1,
+        "schema_version": 3 if area_predictor is not None else 2 if decoder else 1,
         "alignment_settings": alignment_settings.model_dump(mode="json"),
         "dense_settings": calibrated_settings.model_dump(mode="json"),
         "projection_state_dict": projection.state_dict(),
@@ -315,6 +332,8 @@ def main() -> None:
     }
     if decoder is not None:
         checkpoint_payload["decoder_state_dict"] = decoder.state_dict()
+    if area_predictor is not None:
+        checkpoint_payload["area_predictor_state_dict"] = area_predictor.state_dict()
     torch.save(checkpoint_payload, checkpoint_path)
     metrics = {
         "split": args.split,
@@ -339,7 +358,10 @@ def main() -> None:
         "final_mean_patch_iou": selected_summary["mean_patch_iou"],
         "default_probability_threshold": dense_settings.probability_threshold,
         "probability_threshold": selected_threshold,
-        "threshold_calibration_scope": "training_patch_grid",
+        "mask_selection_mode": mask_selection_mode,
+        "threshold_calibration_scope": (
+            None if area_fractions is not None else "training_patch_grid"
+        ),
         "threshold_metrics": threshold_metrics,
         "logit_scale": final_scale,
         "logit_bias": final_bias,
@@ -359,141 +381,6 @@ def main() -> None:
     )
     for key, value in metrics.items():
         print(f"{key}: {value}")
-
-
-def _training_batch(
-    runtime: DenseTrainingRuntime,
-    batch_indices: np.ndarray,
-) -> tuple[Any, Any, Any]:
-    """Move one sampled query batch and its source-image patches to the device."""
-    try:
-        import torch  # type: ignore[import-not-found]
-    except ImportError as error:
-        raise RuntimeError("PyTorch is required for dense patch batching.") from error
-    query_indices = torch.from_numpy(batch_indices).to(
-        device=runtime.device,
-        dtype=torch.long,
-    )
-    image_indices = runtime.cache.query_image_indices[batch_indices]
-    patch_tensor = torch.from_numpy(runtime.cache.image_features[image_indices]).to(
-        device=runtime.device
-    )
-    target_tensor = torch.from_numpy(
-        runtime.cache.target_patch_fractions[batch_indices]
-    ).to(device=runtime.device)
-    return patch_tensor, target_tensor, query_indices
-
-
-def _evaluate_training_cache(
-    runtime: DenseTrainingRuntime,
-) -> dict[str, float | int]:
-    """Measure loss and patch-grid IoU over every retained training query."""
-    try:
-        import torch  # type: ignore[import-not-found]
-    except ImportError as error:
-        raise RuntimeError("PyTorch is required for dense patch evaluation.") from error
-    from fashion_semantic_parser.service.dense_patch_alignment import (
-        balanced_patch_mask_loss,
-    )
-
-    runtime.projection.eval()
-    if runtime.decoder is not None:
-        runtime.decoder.eval()
-    losses: list[float] = []
-    ious: list[float] = []
-    query_count = len(runtime.cache.query_image_indices)
-    with torch.inference_mode():
-        for start in range(0, query_count, runtime.settings.batch_size):
-            stop = min(query_count, start + runtime.settings.batch_size)
-            batch_indices = np.arange(start, stop, dtype=np.int64)
-            patch_tensor, target_tensor, query_indices = _training_batch(
-                runtime,
-                batch_indices,
-            )
-            projected = runtime.projection(runtime.text_tensor[query_indices])
-            logits = _runtime_logits(runtime, patch_tensor, projected)
-            loss = balanced_patch_mask_loss(logits, target_tensor)
-            losses.extend([float(loss.item())] * len(batch_indices))
-            predicted = torch.sigmoid(logits) >= runtime.settings.probability_threshold
-            target = target_tensor > 0.0
-            intersection = torch.logical_and(predicted, target).sum(dim=1)
-            union = torch.logical_or(predicted, target).sum(dim=1)
-            batch_ious = intersection.float() / union.clamp(min=1).float()
-            ious.extend(float(value) for value in batch_ious.cpu().tolist())
-    return {
-        "query_count": query_count,
-        "mean_loss": float(np.mean(losses)),
-        "patch_recall50_count": sum(value >= 0.50 for value in ious),
-        "patch_recall50": float(np.mean(np.asarray(ious) >= 0.50)),
-        "mean_patch_iou": float(np.mean(ious)),
-    }
-
-
-def _training_cache_probabilities(
-    runtime: DenseTrainingRuntime,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Collect calibrated probabilities and targets for threshold freezing."""
-    try:
-        import torch  # type: ignore[import-not-found]
-    except ImportError as error:
-        raise RuntimeError("PyTorch is required for threshold calibration.") from error
-    runtime.projection.eval()
-    if runtime.decoder is not None:
-        runtime.decoder.eval()
-    probability_batches: list[np.ndarray] = []
-    query_count = len(runtime.cache.query_image_indices)
-    with torch.inference_mode():
-        for start in range(0, query_count, runtime.settings.batch_size):
-            stop = min(query_count, start + runtime.settings.batch_size)
-            batch_indices = np.arange(start, stop, dtype=np.int64)
-            patch_tensor, _, query_indices = _training_batch(runtime, batch_indices)
-            projected = runtime.projection(runtime.text_tensor[query_indices])
-            logits = _runtime_logits(runtime, patch_tensor, projected)
-            probability_batches.append(
-                np.asarray(torch.sigmoid(logits).cpu().numpy(), dtype=np.float32)
-            )
-    return (
-        np.concatenate(probability_batches, axis=0),
-        np.asarray(runtime.cache.target_patch_fractions, dtype=np.float32),
-    )
-
-
-def _runtime_logits(
-    runtime: DenseTrainingRuntime,
-    patch_tensor: Any,
-    projected_text: Any,
-) -> Any:
-    """Dispatch cosine or multiscale logits under one training contract."""
-    if runtime.model_type == "multiscale_decoder":
-        if runtime.decoder is None:
-            raise RuntimeError("Multiscale runtime is missing its decoder.")
-        from fashion_semantic_parser.service.dense_patch_decoder import (
-            multiscale_patch_decoder_logits,
-        )
-
-        return multiscale_patch_decoder_logits(
-            runtime.decoder,
-            patch_tensor,
-            projected_text,
-            (
-                runtime.log_scale,
-                runtime.logit_bias,
-                runtime.settings.max_logit_scale,
-            ),
-        )
-    if runtime.model_type != "cosine_calibration" or runtime.decoder is not None:
-        raise RuntimeError("Dense training runtime model type is inconsistent.")
-    from fashion_semantic_parser.service.dense_patch_alignment import (
-        dense_patch_logits,
-    )
-
-    return dense_patch_logits(
-        patch_tensor,
-        projected_text,
-        runtime.log_scale,
-        runtime.logit_bias,
-        max_logit_scale=runtime.settings.max_logit_scale,
-    )
 
 
 if __name__ == "__main__":

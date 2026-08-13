@@ -2073,3 +2073,68 @@ basic, spatial, attribute, relation, language, and part-category results on the
 unused group before changing architecture. The result is still not the
 independent manually annotated PRD acceptance set, is far below `92%`, and does
 not establish `30 ms` complete-request latency.
+
+The grouped audit shows that language parsing is not the primary limiting
+factor. Attribute and spatial queries reached `41.91%` and `44.51%` Mask
+Recall50, while English and Chinese reached `36.53%` and `33.87%`. In contrast,
+small local parts were systematically over-segmented: rivet, zipper, and
+neckline median predicted-to-target area ratios were `217.24x`, `21.12x`, and
+`8.49x`; their Recall50 values were `0%`, `0%`, and `2.72%`. Pocket had `98`
+queries but still reached `0%` Recall50 with a `2.19x` median area ratio. This
+rules out missing examples alone and supports query-conditioned area control
+before more data or spatial rules.
+
+### Query-Conditioned Target-Area Control
+
+Checkpoint schema three adds a lightweight area predictor alongside the
+multiscale decoder. It consumes the normalized complete-query feature, the
+global full-image DINOv2 feature, and their elementwise interaction. It predicts
+a continuous foreground fraction without a category lookup or per-part
+threshold. At inference, the multiscale decoder still determines location, but
+only the query-specific highest-scoring top-k patches implied by the predicted
+area are retained. This preserves arbitrary language descriptions while
+directly targeting the observed over-segmentation failure.
+
+The area predictor is supervised only on the training Mask fraction. Evaluation
+never uses the target area, does not scan thresholds, and records
+`mask_selection_mode: query_area_topk`, predicted area fraction, and selected
+patch count for every retained query. Schema-one and schema-two checkpoints
+remain strictly loadable.
+
+Run the compatibility smoke first:
+
+```bash
+SMOKE_DIR=outputs/localization/dinov2_multiscale_area_smoke20
+mkdir -p "$SMOKE_DIR"
+
+nohup env \
+  OMP_NUM_THREADS=1 \
+  TOKENIZERS_PARALLELISM=false \
+  TRANSFORMERS_OFFLINE=1 \
+  HF_HUB_OFFLINE=1 \
+  conda run --no-capture-output -n fashion-prd-312 \
+  python -u scripts/train_dense_patch_alignment.py \
+  --split train \
+  --image-limit 20 \
+  --steps 20 \
+  --model-type multiscale_area_decoder \
+  --initial-checkpoint \
+    outputs/localization/dinov2_bge_alignment_train_images300_global/alignment_head_smoke.pt \
+  --output-dir "$SMOKE_DIR" \
+  > "$SMOKE_DIR/run.log" 2>&1 &
+
+TRAIN_PID=$!
+tail --pid="$TRAIN_PID" -F "$SMOKE_DIR/run.log" |
+  grep --line-buffered -E \
+  'dataset_ready:|^\[train|mask_selection_ready:|checkpoint_path:|Traceback|RuntimeError|CUDA out'
+wait "$TRAIN_PID"
+echo "train_exit_code=$?"
+test -s "$SMOKE_DIR/dense_patch_alignment.pt" && echo "checkpoint_ready"
+```
+
+The smoke gate is a finite decreasing loss, a schema-three checkpoint, and a
+successful two-image evaluation with `query_area_topk`; its accuracy is not a
+model-selection result. If it passes, train the same architecture on 300 images
+for 500 steps and compare on the frozen offset-two 50-image group. Continue to
+1,000 images only if it improves both Mask Recall50 and mean Mask IoU over the
+300-image multiscale reference (`21.35%` and `24.61%`).

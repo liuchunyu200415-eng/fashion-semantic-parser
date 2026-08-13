@@ -149,20 +149,34 @@ def main() -> None:
         image_encoder.synchronize()
         encode_seconds = time.perf_counter() - image_started
         scoring_started = time.perf_counter()
-        probabilities = _predict_patch_probabilities(
+        probabilities, predicted_area_fractions = _predict_patch_outputs(
             checkpoint,
             dense.features,
             projected_text[item_indices],
             device,
         )
+        selected_patch_masks = None
+        if predicted_area_fractions is not None:
+            from fashion_semantic_parser.service.dense_patch_area import (
+                topk_patch_masks,
+            )
+
+            selected_patch_masks = topk_patch_masks(
+                probabilities.reshape(len(item_indices), -1),
+                predicted_area_fractions,
+            ).reshape(probabilities.shape)
         for local_index, item_index in enumerate(item_indices):
             item = items[item_index]
-            image_probabilities = patch_scores_to_image(
-                probabilities[local_index],
-                dense.geometry,
-            )
+            if selected_patch_masks is None:
+                patch_selection = probabilities[local_index] >= threshold
+            else:
+                patch_selection = selected_patch_masks[local_index]
             predicted_mask = np.asarray(
-                image_probabilities >= threshold,
+                patch_scores_to_image(
+                    np.asarray(patch_selection, dtype=np.float32),
+                    dense.geometry,
+                )
+                >= 0.5,
                 dtype=bool,
             )
             target_mask = np.asarray(item.target_masks.any(axis=0), dtype=bool)
@@ -185,6 +199,12 @@ def main() -> None:
                     "mask_recall50_passed": mask_iou >= 0.50,
                     "target_area": int(target_mask.sum()),
                     "predicted_area": int(predicted_mask.sum()),
+                    "predicted_patch_count": int(patch_selection.sum()),
+                    "predicted_area_fraction": (
+                        None
+                        if predicted_area_fractions is None
+                        else float(predicted_area_fractions[local_index])
+                    ),
                 }
             )
         scoring_seconds = time.perf_counter() - scoring_started
@@ -212,6 +232,11 @@ def main() -> None:
             "image_offset": args.image_offset,
             "selection_scope": "complete_image_prefix",
             "probability_threshold": threshold,
+            "mask_selection_mode": (
+                "query_area_topk"
+                if checkpoint.area_predictor is not None
+                else "global_probability_threshold"
+            ),
             "model_type": checkpoint.model_type,
             "logit_scale": checkpoint.logit_scale,
             "logit_bias": checkpoint.logit_bias,
@@ -282,13 +307,13 @@ def _summarize(
     return result
 
 
-def _predict_patch_probabilities(
+def _predict_patch_outputs(
     checkpoint: object,
     patch_features: np.ndarray,
     projected_text: np.ndarray,
     device: str,
-) -> np.ndarray:
-    """Dispatch frozen cosine or multiscale decoder patch probabilities."""
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Dispatch frozen patch probabilities and optional predicted target areas."""
     from fashion_semantic_parser.service.dense_patch_alignment import (
         DensePatchAlignmentCheckpoint,
     )
@@ -306,9 +331,10 @@ def _predict_patch_probabilities(
             logit_scale=typed_checkpoint.logit_scale,
             logit_bias=typed_checkpoint.logit_bias,
         )
-        return calibrated
+        return calibrated, None
     if (
-        typed_checkpoint.model_type != "multiscale_decoder"
+        typed_checkpoint.model_type
+        not in {"multiscale_decoder", "multiscale_area_decoder"}
         or typed_checkpoint.decoder is None
     ):
         raise ValueError("Dense checkpoint model type and decoder are inconsistent.")
@@ -358,7 +384,29 @@ def _predict_patch_probabilities(
             ),
         )
         probabilities = torch.sigmoid(logits).reshape(query_count, height, width)
-    return np.asarray(probabilities.cpu().numpy(), dtype=np.float32)
+        predicted_area_fractions = None
+        if typed_checkpoint.model_type == "multiscale_area_decoder":
+            if typed_checkpoint.area_predictor is None:
+                raise ValueError("Area checkpoint is missing its area predictor.")
+            from fashion_semantic_parser.service.dense_patch_area import (
+                query_area_logits,
+            )
+
+            area_logits = query_area_logits(
+                typed_checkpoint.area_predictor,
+                patch_tensor,
+                text_tensor,
+            )
+            predicted_area_fractions = np.asarray(
+                torch.sigmoid(area_logits).cpu().numpy(),
+                dtype=np.float32,
+            )
+        elif typed_checkpoint.area_predictor is not None:
+            raise ValueError("Non-area checkpoint unexpectedly has an area predictor.")
+    return (
+        np.asarray(probabilities.cpu().numpy(), dtype=np.float32),
+        predicted_area_fractions,
+    )
 
 
 def _score_cases(cases: list[dict[str, object]]) -> dict[str, object]:
