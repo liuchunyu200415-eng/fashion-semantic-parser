@@ -2054,3 +2054,22 @@ run expands training coverage to 1,000 images while preserving the decoder,
 loss, frozen base encoders, training-only threshold calibration, and the same
 50-image evaluation group. SAM-HQ refinement remains blocked until coarse Mask
 coverage is substantially higher.
+
+The 1,000-image/1,500-step scale run selected probability `0.85` on `16,064`
+training queries and reached `69.93%` training patch Recall50. On the
+model-selection group at validation offset two, it improved to `25.73%` Mask
+Recall50, `1.99%` Recall75, `28.81%` mean Mask IoU, and `41.38%` Box Recall50.
+The checkpoint and threshold were then frozen before evaluation on the next 50
+previously unused validation images at offset 52 (`762` queries). That unseen
+group reached `35.43%` Mask Recall50, `6.17%` Recall75, `34.16%` mean Mask IoU,
+and `51.71%` Box Recall50. Differences in image/query composition mean the two
+50-image groups are not a paired score comparison, but the unseen result
+confirms that the multiscale improvement is not confined to the selection
+group.
+
+This 1,000-image multiscale checkpoint is the current coarse-Mask development
+baseline. Further blind data scaling is paused. The next analysis separates
+basic, spatial, attribute, relation, language, and part-category results on the
+unused group before changing architecture. The result is still not the
+independent manually annotated PRD acceptance set, is far below `92%`, and does
+not establish `30 ms` complete-request latency.
