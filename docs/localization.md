@@ -2035,3 +2035,22 @@ train 300 images for 500 steps. Evaluate it unchanged on the same 50-image
 development group at validation offset two. The decoder must materially exceed
 the frozen cosine reference (`9.42%` Mask Recall50 and `20.27%` mean Mask IoU)
 before any larger data run, SAM-HQ comparison, or latency optimization.
+
+The 20-image/20-step compatibility smoke completed successfully: loss decreased
+from `1.6608` to `1.2682`, schema-two save/load worked, and the evaluator ran
+without missing-query exclusions. Its accuracy was not used for model
+selection. The subsequent 300-image/500-step comparison selected probability
+`0.70` on the training patch grid and reached `67.83%` training patch Recall50.
+On the frozen 50-image development group (`754` queries), the multiscale
+decoder reached `21.35%` Mask Recall50, `2.52%` Recall75, `24.61%` mean Mask
+IoU, and `36.74%` Box Recall50. This materially exceeds the same-data cosine
+reference (`9.42%`, `0.80%`, `20.27%`, and `26.26%` respectively), so the
+multiscale decoder is retained and the independent-cosine path remains frozen.
+
+The result establishes an architecture improvement only. It remains far below
+the PRD `92%` acceptance target, uses Fashionpedia development supervision, and
+does not establish complete-request `30 ms` latency. The next controlled scale
+run expands training coverage to 1,000 images while preserving the decoder,
+loss, frozen base encoders, training-only threshold calibration, and the same
+50-image evaluation group. SAM-HQ refinement remains blocked until coarse Mask
+coverage is substantially higher.
