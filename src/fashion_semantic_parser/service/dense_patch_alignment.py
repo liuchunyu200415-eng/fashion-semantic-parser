@@ -44,6 +44,10 @@ class DensePatchAlignmentSettings(BaseModel):
         0.975,
         0.99,
     )
+    decoder_hidden_dimension: int = Field(default=96, ge=8)
+    decoder_branch_dimension: int = Field(default=48, ge=8)
+    decoder_dilations: tuple[int, ...] = (1, 2, 4)
+    decoder_dropout: float = Field(default=0.10, ge=0.0, lt=1.0)
 
     @model_validator(mode="after")
     def validate_calibration_thresholds(self) -> "DensePatchAlignmentSettings":
@@ -63,6 +67,17 @@ class DensePatchAlignmentSettings(BaseModel):
         ):
             raise ValueError(
                 "Calibration thresholds must be unique, ascending, and in (0, 1)."
+            )
+        if (
+            self.decoder_hidden_dimension % 8
+            or self.decoder_branch_dimension % 8
+            or not self.decoder_dilations
+            or tuple(sorted(set(self.decoder_dilations))) != self.decoder_dilations
+            or any(value < 1 for value in self.decoder_dilations)
+        ):
+            raise ValueError(
+                "Decoder dimensions must be divisible by eight and dilations must "
+                + "be unique ascending positive integers."
             )
         return self
 
@@ -86,6 +101,8 @@ class DensePatchAlignmentCheckpoint:
     dense_settings: DensePatchAlignmentSettings
     logit_scale: float
     logit_bias: float
+    model_type: str
+    decoder: Any | None
 
 
 def load_dense_patch_alignment_settings(
@@ -313,107 +330,6 @@ def balanced_patch_mask_loss(logits: Any, target_fractions: Any) -> Any:
     return (0.5 * (positive_bce + negative_bce) + dice).mean()
 
 
-def patch_probability_metrics(
-    probabilities: np.ndarray,
-    target_fractions: np.ndarray,
-    *,
-    threshold: float,
-) -> dict[str, float | int]:
-    """Score query-level binary patch Masks at one frozen threshold.
-
-    Args:
-        probabilities: Finite calibrated foreground probabilities shaped ``QxP``.
-        target_fractions: Soft target patch fractions with the same shape.
-        threshold: Foreground probability boundary in ``(0, 1)``.
-
-    Returns:
-        Query count, Recall50 numerator/rate, and mean patch IoU.
-
-    Raises:
-        ValueError: If arrays, targets, or threshold are invalid.
-    """
-    predicted_probabilities = np.asarray(probabilities, dtype=np.float32)
-    targets = np.asarray(target_fractions, dtype=np.float32)
-    if (
-        predicted_probabilities.ndim != 2
-        or predicted_probabilities.shape != targets.shape
-        or not len(predicted_probabilities)
-    ):
-        raise ValueError(
-            "Patch probabilities and targets must share a non-empty QxP shape."
-        )
-    if (
-        not np.all(np.isfinite(predicted_probabilities))
-        or np.any(predicted_probabilities < 0.0)
-        or np.any(predicted_probabilities > 1.0)
-        or not np.all(np.isfinite(targets))
-        or np.any(targets < 0.0)
-        or np.any(targets > 1.0)
-    ):
-        raise ValueError("Patch probabilities and target fractions must be in [0, 1].")
-    if not 0.0 < threshold < 1.0:
-        raise ValueError("Patch probability threshold must be in (0, 1).")
-    target_masks = targets > 0.0
-    if not np.all(target_masks.any(axis=1)) or not np.all(
-        np.logical_not(target_masks).any(axis=1)
-    ):
-        raise ValueError("Every patch query requires foreground and background.")
-    predicted_masks = predicted_probabilities >= threshold
-    intersections = np.logical_and(predicted_masks, target_masks).sum(axis=1)
-    unions = np.logical_or(predicted_masks, target_masks).sum(axis=1)
-    ious = intersections / np.maximum(unions, 1)
-    return {
-        "query_count": len(ious),
-        "patch_recall50_count": int(np.sum(ious >= 0.50)),
-        "patch_recall50": float(np.mean(ious >= 0.50)),
-        "mean_patch_iou": float(np.mean(ious)),
-    }
-
-
-def select_patch_probability_threshold(
-    probabilities: np.ndarray,
-    target_fractions: np.ndarray,
-    thresholds: tuple[float, ...],
-) -> tuple[float, dict[str, dict[str, float | int]]]:
-    """Freeze one threshold using training patch Masks only.
-
-    Args:
-        probabilities: Calibrated training foreground probabilities shaped ``QxP``.
-        target_fractions: Training target patch fractions with the same shape.
-        thresholds: Unique ascending candidate thresholds in ``(0, 1)``.
-
-    Returns:
-        Selected threshold and complete candidate metric audit. Selection
-        maximizes Recall50, then mean IoU, then the tighter threshold.
-
-    Raises:
-        ValueError: If threshold candidates are empty, unordered, or invalid.
-    """
-    if (
-        not thresholds
-        or tuple(sorted(set(thresholds))) != thresholds
-        or any(not 0.0 < value < 1.0 for value in thresholds)
-    ):
-        raise ValueError("Patch thresholds must be unique, ascending, and in (0, 1).")
-    metrics = {
-        f"{threshold:.3f}": patch_probability_metrics(
-            probabilities,
-            target_fractions,
-            threshold=threshold,
-        )
-        for threshold in thresholds
-    }
-    selected = max(
-        thresholds,
-        key=lambda value: (
-            float(metrics[f"{value:.3f}"]["patch_recall50"]),
-            float(metrics[f"{value:.3f}"]["mean_patch_iou"]),
-            value,
-        ),
-    )
-    return selected, metrics
-
-
 def load_dense_patch_alignment_checkpoint(
     checkpoint_path: str | Path,
     *,
@@ -442,7 +358,7 @@ def load_dense_patch_alignment_checkpoint(
     if not path.is_file():
         raise FileNotFoundError(f"Dense patch checkpoint does not exist: {path}")
     payload = torch.load(path, map_location=device)
-    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+    if not isinstance(payload, dict) or payload.get("schema_version") not in {1, 2}:
         raise ValueError("Unsupported dense patch checkpoint schema.")
     if payload.get("base_encoders_frozen") is not True:
         raise ValueError("Dense patch checkpoint must record frozen base encoders.")
@@ -470,10 +386,32 @@ def load_dense_patch_alignment_checkpoint(
         raise ValueError("Dense patch calibration values are invalid.")
     projection = build_text_projection(alignment_settings).to(device)
     projection.load_state_dict(state_dict, strict=True)
+    model_type = str(payload.get("model_type", "cosine_calibration"))
+    decoder = None
+    if payload.get("schema_version") == 2:
+        if model_type != "multiscale_decoder":
+            raise ValueError("Dense patch schema two requires the multiscale decoder.")
+        decoder_state = payload.get("decoder_state_dict")
+        if not isinstance(decoder_state, dict):
+            raise ValueError("Dense multiscale decoder state is missing or invalid.")
+        from fashion_semantic_parser.service.dense_patch_decoder import (
+            build_multiscale_patch_decoder,
+        )
+
+        decoder = build_multiscale_patch_decoder(
+            alignment_settings.region_dimension,
+            dense_settings,
+        ).to(device)
+        decoder.load_state_dict(decoder_state, strict=True)
+        decoder.eval()
+    elif model_type != "cosine_calibration":
+        raise ValueError("Dense patch schema one requires cosine calibration.")
     return DensePatchAlignmentCheckpoint(
         projection=projection.eval(),
         alignment_settings=alignment_settings,
         dense_settings=dense_settings,
         logit_scale=float(logit_scale),
         logit_bias=float(logit_bias),
+        model_type=model_type,
+        decoder=decoder,
     )

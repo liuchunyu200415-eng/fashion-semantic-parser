@@ -1981,3 +1981,57 @@ to `29.38x` for necklines. This is consistent with an uncalibrated threshold
 under foreground-balanced loss. More optimization steps, validation threshold
 scans, and connected-component rules are stopped until the training-only
 threshold calibration is rerun and independently evaluated.
+
+Training-only calibration selected probability `0.85` and raised the reused
+two-image Mask Recall50 to `41.67%`, but this did not generalize. On the next 50
+validation images (`754` queries), the 100-image model reached only `9.68%`
+Mask Recall50, `0.40%` Recall75, `19.81%` mean Mask IoU, and `25.73%` Box
+Recall50. Increasing training coverage from 100 to 300 images while holding the
+architecture and optimization steps fixed produced `9.42%`, `0.80%`, `20.27%`,
+and `26.26%` respectively. Data scaling on the independent-cosine architecture
+is therefore stopped: it did not improve Mask Recall50 and cannot justify a
+1,000-image run.
+
+### Query-Conditioned Multiscale Patch Decoder
+
+The next controlled architecture keeps the PRD encoders frozen and adds no new
+foundation model. A lightweight PyTorch decoder receives normalized DINOv2
+patch features, the projected complete-query vector, their elementwise
+interaction and cosine score, plus normalized image-frame coordinates. Dilated
+`3 x 3` branches at rates `1`, `2`, and `4` add local and wider spatial context
+before producing one logit per patch. This explicitly addresses the two
+rejected cosine-path limitations: independent patch scoring and the absence of
+coordinates for spatial expressions.
+
+The same soft Fashionpedia patch targets, balanced BCE/Dice loss, training-only
+threshold calibration, full-query preservation, and all-miss evaluation remain
+unchanged. Checkpoint schema two records `model_type: multiscale_decoder` and
+strictly restores the decoder state. Schema-one cosine checkpoints remain
+loadable for reproducible comparisons.
+
+Run a 20-image/20-step compatibility smoke before the 300-image comparison:
+
+```bash
+SMOKE_DIR=outputs/localization/dinov2_multiscale_decoder_smoke20
+mkdir -p "$SMOKE_DIR"
+
+OMP_NUM_THREADS=1 \
+TOKENIZERS_PARALLELISM=false \
+TRANSFORMERS_OFFLINE=1 \
+HF_HUB_OFFLINE=1 \
+conda run --no-capture-output -n fashion-prd-312 \
+  python -u scripts/train_dense_patch_alignment.py \
+  --split train \
+  --image-limit 20 \
+  --steps 20 \
+  --model-type multiscale_decoder \
+  --initial-checkpoint \
+    outputs/localization/dinov2_bge_alignment_train_images300_global/alignment_head_smoke.pt \
+  --output-dir "$SMOKE_DIR"
+```
+
+Only after the smoke emits a schema-two checkpoint and decreasing finite loss,
+train 300 images for 500 steps. Evaluate it unchanged on the same 50-image
+development group at validation offset two. The decoder must materially exceed
+the frozen cosine reference (`9.42%` Mask Recall50 and `20.27%` mean Mask IoU)
+before any larger data run, SAM-HQ comparison, or latency optimization.

@@ -1,5 +1,6 @@
 """Tests for supervised DINOv2 query-to-patch alignment."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -10,14 +11,24 @@ from fashion_semantic_parser.service.dense_patch_alignment import (
     balanced_patch_mask_loss,
     build_dense_patch_training_cache,
     dense_patch_logits,
+    load_dense_patch_alignment_checkpoint,
     load_dense_patch_alignment_settings,
     mask_to_patch_fractions,
+)
+from fashion_semantic_parser.service.dense_patch_decoder import (
+    build_multiscale_patch_decoder,
+)
+from fashion_semantic_parser.service.dense_patch_metrics import (
     patch_probability_metrics,
     select_patch_probability_threshold,
 )
 from fashion_semantic_parser.service.dinov2_region_encoder import (
     DinoV2DenseFeatureMap,
     DinoV2LetterboxGeometry,
+)
+from fashion_semantic_parser.service.region_text_alignment import (
+    RegionTextAlignmentSettings,
+    build_text_projection,
 )
 
 
@@ -188,3 +199,54 @@ def test_patch_probability_metrics_retain_empty_prediction_misses() -> None:
     assert metrics["patch_recall50_count"] == 0
     assert metrics["patch_recall50"] == 0.0
     assert metrics["mean_patch_iou"] == 0.0
+
+
+def test_schema_two_checkpoint_restores_multiscale_decoder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Evaluation must strictly restore the trained decoder architecture.
+
+    Args:
+        tmp_path: Isolated checkpoint directory.
+        monkeypatch: Resolver patch fixture.
+    """
+    torch = pytest.importorskip("torch")
+    path = tmp_path / "dense_decoder.pt"
+    alignment = RegionTextAlignmentSettings(
+        text_dimension=4,
+        region_dimension=4,
+        hidden_dimension=4,
+    )
+    dense = DensePatchAlignmentSettings(
+        decoder_hidden_dimension=8,
+        decoder_branch_dimension=8,
+        decoder_dilations=(1,),
+    )
+    projection = build_text_projection(alignment)
+    decoder = build_multiscale_patch_decoder(4, dense)
+    torch.save(
+        {
+            "schema_version": 2,
+            "alignment_settings": alignment.model_dump(mode="json"),
+            "dense_settings": dense.model_dump(mode="json"),
+            "projection_state_dict": projection.state_dict(),
+            "decoder_state_dict": decoder.state_dict(),
+            "logit_scale": 1.0,
+            "logit_bias": 0.0,
+            "base_encoders_frozen": True,
+            "dinov2_model": "dinov2_vits14",
+            "text_model": "BAAI/bge-m3",
+            "model_type": "multiscale_decoder",
+        },
+        path,
+    )
+    monkeypatch.setattr(
+        "fashion_semantic_parser.service.dense_patch_alignment.resolve_project_path",
+        lambda _: path,
+    )
+
+    checkpoint = load_dense_patch_alignment_checkpoint(path, device="cpu")
+
+    assert checkpoint.model_type == "multiscale_decoder"
+    assert checkpoint.decoder is not None

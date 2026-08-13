@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import math
 import sys
 import time
 from collections import defaultdict
@@ -83,8 +84,6 @@ def main() -> None:
     from fashion_semantic_parser.service.dense_region_localization import (
         binary_mask_iou,
         box_iou,
-        calibrated_dense_probabilities,
-        dense_similarity_scores,
         mask_box,
     )
     from fashion_semantic_parser.service.dinov2_region_encoder import (
@@ -150,14 +149,11 @@ def main() -> None:
         image_encoder.synchronize()
         encode_seconds = time.perf_counter() - image_started
         scoring_started = time.perf_counter()
-        similarities = dense_similarity_scores(
+        probabilities = _predict_patch_probabilities(
+            checkpoint,
             dense.features,
             projected_text[item_indices],
-        )
-        probabilities = calibrated_dense_probabilities(
-            similarities,
-            logit_scale=checkpoint.logit_scale,
-            logit_bias=checkpoint.logit_bias,
+            device,
         )
         for local_index, item_index in enumerate(item_indices):
             item = items[item_index]
@@ -216,6 +212,7 @@ def main() -> None:
             "image_offset": args.image_offset,
             "selection_scope": "complete_image_prefix",
             "probability_threshold": threshold,
+            "model_type": checkpoint.model_type,
             "logit_scale": checkpoint.logit_scale,
             "logit_bias": checkpoint.logit_bias,
             "text_encoding_seconds": text_seconds,
@@ -283,6 +280,85 @@ def _summarize(
         }
     result["image_count"] = len(image_rows)
     return result
+
+
+def _predict_patch_probabilities(
+    checkpoint: object,
+    patch_features: np.ndarray,
+    projected_text: np.ndarray,
+    device: str,
+) -> np.ndarray:
+    """Dispatch frozen cosine or multiscale decoder patch probabilities."""
+    from fashion_semantic_parser.service.dense_patch_alignment import (
+        DensePatchAlignmentCheckpoint,
+    )
+
+    typed_checkpoint = cast(DensePatchAlignmentCheckpoint, checkpoint)
+    if typed_checkpoint.model_type == "cosine_calibration":
+        from fashion_semantic_parser.service.dense_region_localization import (
+            calibrated_dense_probabilities,
+            dense_similarity_scores,
+        )
+
+        similarities = dense_similarity_scores(patch_features, projected_text)
+        calibrated: np.ndarray = calibrated_dense_probabilities(
+            similarities,
+            logit_scale=typed_checkpoint.logit_scale,
+            logit_bias=typed_checkpoint.logit_bias,
+        )
+        return calibrated
+    if (
+        typed_checkpoint.model_type != "multiscale_decoder"
+        or typed_checkpoint.decoder is None
+    ):
+        raise ValueError("Dense checkpoint model type and decoder are inconsistent.")
+    try:
+        import torch  # type: ignore[import-not-found]
+    except ImportError as error:
+        raise RuntimeError("PyTorch is required for multiscale evaluation.") from error
+    from fashion_semantic_parser.service.dense_patch_decoder import (
+        multiscale_patch_decoder_logits,
+    )
+
+    height, width, feature_dimension = patch_features.shape
+    query_count = len(projected_text)
+    flattened = np.asarray(
+        patch_features.reshape(1, height * width, feature_dimension),
+        dtype=np.float32,
+    )
+    patch_tensor = (
+        torch.from_numpy(flattened)
+        .to(device=device)
+        .expand(
+            query_count,
+            -1,
+            -1,
+        )
+    )
+    text_tensor = torch.from_numpy(projected_text).to(device=device)
+    log_scale = torch.tensor(
+        math.log(typed_checkpoint.logit_scale),
+        dtype=torch.float32,
+        device=device,
+    )
+    logit_bias = torch.tensor(
+        typed_checkpoint.logit_bias,
+        dtype=torch.float32,
+        device=device,
+    )
+    with torch.inference_mode():
+        logits = multiscale_patch_decoder_logits(
+            typed_checkpoint.decoder,
+            patch_tensor,
+            text_tensor,
+            (
+                log_scale,
+                logit_bias,
+                typed_checkpoint.dense_settings.max_logit_scale,
+            ),
+        )
+        probabilities = torch.sigmoid(logits).reshape(query_count, height, width)
+    return np.asarray(probabilities.cpu().numpy(), dtype=np.float32)
 
 
 def _score_cases(cases: list[dict[str, object]]) -> dict[str, object]:

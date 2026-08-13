@@ -18,3 +18,10 @@ calibration_thresholds:
   - 0.95
   - 0.975
   - 0.99
+decoder_hidden_dimension: 96
+decoder_branch_dimension: 48
+decoder_dilations:
+  - 1
+  - 2
+  - 4
+decoder_dropout: 0.10
