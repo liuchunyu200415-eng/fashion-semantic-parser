@@ -2283,3 +2283,15 @@ to the frozen 50-image group only if local re-encoding materially improves Mask
 Recall50 or mean Mask IoU without uncontrolled foreground growth. The recorded
 offline per-image time is not complete-request latency and cannot be compared
 with the PRD `30 ms` requirement.
+
+The fixed offset-two 50-image evaluation retained all `754` queries and passed
+the continuation gate. Compared with the unchanged coarse branch, `local_only`
+improved Mask Recall50 from `30.90%` to `35.15%`, Recall75 from `6.63%` to
+`11.54%`, and mean Mask IoU from `32.47%` to `38.88%`. Its median
+predicted-to-target area ratio fell from `1.96x` to `1.29x`, so the gain is not
+caused by broader foreground. Box Recall50 fell from `42.84%` to `35.15%`,
+which must remain an explicit secondary regression. Pixelwise
+`coarse_local_max` reached only `31.17%` Recall50 and enlarged the median area
+ratio to `2.28x`; that fusion branch is rejected. The frozen `local_only`
+branch now proceeds unchanged to the offset-52 held-out group. That evaluation
+tests image generalization only and still cannot establish PRD acceptance.
