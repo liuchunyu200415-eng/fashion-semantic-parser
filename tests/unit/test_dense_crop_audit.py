@@ -6,6 +6,9 @@ import pytest
 from fashion_semantic_parser.service.dense_crop_audit import (
     CoarseCropBox,
     crop_target_coverage,
+    extract_crop_image,
+    fuse_crop_score_maps,
+    restore_crop_score_map,
     select_query_peak_crops,
 )
 from fashion_semantic_parser.service.dinov2_region_encoder import (
@@ -72,4 +75,40 @@ def test_crop_audit_rejects_invalid_geometry() -> None:
         crop_target_coverage(
             target,
             (CoarseCropBox(0, 0, 11, 10),),
+        )
+
+
+def test_crop_image_and_score_restoration_preserve_coordinates() -> None:
+    """Local image crops and restored score maps must share source geometry."""
+    image = np.arange(8 * 10 * 3, dtype=np.uint8).reshape(8, 10, 3)
+    crop = CoarseCropBox(2, 1, 7, 5)
+
+    cropped = extract_crop_image(image, crop)
+    restored = restore_crop_score_map(
+        np.full((4, 5), 0.75, dtype=np.float32),
+        crop,
+        (8, 10),
+    )
+
+    assert cropped.shape == (4, 5, 3)
+    assert np.array_equal(cropped, image[1:5, 2:7])
+    assert np.all(restored[1:5, 2:7] == pytest.approx(0.75))
+    assert np.count_nonzero(restored) == 20
+
+
+def test_crop_score_fusion_uses_maximum_and_rejects_invalid_maps() -> None:
+    """Overlapping local evidence should use max without hiding bad values."""
+    first = np.asarray([[0.1, 0.8], [0.0, 0.4]], dtype=np.float32)
+    second = np.asarray([[0.5, 0.2], [0.9, 0.3]], dtype=np.float32)
+
+    fused = fuse_crop_score_maps([first, second])
+
+    assert np.allclose(fused, [[0.5, 0.8], [0.9, 0.4]])
+    with pytest.raises(ValueError, match="probability"):
+        fuse_crop_score_maps([np.asarray([[1.1]], dtype=np.float32)])
+    with pytest.raises(ValueError, match="geometry"):
+        restore_crop_score_map(
+            np.ones((2, 2), dtype=np.float32),
+            CoarseCropBox(0, 0, 3, 3),
+            (5, 5),
         )

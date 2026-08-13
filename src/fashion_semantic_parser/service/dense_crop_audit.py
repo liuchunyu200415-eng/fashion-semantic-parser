@@ -112,6 +112,87 @@ def crop_target_coverage(
     return float(target_coverage), float(union.mean())
 
 
+def extract_crop_image(
+    image_rgb: np.ndarray,
+    crop: CoarseCropBox,
+) -> np.ndarray:
+    """Extract one validated contiguous RGB crop for local re-encoding.
+
+    Args:
+        image_rgb: Source ``HxWx3`` uint8 RGB image.
+        crop: In-bounds source-image crop box.
+
+    Returns:
+        Contiguous uint8 RGB crop.
+
+    Raises:
+        ValueError: If image or crop geometry is invalid.
+    """
+    image = np.asarray(image_rgb)
+    if image.ndim != 3 or image.shape[2] != 3 or image.dtype != np.uint8:
+        raise ValueError("Local crop source must be an HxWx3 uint8 RGB image.")
+    _validate_crop(crop, (int(image.shape[0]), int(image.shape[1])))
+    return np.ascontiguousarray(image[crop.y_min : crop.y_max, crop.x_min : crop.x_max])
+
+
+def restore_crop_score_map(
+    crop_scores: np.ndarray,
+    crop: CoarseCropBox,
+    image_shape: tuple[int, int],
+) -> np.ndarray:
+    """Restore one crop-resolution score map into full-image coordinates.
+
+    Args:
+        crop_scores: Finite score map matching the crop height and width.
+        crop: Source-image crop box used for re-encoding.
+        image_shape: Positive full source ``(height, width)``.
+
+    Returns:
+        Full-image float32 map, with zero response outside the crop.
+
+    Raises:
+        ValueError: If crop, score, or image geometry is inconsistent.
+    """
+    scores = np.asarray(crop_scores, dtype=np.float32)
+    _validate_crop(crop, image_shape)
+    expected_shape = (crop.y_max - crop.y_min, crop.x_max - crop.x_min)
+    if (
+        scores.shape != expected_shape
+        or not np.all(np.isfinite(scores))
+        or np.any(scores < 0.0)
+        or np.any(scores > 1.0)
+    ):
+        raise ValueError("Local crop scores do not match crop geometry or range.")
+    restored = np.zeros(image_shape, dtype=np.float32)
+    restored[crop.y_min : crop.y_max, crop.x_min : crop.x_max] = scores
+    return restored
+
+
+def fuse_crop_score_maps(score_maps: list[np.ndarray]) -> np.ndarray:
+    """Fuse one or more aligned crop maps using deterministic maximum response.
+
+    Args:
+        score_maps: Non-empty finite full-image probability maps.
+
+    Returns:
+        Float32 elementwise maximum map.
+
+    Raises:
+        ValueError: If maps are empty, inconsistent, non-finite, or out of range.
+    """
+    if not score_maps:
+        raise ValueError("Local score fusion requires at least one crop map.")
+    arrays = [np.asarray(value, dtype=np.float32) for value in score_maps]
+    if (
+        arrays[0].ndim != 2
+        or any(value.shape != arrays[0].shape for value in arrays)
+        or any(not np.all(np.isfinite(value)) for value in arrays)
+        or any(np.any(value < 0.0) or np.any(value > 1.0) for value in arrays)
+    ):
+        raise ValueError("Local score maps must share finite 2D probability geometry.")
+    return np.asarray(np.maximum.reduce(arrays), dtype=np.float32)
+
+
 def _source_patch_centers(
     grid_shape: tuple[int, int],
     geometry: DinoV2LetterboxGeometry,
@@ -164,3 +245,22 @@ def _centered_crop(
 def _contains(box: CoarseCropBox, point: tuple[float, float]) -> bool:
     """Return whether a source point is already covered by a selected crop."""
     return box.x_min <= point[0] < box.x_max and box.y_min <= point[1] < box.y_max
+
+
+def _validate_crop(
+    crop: CoarseCropBox,
+    image_shape: tuple[int, int],
+) -> None:
+    """Validate one exclusive-maximum crop against a source image shape."""
+    height, width = image_shape
+    if (
+        height < 1
+        or width < 1
+        or crop.x_min < 0
+        or crop.y_min < 0
+        or crop.x_max > width
+        or crop.y_max > height
+        or crop.x_min >= crop.x_max
+        or crop.y_min >= crop.y_max
+    ):
+        raise ValueError("Local crop lies outside source image geometry.")

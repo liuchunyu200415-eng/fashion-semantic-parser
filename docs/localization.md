@@ -2262,3 +2262,24 @@ image area. Crop fractions `0.20`, `0.30`, and `0.40` measure the trade-off
 between recovering small targets and approaching a trivial full-image crop. A
 coarse-to-fine implementation is justified only if one or three query-driven
 crops cover at least `90%` of targets at a materially smaller image-area cost.
+
+On the unseen offset-52 group, the audit retained all `762` queries. Three
+query-driven `20%` crops covered at least `90%` of target pixels for `89.37%`
+of queries while occupying `15.27%` of image area. At `30%`, coverage rose to
+`97.24%` at `31.44%` area; at `40%`, it reached `100%` but consumed `53.48%`.
+The fixed first coarse-to-fine baseline therefore uses `30%` and Top-3: it is
+the smallest audited setting with near-complete target coverage.
+
+`scripts/evaluate_dense_local_reencoding.py` evaluates that baseline without
+training or GT/category input. For each complete language query it selects the
+three coarse peaks, crops the source image, re-encodes every crop with the same
+PRD DINOv2 `728` encoder, scores it with the frozen BGE-M3 projection and
+multiscale decoder, then restores local probabilities to source coordinates.
+It reports three fixed branches at the checkpoint's frozen threshold:
+`coarse`, `local_only`, and pixelwise `coarse_local_max`. Predicted-to-target
+area ratios remain diagnostics; target Masks never affect crop generation,
+local scoring, fusion, or threshold selection. Run two images first. Continue
+to the frozen 50-image group only if local re-encoding materially improves Mask
+Recall50 or mean Mask IoU without uncontrolled foreground growth. The recorded
+offline per-image time is not complete-request latency and cannot be compared
+with the PRD `30 ms` requirement.
