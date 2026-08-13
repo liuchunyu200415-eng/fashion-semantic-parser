@@ -2213,3 +2213,21 @@ does not materially exceed both the frozen 1,000-image `518` checkpoint
 evaluated at `728` (`27.72%` Recall50, `31.62%` mean IoU) and the high-resolution
 300-image result, further full-image data/resolution scaling stops in favor of
 query-conditioned coarse-to-fine local re-encoding.
+
+The final full-image scale run passed its gate. Training on 1,000 images and
+16,064 queries at `728` reached `69.65%` training patch Recall50 and `57.66%`
+mean patch IoU. On the frozen offset-two group, the checkpoint reached `30.90%`
+Mask Recall50, `6.63%` Recall75, `32.47%` mean Mask IoU, and `42.84%` Box
+Recall50. This exceeds both the 300-image `728` checkpoint (`26.13%`, `2.25%`,
+`29.37%`, `39.39%`) and the 1,000-image `518` checkpoint evaluated at `728`
+(`27.72%`, `5.97%`, `31.62%`, `38.33%`). The GT pixel-area oracle reached only
+`32.49%` Recall50, just `1.59` percentage points above inference, so area
+calibration no longer contains substantial recoverable recall on this group.
+
+This checkpoint is frozen as the final full-image development model. More data,
+steps, target-area tuning, and full-image resolution growth stop. Before a
+coarse-to-fine architecture change, evaluate the frozen checkpoint without
+threshold changes on the previously unused validation offset-52 group. That
+result tests generalization only; it is still not the independent manually
+annotated PRD acceptance set and cannot establish the `92%` requirement or
+complete-request `30 ms` latency.
