@@ -44,6 +44,8 @@ def test_dense_summary_reports_overlapping_dimensions_and_groups() -> None:
             "dimensions": ["basic", "spatial"],
             "language": "zh",
             "target_label": "pocket",
+            "oracle_pixel_area_topk_mask_iou": 0.6,
+            "oracle_support_topk_mask_iou": 0.4,
         }
     ]
     image_rows = [{"total_image_seconds": 0.2}]
@@ -54,6 +56,8 @@ def test_dense_summary_reports_overlapping_dimensions_and_groups() -> None:
     assert summary["by_dimension"]["spatial"]["query_count"] == 1
     assert summary["by_language"]["zh"]["mask_recall50"] == 1.0
     assert summary["by_target_label"]["pocket"]["mask_recall50"] == 1.0
+    assert summary["oracle_pixel_area_topk_mask_recall50"] == 1.0
+    assert summary["oracle_support_topk_mask_recall50"] == 0.0
 
 
 def test_warm_latency_excludes_first_model_load_image() -> None:

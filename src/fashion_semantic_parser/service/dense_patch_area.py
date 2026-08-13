@@ -161,3 +161,41 @@ def topk_patch_masks(
         order = np.argsort(-scores[query_index], kind="stable")
         selected[query_index, order[:selected_count]] = True
     return selected
+
+
+def oracle_area_topk_masks(
+    probabilities: np.ndarray,
+    target_patch_fractions: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build GT-area and GT-support top-k selections for diagnosis only.
+
+    Args:
+        probabilities: One finite patch probability grid.
+        target_patch_fractions: Matching soft target fraction grid.
+
+    Returns:
+        Two boolean selection grids and their pixel/support area fractions.
+
+    Raises:
+        ValueError: If probability and target grids are invalid or inconsistent.
+    """
+    scores = np.asarray(probabilities, dtype=np.float32)
+    targets = np.asarray(target_patch_fractions, dtype=np.float32)
+    if (
+        scores.ndim != 2
+        or targets.shape != scores.shape
+        or not np.all(np.isfinite(targets))
+        or np.any(targets < 0.0)
+        or np.any(targets > 1.0)
+    ):
+        raise ValueError("Oracle area diagnostic patch grids are invalid.")
+    fractions = np.asarray(
+        [targets.mean(), np.mean(targets > 0.0)],
+        dtype=np.float32,
+    )
+    repeated_scores = np.repeat(scores.reshape(1, -1), 2, axis=0)
+    selections = topk_patch_masks(repeated_scores, fractions).reshape(
+        2,
+        *scores.shape,
+    )
+    return selections, fractions

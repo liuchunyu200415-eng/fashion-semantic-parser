@@ -80,6 +80,11 @@ def main() -> None:
     )
     from fashion_semantic_parser.service.dense_patch_alignment import (
         load_dense_patch_alignment_checkpoint,
+        mask_to_patch_fractions,
+    )
+    from fashion_semantic_parser.service.dense_patch_area import (
+        oracle_area_topk_masks,
+        topk_patch_masks,
     )
     from fashion_semantic_parser.service.dense_region_localization import (
         binary_mask_iou,
@@ -157,16 +162,13 @@ def main() -> None:
         )
         selected_patch_masks = None
         if predicted_area_fractions is not None:
-            from fashion_semantic_parser.service.dense_patch_area import (
-                topk_patch_masks,
-            )
-
             selected_patch_masks = topk_patch_masks(
                 probabilities.reshape(len(item_indices), -1),
                 predicted_area_fractions,
             ).reshape(probabilities.shape)
         for local_index, item_index in enumerate(item_indices):
             item = items[item_index]
+            target_mask = np.asarray(item.target_masks.any(axis=0), dtype=bool)
             if selected_patch_masks is None:
                 patch_selection = probabilities[local_index] >= threshold
             else:
@@ -179,7 +181,26 @@ def main() -> None:
                 >= 0.5,
                 dtype=bool,
             )
-            target_mask = np.asarray(item.target_masks.any(axis=0), dtype=bool)
+            target_patch_fractions = mask_to_patch_fractions(
+                target_mask,
+                dense.geometry,
+                patch_size=image_encoder.settings.patch_size,
+            )
+            oracle_selections, oracle_fractions = oracle_area_topk_masks(
+                probabilities[local_index],
+                target_patch_fractions,
+            )
+            oracle_masks = [
+                np.asarray(
+                    patch_scores_to_image(
+                        np.asarray(selection, dtype=np.float32),
+                        dense.geometry,
+                    )
+                    >= 0.5,
+                    dtype=bool,
+                )
+                for selection in oracle_selections
+            ]
             mask_iou = binary_mask_iou(target_mask, predicted_mask)
             cases.append(
                 {
@@ -204,6 +225,16 @@ def main() -> None:
                         None
                         if predicted_area_fractions is None
                         else float(predicted_area_fractions[local_index])
+                    ),
+                    "target_patch_pixel_fraction": float(oracle_fractions[0]),
+                    "target_patch_support_fraction": float(oracle_fractions[1]),
+                    "oracle_pixel_area_topk_mask_iou": binary_mask_iou(
+                        target_mask,
+                        oracle_masks[0],
+                    ),
+                    "oracle_support_topk_mask_iou": binary_mask_iou(
+                        target_mask,
+                        oracle_masks[1],
                     ),
                 }
             )
@@ -251,6 +282,7 @@ def main() -> None:
             "candidate_region_scope": "full_image_supervised_dinov2_patch_similarity",
             "full_image_candidate_coverage": True,
             "uses_oracle_candidates": False,
+            "oracle_area_diagnostics_use_ground_truth": True,
             "full_language_query_used": True,
             "mask_localization_evaluated": True,
             "independent_manual_test_set": False,
@@ -271,6 +303,8 @@ def main() -> None:
         "mask_recall75",
         "mean_mask_iou",
         "box_recall50",
+        "oracle_pixel_area_topk_mask_recall50",
+        "oracle_support_topk_mask_recall50",
         "warm_mean_image_seconds",
     ):
         print(f"{key}: {summary[key]}")
@@ -282,6 +316,19 @@ def _summarize(
 ) -> dict[str, object]:
     """Aggregate overall and diagnostic grouped Mask/Box metrics."""
     result = _score_cases(cases)
+    for field in (
+        "oracle_pixel_area_topk_mask_iou",
+        "oracle_support_topk_mask_iou",
+    ):
+        if all(field in case for case in cases):
+            oracle_values = np.asarray(
+                [cast(float, case[field]) for case in cases],
+                dtype=float,
+            )
+            prefix = field.removesuffix("_mask_iou")
+            result[f"{prefix}_mask_recall50_count"] = int(np.sum(oracle_values >= 0.50))
+            result[f"{prefix}_mask_recall50"] = float(np.mean(oracle_values >= 0.50))
+            result[f"{prefix}_mean_mask_iou"] = float(oracle_values.mean())
     dimensions = sorted(
         {
             dimension

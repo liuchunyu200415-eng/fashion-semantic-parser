@@ -8,6 +8,7 @@ from fashion_semantic_parser.service.dense_patch_alignment import (
 )
 from fashion_semantic_parser.service.dense_patch_area import (
     build_query_area_predictor,
+    oracle_area_topk_masks,
     query_area_logits,
     query_area_loss,
     topk_patch_masks,
@@ -70,3 +71,14 @@ def test_topk_patch_masks_reject_nonfinite_area() -> None:
             np.asarray([[0.5, 0.4]], dtype=np.float32),
             np.asarray([np.nan], dtype=np.float32),
         )
+
+
+def test_oracle_area_audit_separates_pixel_mass_and_patch_support() -> None:
+    """Thin targets should expose different pixel-area and support oracles."""
+    selections, fractions = oracle_area_topk_masks(
+        np.asarray([[0.9, 0.8], [0.7, 0.6]], dtype=np.float32),
+        np.asarray([[0.1, 0.1], [0.0, 0.0]], dtype=np.float32),
+    )
+
+    assert fractions.tolist() == pytest.approx([0.05, 0.5])
+    assert selections.reshape(2, -1).sum(axis=1).tolist() == [1, 2]

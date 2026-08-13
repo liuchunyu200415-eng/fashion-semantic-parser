@@ -2138,3 +2138,18 @@ model-selection result. If it passes, train the same architecture on 300 images
 for 500 steps and compare on the frozen offset-two 50-image group. Continue to
 1,000 images only if it improves both Mask Recall50 and mean Mask IoU over the
 300-image multiscale reference (`21.35%` and `24.61%`).
+
+The schema-three compatibility smoke passed, but the controlled 300-image run
+failed the continuation gate. On the same offset-two group it reached only
+`9.42%` Mask Recall50, `0%` Recall75, `20.90%` mean Mask IoU, and `24.14%` Box
+Recall50. The corresponding schema-two multiscale model reached `21.35%`,
+`2.52%`, `24.61%`, and `36.74%`. Scaling the area model to 1,000 images is
+therefore stopped.
+
+The evaluator now reports two explicitly GT-dependent oracle diagnostics before
+changing the loss. `oracle_pixel_area_topk` selects the decoder's best patches
+using the true soft foreground area, while `oracle_support_topk` uses the true
+number of touched patches. Neither is an inference result or PRD acceptance
+metric. If the pixel oracle fails but support succeeds, full-patch selection is
+too coarse for thin parts; if both succeed, the learned area head is the primary
+failure; if both fail, decoder ranking/localization remains the bottleneck.
