@@ -23,9 +23,10 @@ segmentation:
   query_auto_subject_roi: true
 
 localization:
-  backend: hybrid
+  backend: dense_local_reencoding
   config_path: configs/localization_mask2former_parts_deployment.yaml
   fallback_config_path: configs/localization_grounded_sam_hq.yaml
+  dense_config_path: configs/localization_dense_local_reencoding.yaml
 
 datasets:
   fashionai_root: data/raw/fashionai/round1_fashionAI_attributes_test_a

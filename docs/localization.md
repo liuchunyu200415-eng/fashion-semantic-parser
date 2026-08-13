@@ -2309,3 +2309,41 @@ rejected: it did not improve Recall50 and increased the area ratio to `1.96x`.
 These Fashionpedia generated-query results establish architecture progress,
 not the PRD `92%` acceptance result. Independent manual referring-expression
 evaluation and complete-request latency measurement remain required.
+
+### Production Dense Local-Reencoding Service
+
+The application `localization.backend` now defaults to
+`dense_local_reencoding`. The runtime receives the complete query verbatim,
+uses the frozen BGE-M3 projection and DINOv2 `728` multiscale checkpoint,
+selects three `30%` coarse crops, and returns the restored `local_only` Mask.
+It does not invoke `resolve_localization_prompt` inside the model path and does
+not map expressions to Fashionpedia or PRD part classes. Explicit whole-image
+garment inventory/classification questions remain on the 3.1.1 route; unknown
+local expressions, including attribute and relation compositions, reach the
+open-query backend unchanged.
+
+The default dense service runs on the complete image, matching both frozen
+development and held-out evaluations. It does not reuse an automatically
+detected 3.1.1 subject ROI. An explicitly supplied manual ROI remains available
+as a separate, unvalidated client-controlled mode and is reported as such.
+
+The response records `mask_source: dense_local_reencoding` and
+`box_source: dense_coarse_localization`. The Box deliberately remains the
+coarse prediction because held-out Box Recall50 was `55.64%` for coarse versus
+`41.99%` for the local Mask's tight Box. This mixed output is an evidence-based
+contract, not an implicit recomputation. The service returns one query result
+whose polygon list can contain multiple disconnected target components.
+
+On AutoDL, link the already frozen checkpoint into the deployment path before
+starting the API:
+
+```bash
+bash scripts/setup_dense_local_reencoding_model.sh
+```
+
+The setup script refuses to overwrite a regular checkpoint file and validates
+the resulting link. DINOv2 and BGE-M3 assets are still pinned and validated by
+their existing setup/runtime checks. This production wiring does not change the
+measured Fashionpedia scores, establish the PRD `92%` metric, or establish the
+complete-request `30 ms` requirement. API acceptance, independent manual
+accuracy evaluation, and latency benchmarking remain separate gates.

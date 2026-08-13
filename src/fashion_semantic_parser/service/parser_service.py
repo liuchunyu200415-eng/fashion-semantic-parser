@@ -120,12 +120,23 @@ class FashionParserService:
             prompt = resolve_localization_prompt(request.query)
         except ValueError as error:
             raise InvalidImageInputError(str(error)) from error
-        if prompt.region_label == "custom":
+        supports_open_queries = bool(
+            getattr(self.localization_service, "supports_open_queries", False)
+        )
+        if prompt.region_label == "custom" and not supports_open_queries:
             return None
+        accepts_query = getattr(self.localization_service, "accepts_query", None)
+        if prompt.region_label == "custom" and callable(accepts_query):
+            query_acceptor = cast(Callable[[str], bool], accepts_query)
+            if not query_acceptor(request.query):  # pylint: disable=not-callable
+                return None
         localize_with_garment_prediction = getattr(
             self.localization_service,
             "localize_with_garment_prediction",
             None,
+        )
+        requires_full_image = bool(
+            getattr(self.localization_service, "requires_full_image", False)
         )
         if callable(localize_with_garment_prediction):
             localization_callable = cast(
@@ -144,9 +155,11 @@ class FashionParserService:
             localization = self.localization_service.localize(
                 request.image_path,
                 request.query,
-                subject_roi=segmentation.subject_roi,
+                subject_roi=(None if requires_full_image else segmentation.subject_roi),
                 auto_subject_roi=False,
             )
+        if requires_full_image:
+            return localization
         return localization.model_copy(
             update={
                 "subject_roi": segmentation.subject_roi,

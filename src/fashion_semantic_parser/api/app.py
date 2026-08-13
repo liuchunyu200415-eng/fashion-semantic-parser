@@ -19,6 +19,9 @@ from fashion_semantic_parser.models.segmentation import (
     SegmentationPrediction,
     SegmentationRequest,
 )
+from fashion_semantic_parser.service.dense_local_reencoding import (
+    DenseLocalReencodingRegionLocalizationService,
+)
 from fashion_semantic_parser.service.parser_service import FashionParserService
 from fashion_semantic_parser.service.region_localization import (
     GroundedSAMHQRegionLocalizationService,
@@ -54,7 +57,11 @@ def create_app(
     if localization_service is None:
         app_settings = app_settings or load_settings()
         localization_settings = app_settings.localization
-        if localization_settings.backend == "grounded_sam_hq":
+        if localization_settings.backend == "dense_local_reencoding":
+            localization_service = DenseLocalReencodingRegionLocalizationService(
+                localization_settings.dense_config_path
+            )
+        elif localization_settings.backend == "grounded_sam_hq":
             localization_service = GroundedSAMHQRegionLocalizationService(
                 localization_settings.fallback_config_path
             )

@@ -53,8 +53,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--backend",
-        choices=["supervised", "hybrid"],
-        default="hybrid",
+        choices=["dense_local_reencoding", "supervised", "hybrid"],
+        default="dense_local_reencoding",
     )
     parser.add_argument(
         "--part-config",
@@ -67,6 +67,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--fallback-config",
         default="configs/localization_grounded_sam_hq.yaml",
+    )
+    parser.add_argument(
+        "--dense-config",
+        default="configs/localization_dense_local_reencoding.yaml",
     )
     parser.add_argument(
         "--roi-mode",
@@ -87,6 +91,9 @@ def main() -> None:
     from fashion_semantic_parser.common.paths import resolve_project_path
     from fashion_semantic_parser.dao.localization.taxonomy import (
         resolve_localization_prompt,
+    )
+    from fashion_semantic_parser.service.dense_local_reencoding import (
+        DenseLocalReencodingRegionLocalizationService,
     )
     from fashion_semantic_parser.service.region_localization import (
         GroundedSAMHQRegionLocalizationService,
@@ -109,17 +116,20 @@ def main() -> None:
         validation_path=_resolve_path(args.val_json, resolve_project_path),
         image_limit=args.image_limit,
     )
-    supervised = Mask2FormerPartLocalizationService(args.part_config)
-    if args.backend == "supervised":
-        service: Any = supervised
+    service: Any
+    if args.backend == "dense_local_reencoding":
+        service = DenseLocalReencodingRegionLocalizationService(args.dense_config)
     else:
-        service = HybridRegionLocalizationService(
-            supervised,
-            GroundedSAMHQRegionLocalizationService(args.fallback_config),
-            garment_segmentation_service=GarmentSegmentationService(
-                args.garment_config
-            ),
-        )
+        supervised = Mask2FormerPartLocalizationService(args.part_config)
+        service = supervised
+        if args.backend == "hybrid":
+            service = HybridRegionLocalizationService(
+                supervised,
+                GroundedSAMHQRegionLocalizationService(args.fallback_config),
+                garment_segmentation_service=GarmentSegmentationService(
+                    args.garment_config
+                ),
+            )
 
     import torch
 

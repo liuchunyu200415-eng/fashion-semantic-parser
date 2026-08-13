@@ -1,5 +1,8 @@
 """Business services for the fashion semantic parser."""
 
+from fashion_semantic_parser.service.dense_local_reencoding import (
+    DenseLocalReencodingRegionLocalizationService,
+)
 from fashion_semantic_parser.service.region_localization import (
     GroundedSAMHQRegionLocalizationService,
     HybridRegionLocalizationService,
@@ -32,6 +35,7 @@ from fashion_semantic_parser.service.subject_roi import (
 __all__ = [
     "Detectron2SegmentationBaseline",
     "Detectron2PersonROIDetector",
+    "DenseLocalReencodingRegionLocalizationService",
     "GarmentSegmentationService",
     "GroundedSAMHQRegionLocalizationService",
     "HybridRegionLocalizationService",

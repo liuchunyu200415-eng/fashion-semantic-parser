@@ -1,0 +1,17 @@
+checkpoint_path: models/checkpoints/localization/dinov2_multiscale_728_train1000_steps1500.pt
+dinov2_config_path: configs/localization_dinov2_region_728.yaml
+bge_m3_config_path: configs/localization_bge_m3_text.yaml
+crop_fraction: 0.30
+max_crops: 3
+min_mask_area: 1
+subject_roi_margin: 0.0
+
+person_detector:
+  model_zoo_config: COCO-Detection/faster_rcnn_R_50_FPN_3x.yaml
+  weights: null
+  score_threshold: 0.7
+  min_area_ratio: 0.005
+  center_bias: 0.5
+  detections_per_image: 20
+  precision: fp16
+  device: cuda

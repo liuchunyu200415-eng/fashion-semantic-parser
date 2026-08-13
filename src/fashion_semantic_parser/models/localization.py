@@ -1,5 +1,7 @@
 """Typed schemas for PRD 3.1.2 language-guided region localization."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, model_validator
 
 from fashion_semantic_parser.models.segmentation import (
@@ -34,6 +36,8 @@ class LocalizedRegion(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     box: LocalizationBoundingBox
     mask: list[list[float]] = Field(default_factory=list)
+    mask_source: Literal["dense_local_reencoding"] | None = None
+    box_source: Literal["dense_coarse_localization"] | None = None
 
 
 class RegionLocalizationPrediction(BaseModel):

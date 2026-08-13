@@ -131,6 +131,18 @@ class _GarmentAwareFakeLocalizationService(_FakeLocalizationService):
         )
 
 
+class _OpenQueryFakeLocalizationService(_FakeLocalizationService):
+    """Fake service that explicitly accepts arbitrary complete expressions."""
+
+    supports_open_queries = True
+
+
+class _FullImageOpenQueryFakeLocalizationService(_OpenQueryFakeLocalizationService):
+    """Open-query runtime frozen under full-image evaluation conditions."""
+
+    requires_full_image = True
+
+
 def test_query_returns_integrated_segmentation_result() -> None:
     """The existing query route should no longer be a fixed not-ready stub."""
     segmentation_service = _FakeSegmentationService()
@@ -266,6 +278,56 @@ def test_query_does_not_localize_general_garment_questions() -> None:
 
     assert response.localization is None
     assert localization_service.calls == []
+
+
+def test_open_query_service_receives_unknown_expression_verbatim() -> None:
+    """Open-query backends must receive modifiers that taxonomy cannot map."""
+    localization_service = _OpenQueryFakeLocalizationService()
+    service = FashionParserService(
+        _FakeSegmentationService(),
+        localization_service=localization_service,
+    )
+
+    response = service.answer_query(
+        MultimodalQueryRequest(
+            image_path="data/example.jpg",
+            query="外套里面带银色装饰的内搭区域",
+        )
+    )
+
+    assert response.localization is not None
+    assert localization_service.calls == [
+        ("data/example.jpg", "外套里面带银色装饰的内搭区域", None, False)
+    ]
+
+
+def test_full_image_open_query_does_not_reuse_segmentation_roi() -> None:
+    """Frozen dense inference must retain its evaluated full-image geometry."""
+    subject_roi = SegmentationSubjectROI(
+        x_min=10.0,
+        y_min=20.0,
+        x_max=200.0,
+        y_max=300.0,
+    )
+    localization_service = _FullImageOpenQueryFakeLocalizationService()
+    service = FashionParserService(
+        _ROIProvenanceSegmentationService(subject_roi, "detected"),
+        localization_service=localization_service,
+    )
+
+    response = service.answer_query(
+        MultimodalQueryRequest(
+            image_path="data/example.jpg",
+            query="衣服左侧的银色拉链",
+        )
+    )
+
+    assert response.localization is not None
+    assert response.localization.subject_roi is None
+    assert response.localization.subject_roi_source is None
+    assert localization_service.calls == [
+        ("data/example.jpg", "衣服左侧的银色拉链", None, False)
+    ]
 
 
 def test_query_can_explicitly_disable_automatic_subject_roi() -> None:

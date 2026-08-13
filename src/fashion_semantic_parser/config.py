@@ -44,9 +44,15 @@ class SegmentationServiceSettings(BaseModel):
 class LocalizationServiceSettings(BaseModel):
     """Language-guided local-region inference service settings."""
 
-    backend: Literal["grounded_sam_hq", "mask2former_parts", "hybrid"] = "hybrid"
+    backend: Literal[
+        "dense_local_reencoding",
+        "grounded_sam_hq",
+        "mask2former_parts",
+        "hybrid",
+    ] = "dense_local_reencoding"
     config_path: str = "configs/localization_mask2former_parts_deployment.yaml"
     fallback_config_path: str = "configs/localization_grounded_sam_hq.yaml"
+    dense_config_path: str = "configs/localization_dense_local_reencoding.yaml"
 
 
 class DatasetSettings(BaseModel):

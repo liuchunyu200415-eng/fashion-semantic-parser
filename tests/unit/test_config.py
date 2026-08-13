@@ -13,11 +13,14 @@ def test_load_settings_reads_default_config() -> None:
         "segmentation_mask2former_deployment.yaml"
     )
     assert settings.segmentation.query_auto_subject_roi is True
-    assert settings.localization.backend == "hybrid"
+    assert settings.localization.backend == "dense_local_reencoding"
     assert settings.localization.config_path.endswith(
         "localization_mask2former_parts_deployment.yaml"
     )
     assert settings.localization.fallback_config_path.endswith(
         "localization_grounded_sam_hq.yaml"
+    )
+    assert settings.localization.dense_config_path.endswith(
+        "localization_dense_local_reencoding.yaml"
     )
     assert settings.datasets.fashionpedia_root == "data/raw/fashionpedia"
