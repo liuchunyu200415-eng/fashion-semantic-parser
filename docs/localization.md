@@ -2200,3 +2200,16 @@ when loaded. Continue to a 1,000-image high-resolution run only if same-resoluti
 training materially improves both Recall50 and mean IoU without a further Box
 recall collapse. Otherwise stop full-image resolution scaling and implement
 query-conditioned coarse-to-fine crops.
+
+The 300-image/500-step `728` run passed that controlled gate. On the same 754
+queries it reached `26.13%` Mask Recall50, `2.25%` Recall75, `29.37%` mean Mask
+IoU, and `39.39%` Box Recall50. Relative to the same-data `518` decoder
+(`21.35%`, `2.52%`, `24.61%`, and `36.74%`), Recall50 and mean IoU improved by
+`4.78` and `4.76` percentage points while Box Recall50 improved by `2.65`;
+Recall75 was approximately flat. The GT pixel-area oracle reached only `29.97%`
+Recall50, so decoder ranking still imposes a low ceiling. One 1,000-image/1,500-
+step high-resolution run is allowed as the final full-image scale test. If it
+does not materially exceed both the frozen 1,000-image `518` checkpoint
+evaluated at `728` (`27.72%` Recall50, `31.62%` mean IoU) and the high-resolution
+300-image result, further full-image data/resolution scaling stops in favor of
+query-conditioned coarse-to-fine local re-encoding.
