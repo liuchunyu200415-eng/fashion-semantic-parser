@@ -2347,3 +2347,12 @@ their existing setup/runtime checks. This production wiring does not change the
 measured Fashionpedia scores, establish the PRD `92%` metric, or establish the
 complete-request `30 ms` requirement. API acceptance, independent manual
 accuracy evaluation, and latency benchmarking remain separate gates.
+
+The first complete-service latency benchmark passed functional inference but
+failed the PRD performance target. Across collar, sleeve, and zipper queries,
+warm mean latency was `105.87-112.77 ms` and P95 was `107.33-115.85 ms`, versus
+the required `30 ms`. The result includes image decode, complete-query BGE-M3,
+one coarse DINOv2 pass, three sequential local DINOv2 passes, scoring, and
+polygon/Box postprocessing; model loading and HTTP transport are excluded.
+The next optimization batches the three fixed local crops into one DINOv2
+forward pass without changing the model, query, crops, threshold, or output.

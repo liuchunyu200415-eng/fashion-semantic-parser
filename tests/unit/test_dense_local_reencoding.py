@@ -1,6 +1,8 @@
 """Tests for the frozen complete-query local re-encoding service."""
 
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
@@ -14,6 +16,7 @@ from fashion_semantic_parser.service.dense_local_reencoding import (
     DenseLocalRuntimeBundle,
     load_dense_local_reencoding_settings,
 )
+from fashion_semantic_parser.service.dense_local_runtime import _BatchedDinoV2Encoder
 from fashion_semantic_parser.service.dinov2_region_encoder import (
     DinoV2DenseFeatureMap,
     DinoV2LetterboxGeometry,
@@ -30,6 +33,9 @@ class _FakeProjector:
 
 
 class _FakeEncoder:
+    def __init__(self) -> None:
+        self.batch_sizes: list[int] = []
+
     def encode_dense(self, image_rgb: np.ndarray) -> DinoV2DenseFeatureMap:
         height, width = image_rgb.shape[:2]
         return DinoV2DenseFeatureMap(
@@ -44,6 +50,13 @@ class _FakeEncoder:
                 output_size=max(height, width),
             ),
         )
+
+    def encode_dense_batch(
+        self,
+        images_rgb: list[np.ndarray],
+    ) -> tuple[DinoV2DenseFeatureMap, ...]:
+        self.batch_sizes.append(len(images_rgb))
+        return tuple(self.encode_dense(image) for image in images_rgb)
 
 
 class _SequenceScorer:
@@ -73,10 +86,86 @@ class _FakeEngine:
         return self.result
 
 
+class _FakeDinoModel:
+    def __init__(self, torch_module) -> None:
+        self.torch = torch_module
+
+    def forward_features(self, image_tensor):
+        batch_size = image_tensor.shape[0]
+        values = np.arange(
+            batch_size * 4 * 2,
+            dtype=np.float32,
+        ).reshape(batch_size, 4, 2)
+        values[:, :, 0] += 1.0
+        return {"x_norm_patchtokens": _FakeTensor(values)}
+
+
+class _FakeBaseDinoEncoder:
+    def __init__(self, torch_module) -> None:
+        self._torch = torch_module
+        self._model = _FakeDinoModel(torch_module)
+        self.settings = SimpleNamespace(
+            input_size=4,
+            patch_size=2,
+            feature_dimension=2,
+            precision="fp32",
+        )
+
+    def load(self) -> None:
+        pass
+
+    def encode_dense(self, image_rgb: np.ndarray) -> DinoV2DenseFeatureMap:
+        raise AssertionError("Single-image delegate is not used in this test.")
+
+    def _normalized_image_tensor(self, image_rgb: np.ndarray):
+        return np.zeros((1, 3, 4, 4), dtype=np.float32)
+
+
+class _FakeTorch:
+    float16 = np.float16
+    float32 = np.float32
+
+    def __init__(self) -> None:
+        self.nn = SimpleNamespace(functional=SimpleNamespace(normalize=self._normalize))
+
+    @staticmethod
+    def cat(values, dim=0):
+        return np.concatenate(values, axis=dim)
+
+    @staticmethod
+    def inference_mode():
+        return nullcontext()
+
+    @staticmethod
+    def _normalize(values, dim):
+        array = values.values if isinstance(values, _FakeTensor) else values
+        norms = np.linalg.norm(array, axis=dim, keepdims=True)
+        return _FakeTensor(array / norms)
+
+
+class _FakeTensor:
+    def __init__(self, values: np.ndarray) -> None:
+        self.values = values
+
+    def cpu(self):
+        return self
+
+    @property
+    def shape(self):
+        return self.values.shape
+
+    def float(self):
+        return self
+
+    def numpy(self) -> np.ndarray:
+        return self.values
+
+
 def test_engine_preserves_query_and_uses_local_mask_with_coarse_box() -> None:
     """The full query must drive local re-encoding without replacing its Box."""
     projector = _FakeProjector()
     scorer = _SequenceScorer()
+    encoder = _FakeEncoder()
     engine = DenseLocalReencodingEngine(
         DenseLocalReencodingSettings(
             crop_fraction=0.30,
@@ -84,7 +173,7 @@ def test_engine_preserves_query_and_uses_local_mask_with_coarse_box() -> None:
         ),
         runtime=DenseLocalRuntimeBundle(
             projector=projector,
-            image_encoder=_FakeEncoder(),
+            image_encoder=encoder,
             scorer=scorer,
         ),
     )
@@ -96,6 +185,7 @@ def test_engine_preserves_query_and_uses_local_mask_with_coarse_box() -> None:
 
     assert projector.queries == ["衣服左侧的银色拉链"]
     assert scorer.call_count == 2
+    assert encoder.batch_sizes == [1]
     assert result.local_mask.sum() == 9
     assert result.coarse_box is not None
     assert result.confidence == 1.0
@@ -185,3 +275,27 @@ def test_deployment_settings_freeze_the_validated_crop_path() -> None:
     assert settings.max_crops == 3
     assert settings.dinov2_config_path.endswith("dinov2_region_728.yaml")
     assert settings.checkpoint_path.endswith("train1000_steps1500.pt")
+
+
+def test_batched_adapter_preserves_crop_order_and_geometry() -> None:
+    """One forward pass must return one normalized dense grid per crop."""
+    torch = _FakeTorch()
+    encoder = _BatchedDinoV2Encoder(  # type: ignore[arg-type]
+        _FakeBaseDinoEncoder(torch)
+    )
+    images = [
+        np.zeros((2, 4, 3), dtype=np.uint8),
+        np.zeros((4, 2, 3), dtype=np.uint8),
+        np.zeros((3, 3, 3), dtype=np.uint8),
+    ]
+
+    results = encoder.encode_dense_batch(images)
+
+    assert len(results) == 3
+    assert all(result.features.shape == (2, 2, 2) for result in results)
+    assert results[0].geometry.original_height == 2
+    assert results[1].geometry.original_width == 2
+    assert not np.array_equal(results[0].features, results[1].features)
+    assert all(
+        np.allclose(np.linalg.norm(result.features, axis=2), 1.0) for result in results
+    )

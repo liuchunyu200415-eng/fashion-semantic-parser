@@ -98,10 +98,12 @@ class DenseLocalReencodingEngine:
                 crop_fraction=self.settings.crop_fraction,
                 max_crops=self.settings.max_crops,
             )
+            crop_images = [extract_crop_image(image, crop) for crop in crops]
+            crop_features = runtime.image_encoder.encode_dense_batch(crop_images)
+            if len(crop_features) != len(crops):
+                raise ValueError("Dense crop batch returned an invalid result count.")
             restored_maps = []
-            for crop in crops:
-                crop_image = extract_crop_image(image, crop)
-                crop_dense = runtime.image_encoder.encode_dense(crop_image)
+            for crop, crop_dense in zip(crops, crop_features, strict=True):
                 crop_probabilities = runtime.scorer.score(
                     crop_dense.features,
                     projected_query,
