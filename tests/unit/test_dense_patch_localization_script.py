@@ -1,5 +1,8 @@
 """Tests for supervised dense patch localization reporting."""
 
+import pytest
+
+from scripts.audit_dense_coarse_crop_coverage import _summarize as summarize_crops
 from scripts.evaluate_dense_patch_localization import (
     _score_cases,
     _summarize,
@@ -73,3 +76,35 @@ def test_warm_latency_excludes_first_model_load_image() -> None:
         )
         == 0.2
     )
+
+
+def test_crop_summary_retains_all_queries_and_area_cost() -> None:
+    """Crop coverage rates must retain misses and report crop area cost."""
+    cases = [
+        {
+            "crop_audits": {
+                "0.20": {
+                    "top1_target_coverage": 1.0,
+                    "top3_target_coverage": 1.0,
+                    "top3_image_area_fraction": 0.20,
+                }
+            }
+        },
+        {
+            "crop_audits": {
+                "0.20": {
+                    "top1_target_coverage": 0.0,
+                    "top3_target_coverage": 0.5,
+                    "top3_image_area_fraction": 0.40,
+                }
+            }
+        },
+    ]
+
+    summary = summarize_crops(cases, (0.20,))
+    row = summary["by_crop_fraction"]["0.20"]
+
+    assert row["query_count"] == 2
+    assert row["top1_target_coverage90"] == 0.5
+    assert row["top3_target_coverage50"] == 1.0
+    assert row["mean_top3_image_area_fraction"] == pytest.approx(0.3)

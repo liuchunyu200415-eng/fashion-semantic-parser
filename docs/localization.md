@@ -2244,3 +2244,21 @@ GT-dependent oracle restorations per query and is not a valid production latency
 measurement. The model generalizes across held-out images, but remains far below
 PRD acceptance; full-image scaling is now frozen and the next architecture must
 improve query-to-location ranking through local re-encoding.
+
+The held-out diagnostic confirms that spatial (`50.55%` Recall50) and attribute
+queries (`49.26%`) are not the primary failure. Sleeve reached `88.42%` Recall50
+with a `0.97x` median predicted-to-target area ratio. In contrast, rivet,
+ruffle, zipper, epaulette, and neckline reached `0%`, `0%`, `0%`, `0%`, and
+`2.72%`; their median area ratios were `235.01x`, `10.53x`, `9.67x`, `10.49x`,
+and `6.27x`. Relation queries reached `38.24%`, so language-relation improvement
+remains useful but cannot explain the severe small-part failures.
+
+Before implementing or training local re-encoding, run the category-free coarse
+crop audit in `scripts/audit_dense_coarse_crop_coverage.py`. It selects up to
+three distinct peaks from the complete-query probability grid and forms fixed
+image-relative crops; generation receives neither part labels nor GT. GT is used
+only afterward to report target-pixel coverage at `50%`/`90%` and crop-union
+image area. Crop fractions `0.20`, `0.30`, and `0.40` measure the trade-off
+between recovering small targets and approaching a trivial full-image crop. A
+coarse-to-fine implementation is justified only if one or three query-driven
+crops cover at least `90%` of targets at a materially smaller image-area cost.

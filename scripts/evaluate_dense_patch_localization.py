@@ -1,7 +1,6 @@
 """Evaluate supervised full-query DINOv2 patch Masks on complete images."""
 
 import argparse
-import math
 import sys
 import time
 from collections import defaultdict
@@ -86,6 +85,9 @@ def main() -> None:
         oracle_area_topk_masks,
         topk_patch_masks,
     )
+    from fashion_semantic_parser.service.dense_patch_inference import (
+        predict_patch_outputs,
+    )
     from fashion_semantic_parser.service.dense_patch_metrics import write_dense_json
     from fashion_semantic_parser.service.dense_region_localization import (
         binary_mask_iou,
@@ -159,7 +161,7 @@ def main() -> None:
         image_encoder.synchronize()
         encode_seconds = time.perf_counter() - image_started
         scoring_started = time.perf_counter()
-        probabilities, predicted_area_fractions = _predict_patch_outputs(
+        probabilities, predicted_area_fractions = predict_patch_outputs(
             checkpoint,
             dense.features,
             projected_text[item_indices],
@@ -358,108 +360,6 @@ def _summarize(
         }
     result["image_count"] = len(image_rows)
     return result
-
-
-def _predict_patch_outputs(
-    checkpoint: object,
-    patch_features: np.ndarray,
-    projected_text: np.ndarray,
-    device: str,
-) -> tuple[np.ndarray, np.ndarray | None]:
-    """Dispatch frozen patch probabilities and optional predicted target areas."""
-    from fashion_semantic_parser.service.dense_patch_alignment import (
-        DensePatchAlignmentCheckpoint,
-    )
-
-    typed_checkpoint = cast(DensePatchAlignmentCheckpoint, checkpoint)
-    if typed_checkpoint.model_type == "cosine_calibration":
-        from fashion_semantic_parser.service.dense_region_localization import (
-            calibrated_dense_probabilities,
-            dense_similarity_scores,
-        )
-
-        similarities = dense_similarity_scores(patch_features, projected_text)
-        calibrated: np.ndarray = calibrated_dense_probabilities(
-            similarities,
-            logit_scale=typed_checkpoint.logit_scale,
-            logit_bias=typed_checkpoint.logit_bias,
-        )
-        return calibrated, None
-    if (
-        typed_checkpoint.model_type
-        not in {"multiscale_decoder", "multiscale_area_decoder"}
-        or typed_checkpoint.decoder is None
-    ):
-        raise ValueError("Dense checkpoint model type and decoder are inconsistent.")
-    try:
-        import torch  # type: ignore[import-not-found]
-    except ImportError as error:
-        raise RuntimeError("PyTorch is required for multiscale evaluation.") from error
-    from fashion_semantic_parser.service.dense_patch_decoder import (
-        multiscale_patch_decoder_logits,
-    )
-
-    height, width, feature_dimension = patch_features.shape
-    query_count = len(projected_text)
-    flattened = np.asarray(
-        patch_features.reshape(1, height * width, feature_dimension),
-        dtype=np.float32,
-    )
-    patch_tensor = (
-        torch.from_numpy(flattened)
-        .to(device=device)
-        .expand(
-            query_count,
-            -1,
-            -1,
-        )
-    )
-    text_tensor = torch.from_numpy(projected_text).to(device=device)
-    log_scale = torch.tensor(
-        math.log(typed_checkpoint.logit_scale),
-        dtype=torch.float32,
-        device=device,
-    )
-    logit_bias = torch.tensor(
-        typed_checkpoint.logit_bias,
-        dtype=torch.float32,
-        device=device,
-    )
-    with torch.inference_mode():
-        logits = multiscale_patch_decoder_logits(
-            typed_checkpoint.decoder,
-            patch_tensor,
-            text_tensor,
-            (
-                log_scale,
-                logit_bias,
-                typed_checkpoint.dense_settings.max_logit_scale,
-            ),
-        )
-        probabilities = torch.sigmoid(logits).reshape(query_count, height, width)
-        predicted_area_fractions = None
-        if typed_checkpoint.model_type == "multiscale_area_decoder":
-            if typed_checkpoint.area_predictor is None:
-                raise ValueError("Area checkpoint is missing its area predictor.")
-            from fashion_semantic_parser.service.dense_patch_area import (
-                query_area_logits,
-            )
-
-            area_logits = query_area_logits(
-                typed_checkpoint.area_predictor,
-                patch_tensor,
-                text_tensor,
-            )
-            predicted_area_fractions = np.asarray(
-                torch.sigmoid(area_logits).cpu().numpy(),
-                dtype=np.float32,
-            )
-        elif typed_checkpoint.area_predictor is not None:
-            raise ValueError("Non-area checkpoint unexpectedly has an area predictor.")
-    return (
-        np.asarray(probabilities.cpu().numpy(), dtype=np.float32),
-        predicted_area_fractions,
-    )
 
 
 def _score_cases(cases: list[dict[str, object]]) -> dict[str, object]:
