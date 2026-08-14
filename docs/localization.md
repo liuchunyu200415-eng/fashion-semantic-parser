@@ -2491,3 +2491,62 @@ the denominator. It reports overall accuracy and separate primary-dimension,
 all-dimension, novelty, language, and target-label breakdowns. The older
 `evaluate_referring_localization.py` remains a feasibility diagnostic and must
 not be used for the final `92%` claim.
+
+### Full Fashionpedia and LLM Paraphrase Expansion
+
+Build the deterministic, image-complete Fashionpedia source index before any
+language-model rewrite. Omitting `--limit` processes the full selected split:
+
+```bash
+python -u scripts/prepare_referring_training_fashionpedia.py \
+  --split train \
+  --progress-every 1000
+```
+
+Then export vendor-neutral rewrite jobs. This command does not contact an
+external model or upload any image/Mask data:
+
+```bash
+python scripts/export_referring_paraphrase_jobs.py \
+  --paraphrases-per-sample 3
+```
+
+Each JSONL job contains the source query, language, dimensions, target label,
+target count, a referent-preserving instruction, and a SHA-256 fingerprint of
+the immutable source query plus its image and target annotations. A model or
+batch service must return JSONL records with this contract:
+
+```json
+{
+  "schema_version": 1,
+  "source_sample_id": "fashionpedia-train-...",
+  "source_fingerprint": "64-lowercase-hex-characters",
+  "language": "zh",
+  "generator_model": "provider/model/revision",
+  "review_status": "reviewed",
+  "reviewed_by": "reviewer-id",
+  "reviewed_at": "2026-08-14T12:00:00+08:00",
+  "paraphrases": ["改写一", "改写二", "改写三"]
+}
+```
+
+Merge reviewed results and enforce the mentor-directed 100,000-query floor:
+
+```bash
+python scripts/merge_referring_paraphrases.py \
+  --results outputs/localization/referring_training/paraphrase_results.jsonl
+```
+
+The merge changes only query text and augmentation provenance. It reuses the
+source image, language, dimensions, target label, target boxes, annotation IDs,
+and official Fashionpedia Mask references. Unknown source IDs, changed source
+fingerprints, language drift, duplicate rewrites, and unreviewed results fail
+closed. `--allow-unreviewed` is an explicit diagnostic override and the summary
+still reports those rows separately. The default output is removed if the
+combined dataset remains below 100,000 records.
+
+The summary reports template versus LLM counts, language and query-dimension
+counts, category balance, and dedicated counts for `zipper`, `rivet`,
+`neckline`, and `pocket`. Reaching 100,000 records is only a data-scale gate;
+it does not establish semantic rewrite quality, balanced weak-part coverage,
+Mask accuracy, or PRD compliance. Review a stratified sample before training.

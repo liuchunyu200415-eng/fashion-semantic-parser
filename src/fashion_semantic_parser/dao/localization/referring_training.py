@@ -33,6 +33,7 @@ from fashion_semantic_parser.models.localization import LocalizationBoundingBox
 
 TrainingLanguage = Literal["zh", "en"]
 TrainingSplit = Literal["train", "validation"]
+TrainingAugmentationMethod = Literal["template", "llm_paraphrase"]
 
 
 class ReferringTrainingTarget(BaseModel):
@@ -70,8 +71,20 @@ class ReferringTrainingSample(BaseModel):
     template_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")
     source_attribute_ids: list[int] = Field(default_factory=list)
     reference_category: str | None = None
+    augmentation_method: TrainingAugmentationMethod = "template"
+    source_sample_id: str | None = Field(
+        default=None,
+        pattern=r"^[a-z0-9][a-z0-9_-]*$",
+    )
+    generator_model: str | None = None
 
-    @field_validator("image_path", "query", "target_label", "reference_category")
+    @field_validator(
+        "image_path",
+        "query",
+        "target_label",
+        "reference_category",
+        "generator_model",
+    )
     @classmethod
     def normalize_text(cls, value: str | None) -> str | None:
         """Normalize required and optional human-readable fields."""
@@ -99,6 +112,15 @@ class ReferringTrainingSample(BaseModel):
             raise ValueError("Every target label must match target_label.")
         if len(self.source_attribute_ids) != len(set(self.source_attribute_ids)):
             raise ValueError("source_attribute_ids cannot contain duplicates.")
+        if self.augmentation_method == "llm_paraphrase":
+            if self.source_sample_id is None or self.generator_model is None:
+                raise ValueError(
+                    "LLM paraphrases require source_sample_id and generator_model."
+                )
+        elif self.source_sample_id is not None or self.generator_model is not None:
+            raise ValueError(
+                "Template samples cannot define LLM paraphrase provenance."
+            )
         return self
 
 
