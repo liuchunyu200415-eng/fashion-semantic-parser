@@ -2408,3 +2408,21 @@ newer CUDA 12.9/cuDNN 9 stack even though the TensorRT module itself remains
 dependencies, then restores the CUDA 12.1/cuDNN 8.9 package versions pinned by
 PyTorch 2.1.2. The audit runs a real CUDA tensor operation and rejects any
 remaining package-version drift before model export.
+
+### DINOv2 ONNX and TensorRT Parity Gate
+
+After the deployment environment passes, export only the frozen DINOv2
+patch-token boundary first:
+
+```bash
+python scripts/export_dinov2_onnx.py
+```
+
+The artifact fixes the spatial input at `728x728`, retains a dynamic batch range
+of `1-3` for the full image and three local crops, uses ONNX opset `17`, and
+returns normalized `384`-dimensional patch tokens. Validation compares batch 1
+and batch 3 against PyTorch, separately checks CUDA EP FP32 and TensorRT EP FP16,
+and parses the ORT profile to prove that TensorRT actually executed a graph
+partition. Merely listing `TensorrtExecutionProvider` is not a pass. This gate
+does not yet replace the PyTorch service and does not claim complete-request
+accuracy or latency compliance.
