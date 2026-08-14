@@ -2384,6 +2384,19 @@ python scripts/check_prd_312_deployment_env.py
 ```
 
 The audit requires Python `3.10.12`, an active RTX 3090, ONNX Runtime `1.17.x`
-with `CUDAExecutionProvider`, and TensorRT `8.6.1.x`. It checks only environment
-readiness and cannot establish engine conversion, numerical parity, `92%`,
-`30 ms`, or `60 QPS` compliance.
+with both `CUDAExecutionProvider` and `TensorrtExecutionProvider`, and TensorRT
+`8.6.1.x` with a working native Builder. It checks only environment readiness
+and cannot establish engine conversion, numerical parity, `92%`, `30 ms`, or
+`60 QPS` compliance.
+
+For the isolated AutoDL environment, install the exact CUDA 12 packages with:
+
+```bash
+bash scripts/setup_prd_312_deployment_env.sh
+```
+
+The setup pins ONNX Runtime GPU `1.17.1` from Microsoft's CUDA 12 feed and
+TensorRT `8.6.1.post1` from NVIDIA's package index. Every pip operation disables
+the download cache because the AutoDL system disk is constrained. The final
+step runs the strict audit above and fails if pip resolved a CPU, CUDA 11, or
+non-8.6.1 runtime.

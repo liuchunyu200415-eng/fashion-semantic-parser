@@ -31,7 +31,7 @@ def build_report() -> dict[str, object]:
     python_version = platform.python_version()
     torch_status = _torch_status()
     onnxruntime_status = _onnxruntime_status()
-    tensorrt_status = _module_status("tensorrt")
+    tensorrt_status = _tensorrt_status()
     gpu_name = torch_status.get("device_name")
     providers = onnxruntime_status.get("available_providers")
     checks = {
@@ -44,10 +44,13 @@ def build_report() -> dict[str, object]:
         ),
         "onnxruntime_cuda_provider": isinstance(providers, list)
         and "CUDAExecutionProvider" in providers,
+        "onnxruntime_tensorrt_provider": isinstance(providers, list)
+        and "TensorrtExecutionProvider" in providers,
         "tensorrt_8_6_1": _version_in_series(
             tensorrt_status.get("version"),
             REQUIRED_TENSORRT_SERIES,
         ),
+        "tensorrt_builder_ready": tensorrt_status.get("builder_ready") is True,
     }
     return {
         "python": {"required": REQUIRED_PYTHON, "actual": python_version},
@@ -109,16 +112,23 @@ def _onnxruntime_status() -> dict[str, object]:
     }
 
 
-def _module_status(module_name: str) -> dict[str, object]:
-    """Report one importable deployment module and its version."""
+def _tensorrt_status() -> dict[str, object]:
+    """Report the native TensorRT Python runtime and Builder state."""
     try:
-        module = importlib.import_module(module_name)
+        module = importlib.import_module("tensorrt")
     except (ImportError, OSError) as error:
         return {"installed": False, "error": str(error)}
-    return {
+    result: dict[str, object] = {
         "installed": True,
         "version": getattr(module, "__version__", None),
     }
+    try:
+        logger = module.Logger(module.Logger.ERROR)
+        result["builder_ready"] = module.Builder(logger) is not None
+    except (AttributeError, RuntimeError) as error:
+        result["builder_ready"] = False
+        result["builder_error"] = str(error)
+    return result
 
 
 def _version_in_series(value: object, required_series: str) -> bool:
