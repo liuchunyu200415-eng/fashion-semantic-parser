@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "status": "draft",
+  "result_policy": "single_query_top1",
+  "primary_metric": "mask_iou",
+  "success_comparison": "strictly_greater_than",
+  "mask_iou_threshold": 0.5,
+  "required_accuracy": 0.92,
+  "multi_target_policy": null,
+  "required_case_count": null,
+  "primary_dimension_case_counts": {},
+  "novelty_case_counts": {},
+  "language_case_counts": {},
+  "product_owner_approval": null,
+  "project_owner_approval": null,
+  "approved_at": null
+}

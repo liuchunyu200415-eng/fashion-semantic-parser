@@ -2444,3 +2444,50 @@ and parses the ORT profile to prove that TensorRT actually executed a graph
 partition. Merely listing `TensorrtExecutionProvider` is not a pass. This gate
 does not yet replace the PyTorch service and does not claim complete-request
 accuracy or latency compliance.
+
+### Locked PRD 3.1.2 Accuracy Contract
+
+Final accuracy uses a separate acceptance scope from the earlier feasibility,
+candidate-ranking, Box, Top-k, and oracle diagnostics. The fixed query-level
+definition is:
+
+```text
+one complete natural-language query -> first returned region only
+success = MaskIoU(top1_mask, query_target_mask) > 0.50
+accuracy = successful_query_count / all_reviewed_query_count
+required accuracy = 0.92
+```
+
+For a query that refers to multiple target instances, the product and project
+owners must choose either one query-level union Mask or exclusion from the
+acceptance set. The implementation must not choose that policy implicitly.
+Likewise, the mutually exclusive primary counts for basic, spatial, attribute,
+and relation queries, plus the orthogonal novelty and language counts, must be
+approved before model optimization is judged against `92%`.
+
+The versioned draft is
+`configs/prd_312_acceptance_contract.json`. Audit it with:
+
+```bash
+python scripts/check_prd_312_acceptance_contract.py
+```
+
+Exit code `1` is expected while proportions, multi-target handling, or either
+owner approval remains unresolved. Setting `status` to `locked` without filling
+every decision is rejected by schema validation. Once approved, embed the
+locked contract in a reviewed `Prd312AcceptanceManifest` and evaluate saved
+responses with:
+
+```bash
+python scripts/evaluate_prd_312_acceptance.py \
+  --manifest data/benchmarks/localization/prd_312_acceptance_v1.json \
+  --responses-dir outputs/localization/prd_312_acceptance/responses
+```
+
+The evaluator requires exact response coverage, scores only `regions[0]`,
+unions multi-instance GT only when the locked policy permits it, treats exactly
+`0.50` IoU as a failure, and retains empty predictions and inference errors in
+the denominator. It reports overall accuracy and separate primary-dimension,
+all-dimension, novelty, language, and target-label breakdowns. The older
+`evaluate_referring_localization.py` remains a feasibility diagnostic and must
+not be used for the final `92%` claim.

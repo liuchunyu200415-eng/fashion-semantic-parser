@@ -1,0 +1,204 @@
+"""Tests for the locked PRD 3.1.2 query-level acceptance contract."""
+
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+from pydantic import ValidationError
+
+from fashion_semantic_parser.dao.localization.prd_312_acceptance import (
+    Prd312AcceptanceContract,
+    Prd312AcceptanceManifest,
+    acceptance_contract_blockers,
+)
+from scripts.evaluate_prd_312_acceptance import (
+    _binary_mask_iou,
+    _passes_mask_iou,
+    build_acceptance_report,
+    evaluate_acceptance_case,
+)
+
+
+def _locked_contract() -> dict[str, object]:
+    """Return one minimal complete product-approved contract payload."""
+    return {
+        "schema_version": 1,
+        "status": "locked",
+        "result_policy": "single_query_top1",
+        "primary_metric": "mask_iou",
+        "success_comparison": "strictly_greater_than",
+        "mask_iou_threshold": 0.5,
+        "required_accuracy": 0.92,
+        "multi_target_policy": "union_mask",
+        "required_case_count": 4,
+        "primary_dimension_case_counts": {
+            "basic": 1,
+            "spatial": 1,
+            "attribute": 1,
+            "relation": 1,
+        },
+        "novelty_case_counts": {"seen": 2, "novel_composition": 2},
+        "language_case_counts": {"zh": 2, "en": 2},
+        "product_owner_approval": "product-owner",
+        "project_owner_approval": "project-owner",
+        "approved_at": "2026-08-14T12:00:00+08:00",
+    }
+
+
+def _manifest() -> Prd312AcceptanceManifest:
+    """Build a four-axis locked manifest with deterministic square Masks."""
+    cases = []
+    dimensions = ("basic", "spatial", "attribute", "relation")
+    for index, primary_dimension in enumerate(dimensions):
+        case_dimensions = ["basic"]
+        if primary_dimension != "basic":
+            case_dimensions.append(primary_dimension)
+        reference_frame = None
+        if primary_dimension == "spatial":
+            reference_frame = "image"
+        cases.append(
+            {
+                "id": f"case_{index}",
+                "image_path": f"data/image_{index}.jpg",
+                "query": f"query {index}",
+                "language": "zh" if index < 2 else "en",
+                "primary_dimension": primary_dimension,
+                "dimensions": case_dimensions,
+                "novelty": "seen" if index % 2 == 0 else "novel_composition",
+                "reference_frame": reference_frame,
+                "target_label": "sleeve",
+                "targets": [{"segmentation": [[1, 1, 4, 1, 4, 4, 1, 4]]}],
+            }
+        )
+    return Prd312AcceptanceManifest.model_validate(
+        {
+            "schema_version": 1,
+            "name": "prd_312_acceptance_v1",
+            "contract": _locked_contract(),
+            "cases": cases,
+        }
+    )
+
+
+def test_draft_contract_reports_every_external_decision_blocker() -> None:
+    """A code-ready draft must not be mistaken for a locked PRD benchmark."""
+    contract = Prd312AcceptanceContract()
+
+    blockers = acceptance_contract_blockers(contract)
+
+    assert "status is not locked" in blockers
+    assert "multi_target_policy is not confirmed" in blockers
+    assert "all four primary query-type counts are not confirmed" in blockers
+    assert "product owner approval is missing" in blockers
+    assert "project owner approval is missing" in blockers
+
+
+def test_locked_contract_requires_every_primary_query_type() -> None:
+    """A locked mix cannot silently omit a mentor-required query dimension."""
+    payload = _locked_contract()
+    payload["primary_dimension_case_counts"] = {
+        "basic": 2,
+        "spatial": 1,
+        "attribute": 1,
+        "relation": 0,
+    }
+
+    with pytest.raises(ValidationError, match="non-zero coverage"):
+        Prd312AcceptanceContract.model_validate(payload)
+
+
+def test_manifest_enforces_locked_composition_counts() -> None:
+    """The actual cases must exactly match the approved mutually exclusive mix."""
+    manifest = _manifest()
+    assert len(manifest.cases) == 4
+
+    payload = manifest.model_dump(mode="json")
+    payload["cases"][0]["language"] = "en"
+    with pytest.raises(ValidationError, match="language counts differ"):
+        Prd312AcceptanceManifest.model_validate(payload)
+
+
+def test_iou_boundary_is_strictly_greater_than_half() -> None:
+    """Exactly 0.50 fails while any finite value above it succeeds."""
+    target = np.asarray([[True, True], [False, False]])
+    prediction = np.asarray([[True, False], [False, False]])
+    iou = _binary_mask_iou(prediction, target)
+
+    assert iou == 0.5
+    assert _passes_mask_iou(iou, 0.5) is False
+    assert _passes_mask_iou(0.500001, 0.5) is True
+
+
+def test_acceptance_uses_only_top1_and_unions_multi_target_gt() -> None:
+    """A correct second candidate cannot rescue Top-1; GT instances form one Mask."""
+    case = SimpleNamespace(
+        id="two_sleeves",
+        query="这件衣服的袖子",
+        language="zh",
+        primary_dimension="basic",
+        dimensions=["basic"],
+        novelty="seen",
+        reference_frame=None,
+        target_label="sleeve",
+        targets=[
+            SimpleNamespace(segmentation=[[1, 1, 3, 1, 3, 3, 1, 3]]),
+            SimpleNamespace(segmentation=[[6, 1, 8, 1, 8, 3, 6, 3]]),
+        ],
+    )
+    correct_union = [
+        [1, 1, 3, 1, 3, 3, 1, 3],
+        [6, 1, 8, 1, 8, 3, 6, 3],
+    ]
+    row = evaluate_acceptance_case(
+        case=case,
+        response={
+            "case_id": case.id,
+            "query": case.query,
+            "regions": [
+                {"mask": [[1, 6, 3, 6, 3, 8, 1, 8]]},
+                {"mask": correct_union},
+            ],
+        },
+        image_shape=(10, 10),
+    )
+    exact = evaluate_acceptance_case(
+        case=case,
+        response={
+            "case_id": case.id,
+            "query": case.query,
+            "regions": [{"mask": correct_union}],
+        },
+        image_shape=(10, 10),
+    )
+
+    assert row["prediction_count"] == 2
+    assert row["query_passed"] is False
+    assert exact["top1_mask_iou_percent"] == 100.0
+    assert exact["query_passed"] is True
+
+
+def test_inference_error_remains_a_failed_query_in_accuracy_denominator() -> None:
+    """Runtime failures are scored as misses instead of disappearing from accuracy."""
+    case = _manifest().cases[0]
+    row = evaluate_acceptance_case(
+        case=case,
+        response={
+            "case_id": case.id,
+            "query": case.query,
+            "regions": [],
+            "error": {"type": "RuntimeError", "message": "failed"},
+        },
+        image_shape=(10, 10),
+    )
+
+    report = build_acceptance_report(
+        manifest_path="data/acceptance.json",
+        manifest=_manifest(),
+        responses_dir="outputs/responses",
+        rows=[row],
+    )
+
+    assert row["query_passed"] is False
+    assert report["overall"]["query_count"] == 1
+    assert report["overall"]["query_accuracy_percent"] == 0.0
+    assert report["prd_accuracy_passed"] is False
