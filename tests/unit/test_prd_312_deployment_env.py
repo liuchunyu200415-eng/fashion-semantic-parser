@@ -22,6 +22,7 @@ def test_report_requires_exact_stack_and_active_gpu(monkeypatch) -> None:
         lambda: {
             "installed": True,
             "cuda_available": True,
+            "cuda_operation_ready": True,
             "device_name": "NVIDIA GeForce RTX 3090",
         },
     )
@@ -47,6 +48,11 @@ def test_report_requires_exact_stack_and_active_gpu(monkeypatch) -> None:
             "builder_ready": True,
         },
     )
+    monkeypatch.setattr(
+        check_prd_312_deployment_env,
+        "_cuda_package_status",
+        lambda: {"all_exact": True},
+    )
 
     report = check_prd_312_deployment_env.build_report()
 
@@ -71,6 +77,7 @@ def test_report_rejects_cpu_only_onnxruntime(monkeypatch) -> None:
         lambda: {
             "installed": True,
             "cuda_available": True,
+            "cuda_operation_ready": True,
             "device_name": "NVIDIA GeForce RTX 3090",
         },
     )
@@ -91,6 +98,11 @@ def test_report_rejects_cpu_only_onnxruntime(monkeypatch) -> None:
             "version": "8.6.1.6",
             "builder_ready": True,
         },
+    )
+    monkeypatch.setattr(
+        check_prd_312_deployment_env,
+        "_cuda_package_status",
+        lambda: {"all_exact": True},
     )
 
     report = check_prd_312_deployment_env.build_report()
@@ -116,4 +128,5 @@ def test_setup_script_pins_cuda12_runtimes_without_cache() -> None:
     assert "onnxruntime-cuda-12" in content
     assert "onnxruntime-gpu==1.17.1" in content
     assert "tensorrt==8.6.1.post1" in content
-    assert content.count("--no-cache-dir") == 3
+    assert "nvidia-cudnn-cu12==8.9.2.26" in content
+    assert content.count("--no-cache-dir") == 4

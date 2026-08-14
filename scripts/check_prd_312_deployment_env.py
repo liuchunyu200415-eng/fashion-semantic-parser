@@ -3,11 +3,18 @@
 import importlib
 import json
 import platform
+from importlib import metadata
 
 REQUIRED_PYTHON = "3.10.12"
 REQUIRED_ONNXRUNTIME_SERIES = "1.17"
 REQUIRED_TENSORRT_SERIES = "8.6.1"
 REQUIRED_GPU_NAME = "RTX 3090"
+REQUIRED_CUDA_PACKAGES = {
+    "nvidia-cublas-cu12": "12.1.3.1",
+    "nvidia-cuda-nvrtc-cu12": "12.1.105",
+    "nvidia-cuda-runtime-cu12": "12.1.105",
+    "nvidia-cudnn-cu12": "8.9.2.26",
+}
 
 
 def main() -> None:
@@ -32,11 +39,13 @@ def build_report() -> dict[str, object]:
     torch_status = _torch_status()
     onnxruntime_status = _onnxruntime_status()
     tensorrt_status = _tensorrt_status()
+    cuda_packages = _cuda_package_status()
     gpu_name = torch_status.get("device_name")
     providers = onnxruntime_status.get("available_providers")
     checks = {
         "python_exact": python_version == REQUIRED_PYTHON,
         "cuda_available": torch_status.get("cuda_available") is True,
+        "cuda_operation_ready": torch_status.get("cuda_operation_ready") is True,
         "rtx_3090_device": isinstance(gpu_name, str) and REQUIRED_GPU_NAME in gpu_name,
         "onnxruntime_1_17": _version_in_series(
             onnxruntime_status.get("version"),
@@ -51,6 +60,7 @@ def build_report() -> dict[str, object]:
             REQUIRED_TENSORRT_SERIES,
         ),
         "tensorrt_builder_ready": tensorrt_status.get("builder_ready") is True,
+        "pytorch_cuda_packages_exact": cuda_packages.get("all_exact") is True,
     }
     return {
         "python": {"required": REQUIRED_PYTHON, "actual": python_version},
@@ -63,6 +73,7 @@ def build_report() -> dict[str, object]:
             "required_series": REQUIRED_TENSORRT_SERIES,
             **tensorrt_status,
         },
+        "pytorch_cuda_packages": cuda_packages,
         "checks": checks,
         "deployment_environment_ready": all(checks.values()),
         "scope": (
@@ -87,6 +98,14 @@ def _torch_status() -> dict[str, object]:
     }
     if cuda_available:
         result["device_name"] = torch.cuda.get_device_name(0)
+        try:
+            value = torch.ones(1, device="cuda", dtype=torch.float16) + 1
+            torch.cuda.synchronize()
+            result["cuda_operation_ready"] = float(value.item()) == 2.0
+            result["cudnn_version"] = torch.backends.cudnn.version()
+        except RuntimeError as error:
+            result["cuda_operation_ready"] = False
+            result["cuda_operation_error"] = str(error)
     return result
 
 
@@ -129,6 +148,28 @@ def _tensorrt_status() -> dict[str, object]:
         result["builder_ready"] = False
         result["builder_error"] = str(error)
     return result
+
+
+def _cuda_package_status() -> dict[str, object]:
+    """Report exact CUDA Python packages required by PyTorch 2.1.2 cu121."""
+    packages: dict[str, object] = {}
+    for package_name, required_version in REQUIRED_CUDA_PACKAGES.items():
+        try:
+            actual_version = metadata.version(package_name)
+        except metadata.PackageNotFoundError:
+            actual_version = None
+        packages[package_name] = {
+            "required": required_version,
+            "actual": actual_version,
+            "exact": actual_version == required_version,
+        }
+    return {
+        "packages": packages,
+        "all_exact": all(
+            isinstance(status, dict) and status.get("exact") is True
+            for status in packages.values()
+        ),
+    }
 
 
 def _version_in_series(value: object, required_series: str) -> bool:

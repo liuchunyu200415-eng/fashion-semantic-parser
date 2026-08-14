@@ -2400,3 +2400,11 @@ TensorRT `8.6.1.post1` from NVIDIA's package index. Every pip operation disables
 the download cache because the AutoDL system disk is constrained. The final
 step runs the strict audit above and fails if pip resolved a CPU, CUDA 11, or
 non-8.6.1 runtime.
+
+The historical TensorRT metapackage has unbounded CUDA-library dependencies on
+the current package index. Installing it with dependency resolution can pull a
+newer CUDA 12.9/cuDNN 9 stack even though the TensorRT module itself remains
+8.6.1. The setup therefore installs the three TensorRT 8.6.1 modules without
+dependencies, then restores the CUDA 12.1/cuDNN 8.9 package versions pinned by
+PyTorch 2.1.2. The audit runs a real CUDA tensor operation and rejects any
+remaining package-version drift before model export.
