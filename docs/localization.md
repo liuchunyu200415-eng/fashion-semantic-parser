@@ -2348,6 +2348,24 @@ measured Fashionpedia scores, establish the PRD `92%` metric, or establish the
 complete-request `30 ms` requirement. API acceptance, independent manual
 accuracy evaluation, and latency benchmarking remain separate gates.
 
+Render one actual complete-query result as an auditable Original / Localized
+comparison. This command runs the deployed backend rather than drawing a
+hand-authored example:
+
+```bash
+python scripts/visualize_localization_prediction.py \
+  data/raw/fashionpedia/test/0229bef01efc25f915374d55f59cbfdd.jpg \
+  --query "the sleeve on the left side of the garment" \
+  --output outputs/localization/dense_local_visual/left_sleeve.png \
+  --json-output outputs/localization/dense_local_visual/left_sleeve.json
+```
+
+The left panel preserves the source image. The right panel overlays every
+returned Mask polygon and the independently sourced coarse Box. The saved JSON
+retains the complete query, confidence, Mask source, and Box source. A visible
+region proves only that this request returned a spatial result; success against
+the requested target still requires GT comparison or manual review.
+
 The first complete-service latency benchmark passed functional inference but
 failed the PRD performance target. Across collar, sleeve, and zipper queries,
 warm mean latency was `105.87-112.77 ms` and P95 was `107.33-115.85 ms`, versus
