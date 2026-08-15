@@ -1,7 +1,7 @@
 """Export vendor-neutral LLM rewrite jobs from a referring JSONL index."""
 
 # Direct execution adds ``src`` before importing the local package.
-# pylint: disable=import-outside-toplevel
+# pylint: disable=import-outside-toplevel,duplicate-code
 
 import argparse
 import sys
@@ -38,6 +38,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--paraphrases-per-sample", type=int, default=3)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--selection-policy",
+        choices=("prefix", "weak_complex_balanced"),
+        default="prefix",
+        help=(
+            "Use weak_complex_balanced to prioritize weak labels and "
+            "spatial/attribute/relation expressions."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -56,6 +65,7 @@ def main() -> None:
         output_path=resolve_project_path(args.output),
         paraphrases_per_sample=args.paraphrases_per_sample,
         limit=args.limit,
+        selection_policy=args.selection_policy,
     )
     print(f"paraphrase_job_count: {count}")
     print(f"output_path: {resolve_project_path(args.output)}")

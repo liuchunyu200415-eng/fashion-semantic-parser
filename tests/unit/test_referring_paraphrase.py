@@ -41,6 +41,37 @@ def test_export_jobs_records_referent_fingerprint_and_constraints(
     assert "target count 1" in job["instruction"]
 
 
+def test_targeted_export_prioritizes_weak_modifier_queries(tmp_path: Path) -> None:
+    """A bounded rewrite batch starts with weak labels plus rich modifiers."""
+    rows = _base_samples()
+    weak_spatial = dict(rows[1])
+    weak_spatial.update(
+        {
+            "id": "fashionpedia-train-20-zipper-spatial-en-3",
+            "query": "the zipper on the lower side of the garment",
+            "dimensions": ["basic", "spatial"],
+            "reference_frame": "image",
+            "template_id": "spatial-en",
+        }
+    )
+    rows.append(weak_spatial)
+    base_path = tmp_path / "base.jsonl"
+    _write_jsonl(base_path, rows)
+    job_path = tmp_path / "jobs.jsonl"
+
+    count = export_referring_paraphrase_jobs(
+        index_path=base_path,
+        output_path=job_path,
+        limit=1,
+        selection_policy="weak_complex_balanced",
+    )
+    job = _read_jsonl(job_path)[0]
+
+    assert count == 1
+    assert job["source_sample_id"] == weak_spatial["id"]
+    assert job["dimensions"] == ["basic", "spatial"]
+
+
 def test_merge_reviewed_paraphrases_preserves_source_targets_and_provenance(
     tmp_path: Path,
 ) -> None:

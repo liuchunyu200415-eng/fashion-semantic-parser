@@ -2507,9 +2507,26 @@ Then export vendor-neutral rewrite jobs. This command does not contact an
 external model or upload any image/Mask data:
 
 ```bash
+python scripts/select_balanced_referring_training.py
+
 python scripts/export_referring_paraphrase_jobs.py \
+  --index \
+    data/processed/autodl/localization/fashionpedia_referring_train_balanced_100k.jsonl \
+  --selection-policy weak_complex_balanced \
+  --limit 20000 \
   --paraphrases-per-sample 3
 ```
+
+The first command selects exactly 100,000 records by deterministic water-filled
+strata over target label, language, and the complete modifier signature. Within
+each stratum it uses a stable SHA-256 rank instead of an image prefix, then
+restores original source order so image-complete loaders remain valid. The
+summary exposes every category, language, dimension, stratum, weak-part, image,
+and target-reference count. The second command prioritizes weak-part queries
+(`zipper`, `rivet`, `neckline`, and `pocket`) that also contain spatial,
+attribute, or relation modifiers, then balances the bounded job batch within
+each priority tier. `--limit 20000` is a reviewable starting batch, not an
+acceptance constant.
 
 Each JSONL job contains the source query, language, dimensions, target label,
 target count, a referent-preserving instruction, and a SHA-256 fingerprint of

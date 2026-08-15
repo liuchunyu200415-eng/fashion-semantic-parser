@@ -9,6 +9,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from fashion_semantic_parser.dao.localization.referring_sampling import (
+    select_targeted_paraphrase_samples,
+)
 from fashion_semantic_parser.dao.localization.referring_smoke import (
     ReferringQueryDimension,
 )
@@ -109,14 +112,19 @@ def export_referring_paraphrase_jobs(
     output_path: Path,
     paraphrases_per_sample: int = 3,
     limit: int | None = None,
+    selection_policy: Literal["prefix", "weak_complex_balanced"] = "prefix",
 ) -> int:
     """Write atomic JSONL jobs whose target identity cannot be rewritten."""
     if not 1 <= paraphrases_per_sample <= 20:
         raise ValueError("paraphrases_per_sample must be between 1 and 20.")
     if limit is not None and limit < 1:
         raise ValueError("limit must be at least one when provided.")
+    if selection_policy not in ("prefix", "weak_complex_balanced"):
+        raise ValueError(f"Unsupported paraphrase selection policy: {selection_policy}")
     samples = _read_training_samples(index_path)
-    if limit is not None:
+    if selection_policy == "weak_complex_balanced":
+        samples = select_targeted_paraphrase_samples(samples, limit=limit)
+    elif selection_policy == "prefix" and limit is not None:
         samples = samples[:limit]
     jobs = [
         ReferringParaphraseJob(
