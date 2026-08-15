@@ -216,7 +216,7 @@ def _recommendations(
         )
     if not mask2former_status.get("installed"):
         recommendations.append(
-            "Clone Mask2Former under external/Mask2Former and add it to PYTHONPATH."
+            "Clone Mask2Former under external/Mask2Former or install it."
         )
 
     train_image_count = dataset_status.get("train", {}).get("image_count")

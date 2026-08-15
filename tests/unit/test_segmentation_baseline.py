@@ -1006,6 +1006,27 @@ def test_mask2former_class_loss_weights_preserve_other_and_no_object_weights() -
     assert weights.values == [1.0, 2.5, 3.0, 0.1]
 
 
+def test_local_mask2former_checkout_is_appended_after_site_packages(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    """The local datasets folder must not shadow Hugging Face datasets."""
+    repository = tmp_path / "Mask2Former"
+    repository.mkdir()
+    search_path = ["project-src", "site-packages"]
+    monkeypatch.setattr(segmentation_module.sys, "path", search_path)
+    monkeypatch.setattr(
+        segmentation_module,
+        "resolve_project_path",
+        lambda _: repository,
+    )
+
+    segmentation_module._append_local_mask2former_path()
+    segmentation_module._append_local_mask2former_path()
+
+    assert search_path == ["project-src", "site-packages", str(repository)]
+
+
 def test_mask2former_class_loss_weights_validate_model_class_count() -> None:
     """A stale model head must not receive misaligned category weights."""
 

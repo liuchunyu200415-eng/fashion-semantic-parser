@@ -4,6 +4,7 @@ import copy
 import itertools
 import logging
 import math
+import sys
 from pathlib import Path
 from threading import Lock
 from typing import Any, Callable, Literal, Sequence, cast
@@ -803,6 +804,7 @@ def _load_detectron2_modules() -> dict[str, Any]:
 
 def _load_mask2former_modules() -> dict[str, Any]:
     """Import Mask2Former project config lazily for the PRD target model."""
+    _append_local_mask2former_path()
     try:
         from detectron2.projects.deeplab import (
             add_deeplab_config,
@@ -819,8 +821,8 @@ def _load_mask2former_modules() -> dict[str, Any]:
         raise ModelNotReadyError(
             "Mask2Former is the PRD-aligned target model for 3.1.1, but the "
             "Mask2Former or Detectron2 DeepLab project config is not importable. "
-            "Install/clone Mask2Former, install Detectron2 with project modules, "
-            "and add Mask2Former to PYTHONPATH before running the config."
+            "Install/clone Mask2Former under external/Mask2Former and install "
+            "Detectron2 with its project modules before running the config."
         ) from error
     return {
         "COCOInstanceNewBaselineDatasetMapper": COCOInstanceNewBaselineDatasetMapper,
@@ -831,6 +833,21 @@ def _load_mask2former_modules() -> dict[str, Any]:
         "matcher_module": matcher_module,
         "maybe_add_gradient_clipping": maybe_add_gradient_clipping,
     }
+
+
+def _append_local_mask2former_path() -> None:
+    """Append the local checkout without shadowing installed packages.
+
+    Mask2Former contains a top-level ``datasets`` directory. Prepending the
+    checkout through PYTHONPATH can therefore hide Hugging Face ``datasets``
+    and break BGE-M3 before segmentation starts.
+    """
+    repository = resolve_project_path("external/Mask2Former")
+    if not repository.is_dir():
+        return
+    repository_text = str(repository)
+    if repository_text not in sys.path:
+        sys.path.append(repository_text)
 
 
 def _configure_mask2former_eager_losses(

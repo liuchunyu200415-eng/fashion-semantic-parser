@@ -2655,3 +2655,6 @@ The backend name is `dense_mask2former_refinement`, but the default API remains
 `dense_local_reencoding` until the frozen validation comparison demonstrates a
 Mask improvement. Mask2Former is a domain-specific refinement/fallback here;
 it is not allowed to replace full-query selection or claim open-query coverage.
+Do not prepend `external/Mask2Former` through `PYTHONPATH`: its top-level
+`datasets` directory shadows Hugging Face `datasets` and breaks BGE-M3. The
+runtime appends the checkout after installed packages when Mask2Former loads.
