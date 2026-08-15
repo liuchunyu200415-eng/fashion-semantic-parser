@@ -36,7 +36,9 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--split", choices=("train", "validation"), default="train")
-    parser.add_argument("--image-limit", type=int, default=20)
+    limit_group = parser.add_mutually_exclusive_group()
+    limit_group.add_argument("--image-limit", type=int, default=None)
+    limit_group.add_argument("--sample-limit", type=int, default=None)
     parser.add_argument("--image-offset", type=int, default=0)
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
@@ -67,8 +69,14 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """Train a schema-four checkpoint without claiming validation accuracy."""
     args = parse_args()
-    if args.image_limit < 1:
+    if args.image_limit is None and args.sample_limit is None:
+        args.image_limit = 20
+    if args.image_limit is not None and args.image_limit < 1:
         raise ValueError("--image-limit must be at least one")
+    if args.sample_limit is not None and args.sample_limit < 1:
+        raise ValueError("--sample-limit must be at least one")
+    if args.sample_limit is not None and args.image_offset:
+        raise ValueError("--image-offset cannot be combined with --sample-limit")
     if args.image_offset < 0:
         raise ValueError("--image-offset cannot be negative")
     if args.steps is not None and args.steps < 1:
@@ -100,7 +108,7 @@ def main() -> None:
         clean_finetuning_audit_loss,
         copy_paste_same_label_instance,
         load_dense_patch_finetuning_settings,
-        query_loss_weight,
+        query_loss_weight_from_area_fraction,
         select_copy_paste_donor,
     )
     from fashion_semantic_parser.service.dense_patch_training import (
@@ -142,16 +150,17 @@ def main() -> None:
         annotation_path=resolve_project_path(annotations),
         project_root=PROJECT_ROOT,
         max_images=args.image_limit,
+        max_samples=args.sample_limit,
         image_offset=args.image_offset,
     )
-    items = [dataset[index] for index in range(len(dataset))]
-    if not items:
+    if not dataset:
         raise ValueError("DINOv2 fine-tuning loaded no queries.")
-    selected_image_count = len({item.sample.source_image_id for item in items})
-    print(f"dataset_ready: queries={len(items)} images={selected_image_count}")
+    samples = [dataset.sample_at(index) for index in range(len(dataset))]
+    selected_image_count = len({sample.source_image_id for sample in samples})
+    print(f"dataset_ready: queries={len(dataset)} images={selected_image_count}")
 
     text_encoder = BgeM3TextEncoder(load_bge_m3_text_settings())
-    text_embeddings = text_encoder.encode([item.sample.query for item in items])
+    text_embeddings = text_encoder.encode([sample.query for sample in samples])
     text_encoder.synchronize()
     del text_encoder
     gc.collect()
@@ -219,27 +228,34 @@ def main() -> None:
     scaler = torch.cuda.amp.GradScaler(
         enabled=(device == "cuda" and encoder.settings.precision == "fp16")
     )
-    donor_groups = build_copy_paste_donor_groups(items)
-    query_weights = np.asarray(
-        [query_loss_weight(item, settings) for item in items],
-        dtype=np.float32,
-    )
     target_area_fractions = np.asarray(
-        [item.target_masks.any(axis=0).mean() for item in items],
+        [dataset.target_union_area_fraction(index) for index in range(len(dataset))],
         dtype=np.float32,
     )
+    query_weights = np.asarray(
+        [
+            query_loss_weight_from_area_fraction(sample, area_fraction, settings)
+            for sample, area_fraction in zip(
+                samples,
+                target_area_fractions,
+                strict=True,
+            )
+        ],
+        dtype=np.float32,
+    )
+    donor_groups = build_copy_paste_donor_groups(samples)
     audit_rng = np.random.default_rng(settings.seed + 1)
     audit_indices = np.sort(
         audit_rng.choice(
-            len(items),
-            size=min(32, len(items)),
+            len(dataset),
+            size=min(32, len(dataset)),
             replace=False,
         )
     )
     audit_runtime = DenseFineTuningAuditRuntime(
         encoder=encoder,
         dense_runtime=runtime,
-        items=items,
+        items=dataset,
         query_weights=query_weights,
         device=device,
         batch_size=min(batch_size, len(audit_indices)),
@@ -256,20 +272,20 @@ def main() -> None:
     started = time.perf_counter()
     for step in range(1, steps + 1):
         batch_indices = batch_rng.choice(
-            len(items),
-            size=min(batch_size, len(items)),
+            len(dataset),
+            size=min(batch_size, len(dataset)),
             replace=False,
         )
         images: list[np.ndarray] = []
         target_masks: list[np.ndarray] = []
         for raw_index in batch_indices:
             receiver_index = int(raw_index)
-            receiver = items[receiver_index]
+            receiver = dataset[receiver_index]
             donor_index = None
             if not args.disable_copy_paste:
                 donor_index = select_copy_paste_donor(
                     receiver_index,
-                    items,
+                    samples,
                     donor_groups,
                     settings,
                     augmentation_rng,
@@ -280,7 +296,7 @@ def main() -> None:
             else:
                 image, target_mask = copy_paste_same_label_instance(
                     receiver,
-                    items[donor_index],
+                    dataset[donor_index],
                     augmentation_rng,
                 )
                 images.append(image)
@@ -366,12 +382,16 @@ def main() -> None:
     torch.save(payload, checkpoint_path)
     metrics: dict[str, Any] = {
         "split": args.split,
-        "query_count": len(items),
+        "query_count": len(dataset),
         "selected_image_count": selected_image_count,
         "image_offset": args.image_offset,
-        "selection_scope": "complete_image_prefix",
+        "sample_limit": args.sample_limit,
+        "selection_scope": (
+            "query_prefix" if args.sample_limit is not None else "complete_image_prefix"
+        ),
         "steps": steps,
-        "batch_size": min(batch_size, len(items)),
+        "batch_size": min(batch_size, len(dataset)),
+        "data_loading_mode": "metadata_resident_images_lazy_per_batch",
         "initial_step_loss": losses[0],
         "final_step_loss": losses[-1],
         "final_20_step_mean_loss": float(np.mean(losses[-20:])),

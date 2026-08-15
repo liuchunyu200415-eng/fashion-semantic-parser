@@ -1,5 +1,10 @@
 """Load Fashionpedia referring samples and their official source Masks."""
 
+# The dataset keeps validated source indexes plus one bounded area cache.
+# Optional imports stay local so schema-only tooling does not require pycocotools.
+# pylint: disable=too-many-instance-attributes,too-many-arguments
+# pylint: disable=import-outside-toplevel
+
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,6 +86,7 @@ class FashionpediaReferringDataset:
             raise NotADirectoryError(f"Project root does not exist: {project_root}")
 
         self._mask_decoder = mask_decoder or decode_coco_mask
+        self._target_area_fraction_cache: dict[tuple[int, ...], float] = {}
         self._offsets, referenced_annotation_ids, referenced_image_ids = (
             _scan_jsonl_index(
                 self.index_path,
@@ -123,8 +129,7 @@ class FashionpediaReferringDataset:
 
     def __getitem__(self, index: int) -> ReferringTrainingItem:
         """Load one RGB image and decode every referenced target Mask."""
-        normalized_index = _normalize_sequence_index(index, len(self))
-        sample = self._read_sample(self._offsets[normalized_index])
+        sample = self.sample_at(index)
         image_path = _resolve_safe_project_path(self.project_root, sample.image_path)
         image_bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
         if image_bgr is None:
@@ -139,6 +144,54 @@ class FashionpediaReferringDataset:
                 f"metadata={(height, width)}"
             )
 
+        masks, annotation_ids = self._decode_target_masks(sample, height, width)
+        boxes = np.asarray(
+            [
+                [
+                    target.box.x_min,
+                    target.box.y_min,
+                    target.box.x_max,
+                    target.box.y_max,
+                ]
+                for target in sample.targets
+            ],
+            dtype=np.float32,
+        )
+        return ReferringTrainingItem(
+            sample=sample,
+            image_rgb=image_rgb,
+            target_masks=masks,
+            target_boxes=boxes,
+            source_annotation_ids=annotation_ids,
+        )
+
+    def sample_at(self, index: int) -> ReferringTrainingSample:
+        """Load validated query metadata without decoding its image or Masks."""
+        normalized_index = _normalize_sequence_index(index, len(self))
+        return self._read_sample(self._offsets[normalized_index])
+
+    def target_union_area_fraction(self, index: int) -> float:
+        """Return exact target-union area while keeping image pixels unloaded."""
+        sample = self.sample_at(index)
+        annotation_ids = tuple(
+            target.source_annotation_id for target in sample.targets
+        )
+        cached = self._target_area_fraction_cache.get(annotation_ids)
+        if cached is not None:
+            return cached
+        height, width = self._image_sizes[sample.source_image_id]
+        masks, _ = self._decode_target_masks(sample, height, width)
+        area_fraction = float(masks.any(axis=0).mean())
+        self._target_area_fraction_cache[annotation_ids] = area_fraction
+        return area_fraction
+
+    def _decode_target_masks(
+        self,
+        sample: ReferringTrainingSample,
+        height: int,
+        width: int,
+    ) -> tuple[np.ndarray, tuple[int, ...]]:
+        """Decode and validate all target Masks for one referring sample."""
         masks: list[np.ndarray] = []
         annotation_ids: list[int] = []
         for target in sample.targets:
@@ -183,26 +236,7 @@ class FashionpediaReferringDataset:
                 )
             masks.append(binary_mask)
             annotation_ids.append(target.source_annotation_id)
-
-        boxes = np.asarray(
-            [
-                [
-                    target.box.x_min,
-                    target.box.y_min,
-                    target.box.x_max,
-                    target.box.y_max,
-                ]
-                for target in sample.targets
-            ],
-            dtype=np.float32,
-        )
-        return ReferringTrainingItem(
-            sample=sample,
-            image_rgb=image_rgb,
-            target_masks=np.stack(masks, axis=0),
-            target_boxes=boxes,
-            source_annotation_ids=tuple(annotation_ids),
-        )
+        return np.stack(masks, axis=0), tuple(annotation_ids)
 
     def _read_sample(self, offset: int) -> ReferringTrainingSample:
         """Read and validate one JSONL record at a byte offset."""

@@ -5,7 +5,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, Sequence, cast
 
 import cv2
 import numpy as np
@@ -15,6 +15,9 @@ from pydantic import BaseModel, Field, model_validator
 from fashion_semantic_parser.common.paths import resolve_project_path
 from fashion_semantic_parser.dao.localization.referring_dataset import (
     ReferringTrainingItem,
+)
+from fashion_semantic_parser.dao.localization.referring_training import (
+    ReferringTrainingSample,
 )
 
 
@@ -61,13 +64,25 @@ class DensePatchFineTuningSettings(BaseModel):
         return self
 
 
+class ReferringTrainingItemSource(Protocol):
+    """Minimal lazy random-access contract used by the clean audit."""
+
+    def __len__(self) -> int:
+        """Return the number of query items."""
+        raise NotImplementedError
+
+    def __getitem__(self, index: int) -> ReferringTrainingItem:
+        """Load one complete item on demand."""
+        raise NotImplementedError
+
+
 @dataclass
 class DenseFineTuningAuditRuntime:
     """Dependencies for a fixed clean-query loss audit."""
 
     encoder: Any
     dense_runtime: Any
-    items: list[ReferringTrainingItem]
+    items: ReferringTrainingItemSource
     query_weights: np.ndarray
     device: str
     batch_size: int
@@ -93,10 +108,25 @@ def query_loss_weight(
     union_mask = np.asarray(item.target_masks, dtype=bool).any(axis=0)
     if not union_mask.any():
         raise ValueError("Fine-tuning requires a non-empty target Mask.")
+    return query_loss_weight_from_area_fraction(
+        item.sample,
+        float(union_mask.mean()),
+        settings,
+    )
+
+
+def query_loss_weight_from_area_fraction(
+    sample: ReferringTrainingSample,
+    target_area_fraction: float,
+    settings: DensePatchFineTuningSettings,
+) -> float:
+    """Return the bounded query weight without retaining decoded image data."""
+    if not 0.0 < target_area_fraction <= 1.0:
+        raise ValueError("Target area fraction must be in (0, 1].")
     weight = 1.0
-    if float(union_mask.mean()) < settings.small_target_area_threshold:
+    if target_area_fraction < settings.small_target_area_threshold:
         weight *= settings.small_target_loss_weight
-    if item.sample.target_label in settings.weak_part_labels:
+    if sample.target_label in settings.weak_part_labels:
         weight *= settings.weak_part_loss_weight
     return min(settings.maximum_query_loss_weight, weight)
 
@@ -179,36 +209,36 @@ def clean_finetuning_audit_loss(
 
 
 def build_copy_paste_donor_groups(
-    items: list[ReferringTrainingItem],
+    samples: Sequence[ReferringTrainingSample],
 ) -> dict[str, list[int]]:
     """Index potential same-label donors without changing query semantics."""
     groups: dict[str, list[int]] = {}
-    for index, item in enumerate(items):
-        groups.setdefault(item.sample.target_label, []).append(index)
+    for index, sample in enumerate(samples):
+        groups.setdefault(sample.target_label, []).append(index)
     return groups
 
 
 def select_copy_paste_donor(
     receiver_index: int,
-    items: list[ReferringTrainingItem],
+    samples: Sequence[ReferringTrainingSample],
     donor_groups: dict[str, list[int]],
     settings: DensePatchFineTuningSettings,
     rng: np.random.Generator,
 ) -> int | None:
     """Choose a different-image donor while preserving attribute supervision."""
-    receiver = items[receiver_index]
+    receiver = samples[receiver_index]
     if (
-        receiver.sample.target_label not in settings.copy_paste_labels
+        receiver.target_label not in settings.copy_paste_labels
         or float(rng.random()) >= settings.copy_paste_probability
     ):
         return None
     candidates = []
-    for index in donor_groups.get(receiver.sample.target_label, []):
-        donor = items[index]
-        if donor.sample.source_image_id == receiver.sample.source_image_id:
+    for index in donor_groups.get(receiver.target_label, []):
+        donor = samples[index]
+        if donor.source_image_id == receiver.source_image_id:
             continue
-        if "attribute" in receiver.sample.dimensions and (
-            donor.sample.source_attribute_ids != receiver.sample.source_attribute_ids
+        if "attribute" in receiver.dimensions and (
+            donor.source_attribute_ids != receiver.source_attribute_ids
         ):
             continue
         candidates.append(index)

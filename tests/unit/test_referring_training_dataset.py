@@ -39,6 +39,36 @@ def test_dataset_loads_independent_multi_target_masks(tmp_path: Path) -> None:
     assert item.source_annotation_ids == (101, 102)
 
 
+def test_dataset_metadata_and_area_do_not_load_image_pixels(tmp_path: Path) -> None:
+    """Large-run metadata scans must keep full images out of resident memory."""
+    index_path, annotation_path = _write_source(tmp_path)
+    decode_count = 0
+
+    def counted_decoder(
+        segmentation: object,
+        height: int,
+        width: int,
+    ) -> np.ndarray:
+        nonlocal decode_count
+        decode_count += 1
+        return _polygon_decoder(segmentation, height, width)
+
+    dataset = FashionpediaReferringDataset(
+        index_path=index_path,
+        annotation_path=annotation_path,
+        project_root=tmp_path,
+        mask_decoder=counted_decoder,
+    )
+    (tmp_path / "images" / "a.png").unlink()
+
+    assert dataset.sample_at(0).query == "这件衣服的口袋"
+    assert dataset.target_union_area_fraction(0) == pytest.approx(66 / 192)
+    assert dataset.target_union_area_fraction(0) == pytest.approx(66 / 192)
+    assert decode_count == 2
+    with pytest.raises(FileNotFoundError, match="Could not read"):
+        _ = dataset[0]
+
+
 def test_dataset_rejects_missing_source_annotation(tmp_path: Path) -> None:
     """A stale annotation reference must fail before a training epoch starts."""
     index_path, annotation_path = _write_source(tmp_path)
@@ -72,7 +102,7 @@ def test_dataset_rejects_annotation_from_another_image(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="belongs to image 20"):
-        dataset[0]
+        _ = dataset[0]
 
 
 def test_dataset_rejects_empty_decoded_mask(tmp_path: Path) -> None:
@@ -88,7 +118,7 @@ def test_dataset_rejects_empty_decoded_mask(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="empty Mask"):
-        dataset[0]
+        _ = dataset[0]
 
 
 def test_dataset_rejects_source_category_mismatch(tmp_path: Path) -> None:
@@ -106,7 +136,7 @@ def test_dataset_rejects_source_category_mismatch(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="has label zipper, not pocket"):
-        dataset[0]
+        _ = dataset[0]
 
 
 def test_dataset_rejects_source_box_mismatch(tmp_path: Path) -> None:
@@ -123,7 +153,7 @@ def test_dataset_rejects_source_box_mismatch(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="bbox does not match"):
-        dataset[0]
+        _ = dataset[0]
 
 
 def test_collate_preserves_variable_target_sets(tmp_path: Path) -> None:
@@ -307,6 +337,7 @@ def _write_source(tmp_path: Path) -> tuple[Path, Path]:
     return index_path, annotation_path
 
 
+# pylint: disable-next=too-many-arguments
 def _add_source_image(
     *,
     tmp_path: Path,

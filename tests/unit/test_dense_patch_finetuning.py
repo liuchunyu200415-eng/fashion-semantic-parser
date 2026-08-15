@@ -12,6 +12,7 @@ from fashion_semantic_parser.service.dense_patch_finetuning import (
     load_dense_patch_finetuning_settings,
     load_trainable_dinov2_state_dict,
     query_loss_weight,
+    query_loss_weight_from_area_fraction,
     trainable_dinov2_state_dict,
 )
 
@@ -55,6 +56,9 @@ def test_query_loss_weight_combines_small_and_weak_factors_with_cap() -> None:
     )
 
     assert query_loss_weight(item, settings) == 3.0
+    assert (
+        query_loss_weight_from_area_fraction(item.sample, 1 / 36, settings) == 3.0
+    )
 
 
 def test_copy_paste_replaces_target_at_original_receiver_location() -> None:
@@ -100,6 +104,7 @@ def test_dinov2_finetuning_selects_and_restores_only_last_blocks() -> None:
     """Checkpoint state cannot silently include frozen backbone parameters."""
     torch = pytest.importorskip("torch")
 
+    # pylint: disable-next=too-few-public-methods
     class TinyBackbone(torch.nn.Module):
         """Minimal block/norm structure matching the DINOv2 contract."""
 

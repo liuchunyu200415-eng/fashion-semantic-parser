@@ -2580,6 +2580,12 @@ separately audited changes:
 - only the final two DINOv2 blocks and terminal normalization are unfrozen, at
   `1e-5`, while the projection/decoder head uses `1e-4`.
 
+For 100k-scale runs, only validated query metadata, text embeddings, loss
+weights, and donor indices remain resident. Source images and exact Fashionpedia
+Masks are decoded lazily for the current training or clean-audit batch. Exact
+target-union area fractions are cached by annotation-ID tuple, so repeated
+language variants do not repeatedly decode the same supervision Masks.
+
 Copy-Paste never moves the referent to an arbitrary background position. It
 replaces one receiver target's appearance with a resized same-label donor at
 the original receiver target box. This preserves spatial and garment-relation
@@ -2651,9 +2657,9 @@ python -u scripts/evaluate_dense_patch_localization.py \
     outputs/localization/dinov2_mask2former_refinement_smoke2
 ```
 
-The backend name is `dense_mask2former_refinement`, but the default API remains
-`dense_local_reencoding` until the frozen validation comparison demonstrates a
-Mask improvement. Mask2Former is a domain-specific refinement/fallback here;
+The backend name is `dense_mask2former_refinement`, and it is now the default
+API route after the frozen validation comparison demonstrated a Mask
+improvement. Mask2Former is a domain-specific refinement/fallback here;
 it is not allowed to replace full-query selection or claim open-query coverage.
 Do not prepend `external/Mask2Former` through `PYTHONPATH`: its top-level
 `datasets` directory shadows Hugging Face `datasets` and breaks BGE-M3. The
@@ -2682,3 +2688,12 @@ The same setup script builds Mask2Former's bundled
 `MultiScaleDeformableAttention` CUDA op as a non-isolated wheel in the PRD
 environment. A Python-only Mask2Former import without this op does not pass the
 joint readiness gate.
+
+On the frozen 50-image, 762-query validation subset, box-guided Mask2Former
+refinement raised Mask Recall50 from `41.60%` to `57.48%`, Mask Recall75 from
+`9.19%` to `31.76%`, and mean Mask IoU from `38.25%` to `51.16%`. Box Recall50
+remained `55.64%`, which isolates the gain to Mask refinement. Refinement was
+applied to `632/762` known-part queries without GT-based selection. Warm mean
+image time rose from about `0.361 s` to `0.542 s`, so this validates the
+accuracy direction but does not satisfy the PRD `30 ms` deployment target or
+the final `92%` acceptance target.

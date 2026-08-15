@@ -13,9 +13,9 @@ def test_load_settings_reads_default_config() -> None:
         "segmentation_mask2former_deployment.yaml"
     )
     assert settings.segmentation.query_auto_subject_roi is True
-    assert settings.localization.backend == "dense_local_reencoding"
+    assert settings.localization.backend == "dense_mask2former_refinement"
     assert settings.localization.config_path.endswith(
-        "localization_mask2former_parts_deployment.yaml"
+        "localization_mask2former_parts_targeted_deployment.yaml"
     )
     assert settings.localization.fallback_config_path.endswith(
         "localization_grounded_sam_hq.yaml"
