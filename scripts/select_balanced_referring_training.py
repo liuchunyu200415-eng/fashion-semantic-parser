@@ -4,7 +4,6 @@
 # pylint: disable=import-outside-toplevel,duplicate-code
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -66,7 +65,13 @@ def main() -> None:
         sample_count=args.sample_count,
         seed=args.seed,
     )
-    print(json.dumps(summary.model_dump(mode="json"), ensure_ascii=False, indent=2))
+    print(f"input_sample_count: {summary.input_sample_count}")
+    print(f"output_sample_count: {summary.output_sample_count}")
+    print(f"selected_image_count: {summary.selected_image_count}")
+    print(f"target_reference_count: {summary.target_reference_count}")
+    print(f"weak_part_counts: {summary.weak_part_counts}")
+    print(f"output_path: {summary.output_path}")
+    print(f"summary_output_path: {resolve_project_path(args.summary_output)}")
 
 
 if __name__ == "__main__":
