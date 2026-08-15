@@ -2658,3 +2658,8 @@ it is not allowed to replace full-query selection or claim open-query coverage.
 Do not prepend `external/Mask2Former` through `PYTHONPATH`: its top-level
 `datasets` directory shadows Hugging Face `datasets` and breaks BGE-M3. The
 runtime appends the checkout after installed packages when Mask2Former loads.
+Detectron2 must be installed inside `fashion-prd-312`; borrowing the base
+environment would violate the pinned Python runtime. Run
+`scripts/setup_prd_312_detectron2.sh` to build official Detectron2 `v0.6` at
+commit `d1e04565d3bec8719335b88be9e9b961bf3ec464` for CUDA architecture `8.6`,
+then verify Detectron2 CUDA, Mask2Former, and BGE-M3 in one process.

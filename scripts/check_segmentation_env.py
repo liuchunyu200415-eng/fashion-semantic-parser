@@ -18,6 +18,11 @@ def add_src_to_python_path() -> None:
 def main() -> None:
     """Print a JSON report for segmentation training dependencies."""
     add_src_to_python_path()
+    from fashion_semantic_parser.service.segmentation_baseline import (
+        _append_local_mask2former_path,
+    )
+
+    _append_local_mask2former_path()
 
     dataset_status = _dataset_status()
     torch_status = _torch_status()
