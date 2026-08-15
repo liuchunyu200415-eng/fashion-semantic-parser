@@ -53,6 +53,7 @@ fi
 
 "$conda_executable" run --name "$environment_name" \
   python -m pip install --no-cache-dir \
+  'setuptools==80.9.0' \
   'black==24.4.2' \
   'cloudpickle==3.0.0' \
   'fvcore==0.1.5.post20221221' \
@@ -65,6 +66,13 @@ fi
   'termcolor==2.4.0' \
   'tqdm==4.66.5' \
   'yacs==0.1.8'
+
+# PyTorch 2.1.2 imports ``pkg_resources`` while loading its C++/CUDA extension
+# helper. Setuptools 81+ removes that compatibility module, so fail before the
+# expensive Detectron2 build if the pinned build toolchain is not usable.
+"$conda_executable" run --name "$environment_name" \
+  python -c \
+  'import pkg_resources; from torch.utils.cpp_extension import CUDA_HOME; print(f"detectron2_build_cuda_home: {CUDA_HOME}")'
 
 env \
   FORCE_CUDA=1 \

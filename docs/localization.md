@@ -2663,3 +2663,6 @@ environment would violate the pinned Python runtime. Run
 `scripts/setup_prd_312_detectron2.sh` to build official Detectron2 `v0.6` at
 commit `d1e04565d3bec8719335b88be9e9b961bf3ec464` for CUDA architecture `8.6`,
 then verify Detectron2 CUDA, Mask2Former, and BGE-M3 in one process.
+The installer pins `setuptools==80.9.0` because PyTorch 2.1.2 still imports
+`pkg_resources` from its C++/CUDA extension helper; newer Setuptools releases
+remove that compatibility module and fail before compilation starts.

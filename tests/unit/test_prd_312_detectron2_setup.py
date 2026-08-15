@@ -19,6 +19,9 @@ def test_detectron2_setup_is_pinned_and_targets_prd_environment() -> None:
     assert "d1e04565d3bec8719335b88be9e9b961bf3ec464" in script
     assert "TORCH_CUDA_ARCH_LIST" in script
     assert "--no-build-isolation" in script
+    assert "setuptools==80.9.0" in script
+    assert "import pkg_resources" in script
+    assert "torch.utils.cpp_extension" in script
     assert "/root/miniconda3/lib/python3.10/site-packages" not in script
     assert "check_prd_312_detectron2_env.py" in script
 
@@ -35,6 +38,7 @@ def test_detectron2_runtime_dependencies_are_environment_locked() -> None:
     assert "fvcore==0.1.5.post20221221" in pip_dependencies
     assert "iopath==0.1.9" in pip_dependencies
     assert "hydra-core==1.3.2" in pip_dependencies
+    assert "setuptools==80.9.0" in pip_dependencies
 
 
 def test_joint_runtime_readiness_requires_exact_cuda_stack() -> None:
