@@ -11,6 +11,8 @@ repository_url="git@github.com:facebookresearch/detectron2.git"
 repository_commit="d1e04565d3bec8719335b88be9e9b961bf3ec464"
 mask2former_path="$project_root/external/Mask2Former"
 cuda_architecture="8.6"
+wheel_directory="$(mktemp -d /tmp/fashion-prd-312-detectron2.XXXXXX)"
+trap 'rm -rf "$wheel_directory"' EXIT
 
 if [[ ! -x "$conda_executable" ]]; then
   echo "Conda executable not found: $conda_executable" >&2
@@ -79,11 +81,27 @@ env \
   TORCH_CUDA_ARCH_LIST="$cuda_architecture" \
   MAX_JOBS="${MAX_JOBS:-2}" \
   "$conda_executable" run --name "$environment_name" \
-  python -m pip install \
+  python -m pip wheel \
   --no-cache-dir \
   --no-build-isolation \
   --no-deps \
-  --editable "$repository_path"
+  --wheel-dir "$wheel_directory" \
+  "$repository_path"
+
+mapfile -t detectron2_wheels < <(
+  find "$wheel_directory" -maxdepth 1 -type f -name 'detectron2-*.whl'
+)
+if [[ "${#detectron2_wheels[@]}" -ne 1 ]]; then
+  echo "Expected one Detectron2 wheel, found ${#detectron2_wheels[@]}." >&2
+  exit 1
+fi
+
+"$conda_executable" run --name "$environment_name" \
+  python -m pip install \
+  --no-cache-dir \
+  --no-deps \
+  --force-reinstall \
+  "${detectron2_wheels[0]}"
 
 "$conda_executable" run --name "$environment_name" python -m pip check
 

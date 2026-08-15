@@ -2666,3 +2666,6 @@ then verify Detectron2 CUDA, Mask2Former, and BGE-M3 in one process.
 The installer pins `setuptools==80.9.0` because PyTorch 2.1.2 still imports
 `pkg_resources` from its C++/CUDA extension helper; newer Setuptools releases
 remove that compatibility module and fail before compilation starts.
+It builds and installs a regular wheel rather than using editable mode: modern
+Setuptools delegates editable installation to a nested isolated build that
+cannot import the PRD environment's PyTorch CUDA extension toolchain.
