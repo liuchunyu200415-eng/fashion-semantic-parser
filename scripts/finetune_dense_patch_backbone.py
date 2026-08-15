@@ -249,12 +249,13 @@ def main() -> None:
         audit_indices,
     )
     print(f"initial_clean_audit_loss: {initial_clean_audit_loss:.6f}")
-    rng = np.random.default_rng(settings.seed)
+    batch_rng = np.random.default_rng(settings.seed)
+    augmentation_rng = np.random.default_rng(settings.seed + 2)
     losses: list[float] = []
     copy_paste_count = 0
     started = time.perf_counter()
     for step in range(1, steps + 1):
-        batch_indices = rng.choice(
+        batch_indices = batch_rng.choice(
             len(items),
             size=min(batch_size, len(items)),
             replace=False,
@@ -271,7 +272,7 @@ def main() -> None:
                     items,
                     donor_groups,
                     settings,
-                    rng,
+                    augmentation_rng,
                 )
             if donor_index is None:
                 images.append(receiver.image_rgb)
@@ -280,7 +281,7 @@ def main() -> None:
                 image, target_mask = copy_paste_same_label_instance(
                     receiver,
                     items[donor_index],
-                    rng,
+                    augmentation_rng,
                 )
                 images.append(image)
                 target_masks.append(target_mask)
@@ -381,6 +382,8 @@ def main() -> None:
             final_clean_audit_loss < initial_clean_audit_loss
         ),
         "copy_paste_applied_count": copy_paste_count,
+        "batch_sampling_seed": settings.seed,
+        "augmentation_seed": settings.seed + 2,
         "small_target_weighted_query_count": int(
             np.sum(target_area_fractions < settings.small_target_area_threshold)
         ),

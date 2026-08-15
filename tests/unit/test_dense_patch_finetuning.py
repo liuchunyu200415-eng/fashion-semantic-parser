@@ -31,6 +31,19 @@ def test_committed_finetuning_config_locks_mentor_directed_scope() -> None:
     }
 
 
+def test_conservative_config_reduces_update_scope_and_learning_rates() -> None:
+    """A failed aggressive smoke must lead to a materially safer A/B recipe."""
+    baseline = load_dense_patch_finetuning_settings()
+    conservative = load_dense_patch_finetuning_settings(
+        "configs/localization_dense_patch_finetuning_conservative.yaml"
+    )
+
+    assert conservative.unfreeze_last_blocks == 1
+    assert conservative.head_learning_rate < baseline.head_learning_rate
+    assert conservative.backbone_learning_rate < baseline.backbone_learning_rate
+    assert conservative.copy_paste_probability == baseline.copy_paste_probability
+
+
 def test_query_loss_weight_combines_small_and_weak_factors_with_cap() -> None:
     """Tiny weak-part supervision receives the configured bounded weight."""
     item = _item("rivet", image_id=1, mask_slice=(slice(0, 1), slice(0, 1)))

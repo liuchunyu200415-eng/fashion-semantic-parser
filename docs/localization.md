@@ -2607,3 +2607,10 @@ audit loss. Even a decreased clean audit loss is training evidence, not
 independent validation, and cannot establish the PRD `92%` target. Only after
 a successful smoke should the image count and steps increase, followed by the
 same frozen validation split and single-query Top-1 Mask IoU acceptance path.
+
+The first 20-step aggressive smoke increased the fixed clean audit loss from
+`0.748404` to `0.978319`, so that checkpoint is rejected and must not be scaled.
+The next experiment uses the conservative config: one unfrozen DINOv2 block,
+`1e-5` head learning rate, and `1e-6` backbone learning rate. Batch sampling
+and Copy-Paste use independent deterministic random streams, so enabling or
+disabling Copy-Paste preserves the exact query-batch sequence for a valid A/B.

@@ -1,0 +1,23 @@
+# Conservative adaptation from an already-trained dense-localization head.
+head_learning_rate: 0.00001
+backbone_learning_rate: 0.000001
+weight_decay: 0.01
+training_steps: 50
+batch_size: 4
+seed: 312
+unfreeze_last_blocks: 1
+small_target_area_threshold: 0.01
+small_target_loss_weight: 2.0
+weak_part_loss_weight: 1.5
+maximum_query_loss_weight: 3.0
+weak_part_labels:
+  - zipper
+  - rivet
+  - neckline
+  - pocket
+copy_paste_probability: 0.5
+copy_paste_labels:
+  - zipper
+  - rivet
+  - neckline
+  - pocket
