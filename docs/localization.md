@@ -2678,3 +2678,7 @@ with `cuobjdump` to require `sm_86`; later-version-only extension APIs are not
 used.
 Pillow is pinned to `9.5.0` because Detectron2 0.6 still references legacy
 resampling constants such as `PIL.Image.LINEAR`, which Pillow 12 removes.
+The same setup script builds Mask2Former's bundled
+`MultiScaleDeformableAttention` CUDA op as a non-isolated wheel in the PRD
+environment. A Python-only Mask2Former import without this op does not pass the
+joint readiness gate.

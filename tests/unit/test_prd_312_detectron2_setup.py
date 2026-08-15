@@ -22,6 +22,8 @@ def test_detectron2_setup_is_pinned_and_targets_prd_environment() -> None:
     assert "python -m pip wheel" in script
     assert "--editable" not in script
     assert "--force-reinstall" in script
+    assert "MultiScaleDeformableAttention".lower() in script.lower()
+    assert "mask2former_ops_path" in script
     assert "setuptools==80.9.0" in script
     assert "black==21.4b2" in script
     assert "future==0.18.3" in script
@@ -63,6 +65,7 @@ def test_joint_runtime_readiness_requires_exact_cuda_stack() -> None:
         "detectron2_cuda_version": "CUDA 12.1",
         "detectron2_cuda_arch": ["8.6"],
         "sentence_transformers": "3.0.1",
+        "mask2former_cuda_op_importable": True,
         "mask2former_importable": True,
         "errors": [],
     }
@@ -83,6 +86,7 @@ def test_joint_runtime_rejects_cpu_only_detectron2_extension() -> None:
         "detectron2_cuda_version": "not available",
         "detectron2_cuda_arch": [],
         "sentence_transformers": "3.0.1",
+        "mask2former_cuda_op_importable": False,
         "mask2former_importable": True,
         "errors": [],
     }

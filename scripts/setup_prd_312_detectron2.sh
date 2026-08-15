@@ -10,6 +10,7 @@ repository_path="$project_root/external/detectron2"
 repository_url="git@github.com:facebookresearch/detectron2.git"
 repository_commit="d1e04565d3bec8719335b88be9e9b961bf3ec464"
 mask2former_path="$project_root/external/Mask2Former"
+mask2former_ops_path="$mask2former_path/mask2former/modeling/pixel_decoder/ops"
 cuda_architecture="8.6"
 wheel_directory="$(mktemp -d /tmp/fashion-prd-312-detectron2.XXXXXX)"
 trap 'rm -rf "$wheel_directory"' EXIT
@@ -24,6 +25,10 @@ if ! "$conda_executable" env list | awk '{print $1}' | grep -qx "$environment_na
 fi
 if [[ ! -d "$mask2former_path/mask2former" ]]; then
   echo "Mask2Former checkout is missing: $mask2former_path" >&2
+  exit 1
+fi
+if [[ ! -f "$mask2former_ops_path/setup.py" ]]; then
+  echo "Mask2Former CUDA op source is missing: $mask2former_ops_path" >&2
   exit 1
 fi
 
@@ -107,6 +112,34 @@ fi
   --no-deps \
   --force-reinstall \
   "${detectron2_wheels[0]}"
+
+env \
+  FORCE_CUDA=1 \
+  TORCH_CUDA_ARCH_LIST="$cuda_architecture" \
+  MAX_JOBS="${MAX_JOBS:-2}" \
+  "$conda_executable" run --name "$environment_name" \
+  python -m pip wheel \
+  --no-cache-dir \
+  --no-build-isolation \
+  --no-deps \
+  --wheel-dir "$wheel_directory" \
+  "$mask2former_ops_path"
+
+mapfile -t mask2former_ops_wheels < <(
+  find "$wheel_directory" -maxdepth 1 -type f \
+    -iname 'multiscaledeformableattention-*.whl'
+)
+if [[ "${#mask2former_ops_wheels[@]}" -ne 1 ]]; then
+  echo "Expected one Mask2Former CUDA op wheel, found ${#mask2former_ops_wheels[@]}." >&2
+  exit 1
+fi
+
+"$conda_executable" run --name "$environment_name" \
+  python -m pip install \
+  --no-cache-dir \
+  --no-deps \
+  --force-reinstall \
+  "${mask2former_ops_wheels[0]}"
 
 "$conda_executable" run --name "$environment_name" python -m pip check
 

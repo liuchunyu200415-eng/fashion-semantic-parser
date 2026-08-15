@@ -48,6 +48,7 @@ def _runtime_report() -> dict[str, Any]:
         "detectron2_cuda_version": None,
         "detectron2_cuda_arch": [],
         "sentence_transformers": None,
+        "mask2former_cuda_op_importable": False,
         "mask2former_importable": False,
         "errors": errors,
     }
@@ -67,6 +68,8 @@ def _runtime_report() -> dict[str, Any]:
             _append_local_mask2former_path,
         )
 
+        importlib.import_module("MultiScaleDeformableAttention")
+        report["mask2former_cuda_op_importable"] = True
         _append_local_mask2former_path()
         importlib.import_module("mask2former")
         report["mask2former_importable"] = True
@@ -109,6 +112,7 @@ def detectron2_runtime_ready(report: dict[str, Any]) -> bool:
         and report["detectron2_cuda_version"] == EXPECTED_DETECTRON2_CUDA
         and architecture_ready
         and report["sentence_transformers"] is not None
+        and report["mask2former_cuda_op_importable"]
         and report["mask2former_importable"]
         and not report["errors"]
     )
