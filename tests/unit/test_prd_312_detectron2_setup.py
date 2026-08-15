@@ -23,6 +23,9 @@ def test_detectron2_setup_is_pinned_and_targets_prd_environment() -> None:
     assert "--editable" not in script
     assert "--force-reinstall" in script
     assert "setuptools==80.9.0" in script
+    assert "black==21.4b2" in script
+    assert "future==0.18.3" in script
+    assert "pydot==1.4.2" in script
     assert "import pkg_resources" in script
     assert "torch.utils.cpp_extension" in script
     assert "/root/miniconda3/lib/python3.10/site-packages" not in script
@@ -42,6 +45,9 @@ def test_detectron2_runtime_dependencies_are_environment_locked() -> None:
     assert "iopath==0.1.9" in pip_dependencies
     assert "hydra-core==1.3.2" in pip_dependencies
     assert "setuptools==80.9.0" in pip_dependencies
+    assert "black==21.4b2" in pip_dependencies
+    assert "future==0.18.3" in pip_dependencies
+    assert "pydot==1.4.2" in pip_dependencies
 
 
 def test_joint_runtime_readiness_requires_exact_cuda_stack() -> None:

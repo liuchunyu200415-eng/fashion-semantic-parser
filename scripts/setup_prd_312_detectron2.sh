@@ -56,13 +56,17 @@ fi
 "$conda_executable" run --name "$environment_name" \
   python -m pip install --no-cache-dir \
   'setuptools==80.9.0' \
-  'black==24.4.2' \
+  'black==21.4b2' \
+  'click==8.0.4' \
   'cloudpickle==3.0.0' \
+  'future==0.18.3' \
   'fvcore==0.1.5.post20221221' \
   'hydra-core==1.3.2' \
   'iopath==0.1.9' \
   'matplotlib==3.9.2' \
   'omegaconf==2.3.0' \
+  'pathspec==0.9.0' \
+  'pydot==1.4.2' \
   'tabulate==0.9.0' \
   'tensorboard==2.17.1' \
   'termcolor==2.4.0' \
