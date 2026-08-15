@@ -2676,3 +2676,5 @@ The joint gate uses Detectron2 0.6's actual `has_cuda()` and
 `get_cuda_version()` extension APIs, then inspects the compiled shared object
 with `cuobjdump` to require `sm_86`; later-version-only extension APIs are not
 used.
+Pillow is pinned to `9.5.0` because Detectron2 0.6 still references legacy
+resampling constants such as `PIL.Image.LINEAR`, which Pillow 12 removes.

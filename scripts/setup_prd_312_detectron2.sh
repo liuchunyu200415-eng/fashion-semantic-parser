@@ -66,6 +66,7 @@ fi
   'matplotlib==3.9.2' \
   'omegaconf==2.3.0' \
   'pathspec==0.9.0' \
+  'pillow==9.5.0' \
   'pydot==1.4.2' \
   'tabulate==0.9.0' \
   'tensorboard==2.17.1' \
