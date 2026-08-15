@@ -95,7 +95,9 @@ def main() -> None:
         mask_to_patch_fractions,
     )
     from fashion_semantic_parser.service.dense_patch_finetuning import (
+        DenseFineTuningAuditRuntime,
         build_copy_paste_donor_groups,
+        clean_finetuning_audit_loss,
         copy_paste_same_label_instance,
         load_dense_patch_finetuning_settings,
         query_loss_weight,
@@ -226,6 +228,27 @@ def main() -> None:
         [item.target_masks.any(axis=0).mean() for item in items],
         dtype=np.float32,
     )
+    audit_rng = np.random.default_rng(settings.seed + 1)
+    audit_indices = np.sort(
+        audit_rng.choice(
+            len(items),
+            size=min(32, len(items)),
+            replace=False,
+        )
+    )
+    audit_runtime = DenseFineTuningAuditRuntime(
+        encoder=encoder,
+        dense_runtime=runtime,
+        items=items,
+        query_weights=query_weights,
+        device=device,
+        batch_size=min(batch_size, len(audit_indices)),
+    )
+    initial_clean_audit_loss = clean_finetuning_audit_loss(
+        audit_runtime,
+        audit_indices,
+    )
+    print(f"initial_clean_audit_loss: {initial_clean_audit_loss:.6f}")
     rng = np.random.default_rng(settings.seed)
     losses: list[float] = []
     copy_paste_count = 0
@@ -308,6 +331,11 @@ def main() -> None:
             print(f"[train {step}/{steps}] loss={losses[-1]:.6f}")
     encoder.synchronize()
     training_seconds = time.perf_counter() - started
+    final_clean_audit_loss = clean_finetuning_audit_loss(
+        audit_runtime,
+        audit_indices,
+    )
+    print(f"final_clean_audit_loss: {final_clean_audit_loss:.6f}")
 
     output_dir = resolve_project_path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -346,6 +374,12 @@ def main() -> None:
         "initial_step_loss": losses[0],
         "final_step_loss": losses[-1],
         "final_20_step_mean_loss": float(np.mean(losses[-20:])),
+        "clean_audit_query_count": len(audit_indices),
+        "initial_clean_audit_loss": initial_clean_audit_loss,
+        "final_clean_audit_loss": final_clean_audit_loss,
+        "clean_audit_loss_decreased": (
+            final_clean_audit_loss < initial_clean_audit_loss
+        ),
         "copy_paste_applied_count": copy_paste_count,
         "small_target_weighted_query_count": int(
             np.sum(target_area_fractions < settings.small_target_area_threshold)
@@ -375,6 +409,9 @@ def main() -> None:
         "selected_image_count",
         "initial_step_loss",
         "final_20_step_mean_loss",
+        "initial_clean_audit_loss",
+        "final_clean_audit_loss",
+        "clean_audit_loss_decreased",
         "copy_paste_applied_count",
         "weak_or_small_weighted_query_count",
         "dinov2_unfrozen_block_count",

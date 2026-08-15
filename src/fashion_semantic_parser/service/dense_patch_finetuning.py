@@ -1,5 +1,9 @@
 """Small-part weighting and semantics-safe Copy-Paste for DINOv2 fine-tuning."""
 
+# Optional PyTorch components load only when the fine-tuning path is executed.
+# pylint: disable=import-outside-toplevel
+
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -57,6 +61,18 @@ class DensePatchFineTuningSettings(BaseModel):
         return self
 
 
+@dataclass
+class DenseFineTuningAuditRuntime:
+    """Dependencies for a fixed clean-query loss audit."""
+
+    encoder: Any
+    dense_runtime: Any
+    items: list[ReferringTrainingItem]
+    query_weights: np.ndarray
+    device: str
+    batch_size: int
+
+
 def load_dense_patch_finetuning_settings(
     config_path: str | Path = "configs/localization_dense_patch_finetuning.yaml",
 ) -> DensePatchFineTuningSettings:
@@ -83,6 +99,83 @@ def query_loss_weight(
     if item.sample.target_label in settings.weak_part_labels:
         weight *= settings.weak_part_loss_weight
     return min(settings.maximum_query_loss_weight, weight)
+
+
+# Explicit tensors keep this fixed audit independently usable.
+# pylint: disable-next=too-many-locals
+def clean_finetuning_audit_loss(
+    audit: DenseFineTuningAuditRuntime,
+    query_indices: np.ndarray,
+) -> float:
+    """Evaluate identical unaugmented queries before and after fine-tuning."""
+    try:
+        import torch  # type: ignore[import-not-found]
+    except ImportError as error:
+        raise RuntimeError("PyTorch is required for fine-tuning audit.") from error
+    from fashion_semantic_parser.service.dense_patch_alignment import (
+        mask_to_patch_fractions,
+    )
+    from fashion_semantic_parser.service.dense_patch_training import runtime_loss
+
+    indices = np.asarray(query_indices, dtype=np.int64)
+    if indices.ndim != 1 or indices.size == 0:
+        raise ValueError("Fine-tuning audit requires non-empty 1D query indices.")
+    if int(indices.min()) < 0 or int(indices.max()) >= len(audit.items):
+        raise ValueError("Fine-tuning audit query index is out of range.")
+    audit.encoder.set_finetuning_mode(False)
+    audit.dense_runtime.projection.eval()
+    if audit.dense_runtime.decoder is None:
+        raise RuntimeError("Fine-tuning audit requires the multiscale decoder.")
+    audit.dense_runtime.decoder.eval()
+    weighted_loss_sum = 0.0
+    weight_sum = 0.0
+    try:
+        with torch.inference_mode():
+            for start in range(0, len(indices), audit.batch_size):
+                batch_indices = indices[start : start + audit.batch_size]
+                batch_items = [audit.items[int(index)] for index in batch_indices]
+                images = [item.image_rgb for item in batch_items]
+                masks = [item.target_masks.any(axis=0) for item in batch_items]
+                patch_tensor, geometries = audit.encoder.encode_dense_trainable_batch(
+                    images
+                )
+                targets = np.stack(
+                    [
+                        mask_to_patch_fractions(
+                            mask,
+                            geometry,
+                            patch_size=audit.encoder.settings.patch_size,
+                        ).reshape(-1)
+                        for mask, geometry in zip(masks, geometries, strict=True)
+                    ]
+                )
+                device_indices = torch.from_numpy(batch_indices).to(
+                    device=audit.device,
+                    dtype=torch.long,
+                )
+                weights = torch.from_numpy(audit.query_weights[batch_indices]).to(
+                    device=audit.device
+                )
+                projected = audit.dense_runtime.projection(
+                    audit.dense_runtime.text_tensor[device_indices]
+                )
+                loss = runtime_loss(
+                    audit.dense_runtime,
+                    patch_tensor,
+                    projected,
+                    torch.from_numpy(targets).to(device=audit.device),
+                    weights,
+                )
+                batch_weight = float(weights.sum().item())
+                weighted_loss_sum += float(loss.item()) * batch_weight
+                weight_sum += batch_weight
+    finally:
+        audit.encoder.set_finetuning_mode(True)
+        audit.dense_runtime.projection.train()
+        audit.dense_runtime.decoder.train()
+    if weight_sum <= 0.0 or not np.isfinite(weighted_loss_sum):
+        raise RuntimeError("Fine-tuning clean audit produced invalid loss totals.")
+    return weighted_loss_sum / weight_sum
 
 
 def build_copy_paste_donor_groups(

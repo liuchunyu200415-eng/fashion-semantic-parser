@@ -237,6 +237,12 @@ class DinoV2RegionEncoder:
         self._model.train()
         return trainable
 
+    def set_finetuning_mode(self, training: bool) -> None:
+        """Switch the loaded backbone between train and deterministic audit mode."""
+        if self._model is None:
+            raise RuntimeError("DINOv2 model did not initialize.")
+        self._model.train(training)
+
     def encode_dense_trainable_batch(
         self,
         images_rgb: list[np.ndarray],

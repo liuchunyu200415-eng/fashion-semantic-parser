@@ -2600,7 +2600,10 @@ python -u scripts/finetune_dense_patch_backbone.py \
 ```
 
 The smoke checks finite training, augmentation counts, trainable parameter
-scope, and schema-four checkpoint creation. Its training loss is not
-independent validation and cannot establish the PRD `92%` target. Only after a
-successful smoke should the image count and steps increase, followed by the
+scope, and schema-four checkpoint creation. Because stochastic weighted and
+Copy-Paste batches are not directly comparable, the script also freezes 32
+clean, unaugmented source queries and reports their identical before/after
+audit loss. Even a decreased clean audit loss is training evidence, not
+independent validation, and cannot establish the PRD `92%` target. Only after
+a successful smoke should the image count and steps increase, followed by the
 same frozen validation split and single-query Top-1 Mask IoU acceptance path.
