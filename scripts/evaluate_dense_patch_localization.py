@@ -78,6 +78,7 @@ def main() -> None:
         load_bge_m3_text_settings,
     )
     from fashion_semantic_parser.service.dense_patch_alignment import (
+        apply_finetuned_dinov2_checkpoint,
         load_dense_patch_alignment_checkpoint,
         mask_to_patch_fractions,
     )
@@ -152,6 +153,7 @@ def main() -> None:
             args.dinov2_config or "configs/localization_dinov2_region.yaml"
         )
     )
+    apply_finetuned_dinov2_checkpoint(image_encoder, checkpoint)
     cases: list[dict[str, object]] = []
     image_rows: list[dict[str, object]] = []
     threshold = checkpoint.dense_settings.probability_threshold

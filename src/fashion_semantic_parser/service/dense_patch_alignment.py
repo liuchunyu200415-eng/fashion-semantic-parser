@@ -109,6 +109,8 @@ class DensePatchAlignmentCheckpoint:
     decoder: Any | None
     area_predictor: Any | None
     training_input_size: int
+    dinov2_unfrozen_block_count: int = 0
+    dinov2_trainable_state_dict: dict[str, Any] | None = None
 
 
 def load_dense_patch_alignment_settings(
@@ -297,12 +299,17 @@ def dense_patch_logits(
     return scale * torch.einsum("bpd,bd->bp", patches, queries) + logit_bias
 
 
-def balanced_patch_mask_loss(logits: Any, target_fractions: Any) -> Any:
+def balanced_patch_mask_loss(
+    logits: Any,
+    target_fractions: Any,
+    sample_weights: Any | None = None,
+) -> Any:
     """Return foreground-balanced BCE plus soft Dice patch supervision.
 
     Args:
         logits: Calibrated foreground logits shaped ``BxP``.
         target_fractions: Soft target fractions in ``[0, 1]`` with the same shape.
+        sample_weights: Optional positive per-query loss weights shaped ``B``.
 
     Returns:
         Scalar differentiable training loss.
@@ -333,7 +340,18 @@ def balanced_patch_mask_loss(logits: Any, target_fractions: Any) -> Any:
     dice = 1.0 - (2.0 * intersection + 1e-6) / (
         probabilities.sum(dim=1) + positive_mass + 1e-6
     )
-    return (0.5 * (positive_bce + negative_bce) + dice).mean()
+    per_query_loss = 0.5 * (positive_bce + negative_bce) + dice
+    if sample_weights is None:
+        return per_query_loss.mean()
+    if (
+        sample_weights.ndim != 1
+        or sample_weights.shape[0] != logits.shape[0]
+        or bool((sample_weights <= 0.0).any())
+        or not bool(torch.isfinite(sample_weights).all())
+    ):
+        raise ValueError("Dense patch sample weights must be finite positive B values.")
+    normalized_weights = sample_weights / sample_weights.sum()
+    return (per_query_loss * normalized_weights).sum()
 
 
 def load_dense_patch_alignment_checkpoint(
@@ -364,10 +382,18 @@ def load_dense_patch_alignment_checkpoint(
     if not path.is_file():
         raise FileNotFoundError(f"Dense patch checkpoint does not exist: {path}")
     payload = torch.load(path, map_location=device)
-    if not isinstance(payload, dict) or payload.get("schema_version") not in {1, 2, 3}:
+    if not isinstance(payload, dict) or payload.get("schema_version") not in {
+        1,
+        2,
+        3,
+        4,
+    }:
         raise ValueError("Unsupported dense patch checkpoint schema.")
-    if payload.get("base_encoders_frozen") is not True:
-        raise ValueError("Dense patch checkpoint must record frozen base encoders.")
+    schema_version = payload.get("schema_version")
+    backbone_finetuned = schema_version == 4
+    expected_frozen = not backbone_finetuned
+    if payload.get("base_encoders_frozen") is not expected_frozen:
+        raise ValueError("Dense checkpoint base-encoder provenance is inconsistent.")
     if payload.get("dinov2_model") != "dinov2_vits14":
         raise ValueError("Dense patch checkpoint has an unexpected DINOv2 model.")
     if payload.get("text_model") != "BAAI/bge-m3":
@@ -402,10 +428,9 @@ def load_dense_patch_alignment_checkpoint(
     model_type = str(payload.get("model_type", "cosine_calibration"))
     decoder = None
     area_predictor = None
-    schema_version = payload.get("schema_version")
-    if schema_version in {2, 3}:
+    if schema_version in {2, 3, 4}:
         expected_type = (
-            "multiscale_decoder" if schema_version == 2 else "multiscale_area_decoder"
+            "multiscale_area_decoder" if schema_version == 3 else "multiscale_decoder"
         )
         if model_type != expected_type:
             raise ValueError("Dense patch schema and model type are inconsistent.")
@@ -440,6 +465,19 @@ def load_dense_patch_alignment_checkpoint(
             area_predictor.eval()
     elif model_type != "cosine_calibration":
         raise ValueError("Dense patch schema one requires cosine calibration.")
+    dinov2_unfrozen_block_count = 0
+    dinov2_trainable_state_dict = None
+    if backbone_finetuned:
+        raw_unfrozen_block_count = payload.get("dinov2_unfrozen_block_count")
+        dinov2_trainable_state_dict = payload.get("dinov2_trainable_state_dict")
+        if (
+            not isinstance(raw_unfrozen_block_count, int)
+            or raw_unfrozen_block_count not in {1, 2}
+            or not isinstance(dinov2_trainable_state_dict, dict)
+            or not dinov2_trainable_state_dict
+        ):
+            raise ValueError("Fine-tuned DINOv2 checkpoint state is invalid.")
+        dinov2_unfrozen_block_count = raw_unfrozen_block_count
     return DensePatchAlignmentCheckpoint(
         projection=projection.eval(),
         alignment_settings=alignment_settings,
@@ -450,4 +488,19 @@ def load_dense_patch_alignment_checkpoint(
         decoder=decoder,
         area_predictor=area_predictor,
         training_input_size=training_input_size,
+        dinov2_unfrozen_block_count=dinov2_unfrozen_block_count,
+        dinov2_trainable_state_dict=dinov2_trainable_state_dict,
+    )
+
+
+def apply_finetuned_dinov2_checkpoint(
+    encoder: Any,
+    checkpoint: DensePatchAlignmentCheckpoint,
+) -> None:
+    """Restore optional schema-four backbone state into a DINOv2 encoder."""
+    if checkpoint.dinov2_trainable_state_dict is None:
+        return
+    encoder.load_finetuned_state_dict(
+        checkpoint.dinov2_trainable_state_dict,
+        unfreeze_last_blocks=checkpoint.dinov2_unfrozen_block_count,
     )

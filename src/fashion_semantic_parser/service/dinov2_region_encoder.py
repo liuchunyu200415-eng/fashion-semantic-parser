@@ -221,6 +221,97 @@ class DinoV2RegionEncoder:
             geometry=geometry,
         )
 
+    def configure_finetuning(self, unfreeze_last_blocks: int) -> list[tuple[str, Any]]:
+        """Enable gradients only for the requested final DINOv2 blocks."""
+        self.load()
+        if self._model is None:
+            raise RuntimeError("DINOv2 model did not initialize.")
+        from fashion_semantic_parser.service.dense_patch_finetuning import (
+            configure_dinov2_last_blocks,
+        )
+
+        trainable = configure_dinov2_last_blocks(
+            self._model,
+            unfreeze_last_blocks,
+        )
+        self._model.train()
+        return trainable
+
+    def encode_dense_trainable_batch(
+        self,
+        images_rgb: list[np.ndarray],
+    ) -> tuple[Any, tuple[DinoV2LetterboxGeometry, ...]]:
+        """Return differentiable ``BxPxD`` features for an image batch."""
+        self.load()
+        torch = self._torch
+        model = self._model
+        if torch is None or model is None:
+            raise RuntimeError("DINOv2 model did not initialize.")
+        if not images_rgb:
+            raise ValueError("Trainable DINOv2 batching requires at least one image.")
+        if not any(parameter.requires_grad for parameter in model.parameters()):
+            raise RuntimeError("DINOv2 fine-tuning has no trainable parameters.")
+        tensors: list[Any] = []
+        geometries: list[DinoV2LetterboxGeometry] = []
+        for image_rgb in images_rgb:
+            image, geometry = letterbox_image(
+                image_rgb,
+                output_size=self.settings.input_size,
+            )
+            tensors.append(self._normalized_image_tensor(image))
+            geometries.append(geometry)
+        image_tensor = torch.cat(tensors, dim=0)
+        grid_size = self.settings.input_size // self.settings.patch_size
+        autocast_context = (
+            torch.autocast(device_type="cuda", dtype=torch.float16)
+            if self.settings.precision == "fp16"
+            else nullcontext()
+        )
+        with autocast_context:
+            output = model.forward_features(image_tensor)
+            patch_tokens = output["x_norm_patchtokens"]
+            if patch_tokens.shape != (
+                len(images_rgb),
+                grid_size * grid_size,
+                self.settings.feature_dimension,
+            ):
+                raise ValueError(
+                    "Unexpected trainable DINOv2 patch-token shape: "
+                    f"{tuple(patch_tokens.shape)}"
+                )
+            features = torch.nn.functional.normalize(patch_tokens.float(), dim=2)
+        return features, tuple(geometries)
+
+    def trainable_state_dict(self) -> dict[str, Any]:
+        """Return only the explicitly unfrozen DINOv2 parameter tensors."""
+        if self._model is None:
+            raise RuntimeError("DINOv2 model did not initialize.")
+        from fashion_semantic_parser.service.dense_patch_finetuning import (
+            trainable_dinov2_state_dict,
+        )
+
+        return trainable_dinov2_state_dict(self._model)
+
+    def load_finetuned_state_dict(
+        self,
+        state_dict: dict[str, Any],
+        *,
+        unfreeze_last_blocks: int,
+    ) -> None:
+        """Restore the exact recorded DINOv2 fine-tuned parameter subset."""
+        self.load()
+        if self._model is None:
+            raise RuntimeError("DINOv2 model did not initialize.")
+        from fashion_semantic_parser.service.dense_patch_finetuning import (
+            load_trainable_dinov2_state_dict,
+        )
+
+        load_trainable_dinov2_state_dict(
+            self._model,
+            state_dict,
+            unfreeze_last_blocks=unfreeze_last_blocks,
+        )
+
     def _normalized_image_tensor(self, image: np.ndarray) -> Any:
         """Convert one square uint8 image into normalized model input."""
         torch = self._torch

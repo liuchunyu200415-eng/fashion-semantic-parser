@@ -2567,3 +2567,40 @@ counts, category balance, and dedicated counts for `zipper`, `rivet`,
 `neckline`, and `pocket`. Reaching 100,000 records is only a data-scale gate;
 it does not establish semantic rewrite quality, balanced weak-part coverage,
 Mask accuracy, or PRD compliance. Review a stratified sample before training.
+
+### Small-Part DINOv2 Backbone Adaptation
+
+The backbone fine-tuning path starts from the validated `728` multiscale dense
+checkpoint and consumes the balanced 100,000-query index. It applies three
+separately audited changes:
+
+- target unions below `1%` of image pixels receive `2.0x` query-loss weight;
+- `zipper`, `rivet`, `neckline`, and `pocket` receive `1.5x`, with the combined
+  weight capped at `3.0x`;
+- only the final two DINOv2 blocks and terminal normalization are unfrozen, at
+  `1e-5`, while the projection/decoder head uses `1e-4`.
+
+Copy-Paste never moves the referent to an arbitrary background position. It
+replaces one receiver target's appearance with a resized same-label donor at
+the original receiver target box. This preserves spatial and garment-relation
+modifiers; attribute queries only accept donors with identical Fashionpedia
+attribute IDs. The schema-four checkpoint stores only the explicitly unfrozen
+DINOv2 parameter subset, and inference/evaluation restores it on top of the
+pinned official pretrained weights.
+
+Run a bounded compatibility smoke before scaling:
+
+```bash
+python -u scripts/finetune_dense_patch_backbone.py \
+  --image-limit 20 \
+  --steps 20 \
+  --batch-size 2 \
+  --output-dir \
+    outputs/localization/dinov2_backbone_finetune_smoke20
+```
+
+The smoke checks finite training, augmentation counts, trainable parameter
+scope, and schema-four checkpoint creation. Its training loss is not
+independent validation and cannot establish the PRD `92%` target. Only after a
+successful smoke should the image count and steps increase, followed by the
+same frozen validation split and single-query Top-1 Mask IoU acceptance path.

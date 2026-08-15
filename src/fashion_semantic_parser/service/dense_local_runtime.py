@@ -244,6 +244,7 @@ def build_dense_local_runtime(
         load_bge_m3_text_settings,
     )
     from fashion_semantic_parser.service.dense_patch_alignment import (
+        apply_finetuned_dinov2_checkpoint,
         load_dense_patch_alignment_checkpoint,
     )
     from fashion_semantic_parser.service.dinov2_region_encoder import (
@@ -255,16 +256,16 @@ def build_dense_local_runtime(
         settings.checkpoint_path,
         device=device,
     )
+    image_encoder = DinoV2RegionEncoder(
+        load_dinov2_region_settings(settings.dinov2_config_path)
+    )
+    apply_finetuned_dinov2_checkpoint(image_encoder, checkpoint)
     return DenseLocalRuntimeBundle(
         projector=_ProductionQueryProjector(
             BgeM3TextEncoder(load_bge_m3_text_settings(settings.bge_m3_config_path)),
             checkpoint.projection,
             device,
         ),
-        image_encoder=_BatchedDinoV2Encoder(
-            DinoV2RegionEncoder(
-                load_dinov2_region_settings(settings.dinov2_config_path)
-            )
-        ),
+        image_encoder=_BatchedDinoV2Encoder(image_encoder),
         scorer=_ProductionPatchScorer(checkpoint, device),
     )

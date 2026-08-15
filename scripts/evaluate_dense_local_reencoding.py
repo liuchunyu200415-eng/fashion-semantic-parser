@@ -89,6 +89,7 @@ def main() -> None:
         select_query_peak_crops,
     )
     from fashion_semantic_parser.service.dense_patch_alignment import (
+        apply_finetuned_dinov2_checkpoint,
         load_dense_patch_alignment_checkpoint,
     )
     from fashion_semantic_parser.service.dense_patch_inference import (
@@ -144,6 +145,7 @@ def main() -> None:
         projected = torch.nn.functional.normalize(projected.float(), dim=1)
         projected_text = np.asarray(projected.cpu().numpy(), dtype=np.float32)
     image_encoder = DinoV2RegionEncoder(load_dinov2_region_settings(args.dinov2_config))
+    apply_finetuned_dinov2_checkpoint(image_encoder, checkpoint)
     groups: dict[int, list[int]] = defaultdict(list)
     for item_index, item in enumerate(items):
         groups[item.sample.source_image_id].append(item_index)

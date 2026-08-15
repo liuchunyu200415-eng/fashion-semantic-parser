@@ -8,6 +8,7 @@ import pytest
 
 from fashion_semantic_parser.service.dense_patch_alignment import (
     DensePatchAlignmentSettings,
+    apply_finetuned_dinov2_checkpoint,
     balanced_patch_mask_loss,
     build_dense_patch_training_cache,
     dense_patch_logits,
@@ -152,6 +153,27 @@ def test_dense_patch_loss_trains_calibrated_similarity() -> None:
         aligned_logits,
         targets,
     ) < balanced_patch_mask_loss(reversed_logits, targets)
+
+
+def test_dense_patch_loss_applies_normalized_query_weights() -> None:
+    """Small-part weighting must affect the aggregate without changing scale."""
+    torch = pytest.importorskip("torch")
+    logits = torch.tensor([[4.0, -4.0], [-4.0, 4.0]])
+    targets = torch.tensor([[1.0, 0.0], [1.0, 0.0]])
+
+    unweighted = balanced_patch_mask_loss(logits, targets)
+    first_weighted = balanced_patch_mask_loss(
+        logits,
+        targets,
+        torch.tensor([4.0, 1.0]),
+    )
+    second_weighted = balanced_patch_mask_loss(
+        logits,
+        targets,
+        torch.tensor([1.0, 4.0]),
+    )
+
+    assert first_weighted < unweighted < second_weighted
 
 
 def test_training_threshold_selection_prefers_tighter_equal_recall_mask() -> None:
@@ -312,3 +334,71 @@ def test_schema_three_checkpoint_restores_query_area_predictor(
     assert checkpoint.decoder is not None
     assert checkpoint.area_predictor is not None
     assert checkpoint.training_input_size == 728
+
+
+def test_schema_four_checkpoint_records_finetuned_dinov2_subset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Backbone adaptation must be explicit and separate from frozen schemas."""
+    torch = pytest.importorskip("torch")
+    path = tmp_path / "dense_finetuned.pt"
+    alignment = RegionTextAlignmentSettings(
+        text_dimension=4,
+        region_dimension=4,
+        hidden_dimension=4,
+    )
+    dense = DensePatchAlignmentSettings(
+        decoder_hidden_dimension=8,
+        decoder_branch_dimension=8,
+        decoder_dilations=(1,),
+    )
+    projection = build_text_projection(alignment)
+    decoder = build_multiscale_patch_decoder(4, dense)
+    torch.save(
+        {
+            "schema_version": 4,
+            "alignment_settings": alignment.model_dump(mode="json"),
+            "dense_settings": dense.model_dump(mode="json"),
+            "projection_state_dict": projection.state_dict(),
+            "decoder_state_dict": decoder.state_dict(),
+            "logit_scale": 1.0,
+            "logit_bias": 0.0,
+            "base_encoders_frozen": False,
+            "dinov2_model": "dinov2_vits14",
+            "text_model": "BAAI/bge-m3",
+            "model_type": "multiscale_decoder",
+            "dinov2_input_size": 728,
+            "dinov2_unfrozen_block_count": 2,
+            "dinov2_trainable_state_dict": {"blocks.10.weight": torch.ones(1)},
+        },
+        path,
+    )
+    monkeypatch.setattr(
+        "fashion_semantic_parser.service.dense_patch_alignment.resolve_project_path",
+        lambda _: path,
+    )
+
+    checkpoint = load_dense_patch_alignment_checkpoint(path, device="cpu")
+
+    assert checkpoint.dinov2_unfrozen_block_count == 2
+    assert checkpoint.dinov2_trainable_state_dict is not None
+    assert set(checkpoint.dinov2_trainable_state_dict) == {"blocks.10.weight"}
+
+
+def test_apply_finetuned_checkpoint_is_noop_for_frozen_schema() -> None:
+    """Legacy checkpoints must not trigger a partial backbone restore."""
+
+    class FakeEncoder:
+        """Record unexpected restore calls."""
+
+        def load_finetuned_state_dict(self, *_: object, **__: object) -> None:
+            """Fail if the frozen checkpoint tries to mutate DINOv2."""
+            raise AssertionError("Frozen checkpoint attempted DINOv2 restore.")
+
+    checkpoint = SimpleNamespace(
+        dinov2_trainable_state_dict=None,
+        dinov2_unfrozen_block_count=0,
+    )
+
+    apply_finetuned_dinov2_checkpoint(FakeEncoder(), checkpoint)

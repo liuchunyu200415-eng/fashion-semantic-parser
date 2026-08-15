@@ -135,6 +135,7 @@ def runtime_loss(
     patch_tensor: Any,
     projected_text: Any,
     target_tensor: Any,
+    sample_weights: Any | None = None,
 ) -> Any:
     """Return the patch loss plus optional query-area loss.
 
@@ -143,12 +144,13 @@ def runtime_loss(
         patch_tensor: Tensor shaped ``BxPxD``.
         projected_text: Tensor shaped ``BxD``.
         target_tensor: Soft patch targets shaped ``BxP``.
+        sample_weights: Optional positive per-query weights shaped ``B``.
 
     Returns:
         Scalar differentiable combined loss.
     """
     logits, area_logits = runtime_predictions(runtime, patch_tensor, projected_text)
-    loss = balanced_patch_mask_loss(logits, target_tensor)
+    loss = balanced_patch_mask_loss(logits, target_tensor, sample_weights)
     if area_logits is not None:
         loss = loss + runtime.settings.area_loss_weight * query_area_loss(
             area_logits,
