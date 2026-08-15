@@ -2614,3 +2614,44 @@ The next experiment uses the conservative config: one unfrozen DINOv2 block,
 `1e-5` head learning rate, and `1e-6` backbone learning rate. Batch sampling
 and Copy-Paste use independent deterministic random streams, so enabling or
 disabling Copy-Paste preserves the exact query-batch sequence for a valid A/B.
+
+The conservative 20-image A/B decreased the fixed clean training audit for
+both variants, but neither passed the frozen 762-query validation gate. Without
+Copy-Paste, Mask Recall50 changed from `41.60%` to `38.58%`; with Copy-Paste it
+changed to `38.71%`. Mean Mask IoU also fell from `38.25%` to `37.12%` and
+`37.08%`, respectively. Both checkpoints are therefore rejected and must not
+be scaled. Their Box Recall50 rose from `55.64%` to about `58.2%`, isolating
+Mask generation as the next bottleneck rather than justifying backbone tuning.
+
+### DINOv2 Box-Guided Mask2Former Refinement
+
+The staged refinement backend keeps the complete query on the category-free
+DINOv2 path. For a directly supervised Fashionpedia part only, its DINOv2 Box
+geometrically gates query-compatible Mask2Former outputs; the selected Mask
+replaces the dense Mask while the DINOv2 Box and original query remain intact.
+An unqualified multi-target query unions all overlapping part instances, while
+the existing spatial parser reduces an explicit left/right/up/down query to one
+candidate first. Unknown parts or non-overlapping part predictions retain the
+dense output. Candidate selection does not use ground truth.
+
+Run a two-image compatibility smoke with the retained frozen checkpoint before
+the 50-image comparison:
+
+```bash
+python -u scripts/evaluate_dense_patch_localization.py \
+  --split validation \
+  --image-limit 2 \
+  --checkpoint \
+    outputs/localization/dinov2_multiscale_728_train1000_steps1500/dense_patch_alignment.pt \
+  --dinov2-config configs/localization_dinov2_region_728.yaml \
+  --mask2former-part-config \
+    configs/localization_mask2former_parts_targeted_deployment.yaml \
+  --refinement-minimum-box-iou 0.05 \
+  --output-dir \
+    outputs/localization/dinov2_mask2former_refinement_smoke2
+```
+
+The backend name is `dense_mask2former_refinement`, but the default API remains
+`dense_local_reencoding` until the frozen validation comparison demonstrates a
+Mask improvement. Mask2Former is a domain-specific refinement/fallback here;
+it is not allowed to replace full-query selection or claim open-query coverage.

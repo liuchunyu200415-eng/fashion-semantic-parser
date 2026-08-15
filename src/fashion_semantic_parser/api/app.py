@@ -22,6 +22,10 @@ from fashion_semantic_parser.models.segmentation import (
 from fashion_semantic_parser.service.dense_local_reencoding import (
     DenseLocalReencodingRegionLocalizationService,
 )
+from fashion_semantic_parser.service.dense_mask2former_refinement import (
+    DenseMask2FormerRefinementRegionLocalizationService,
+    DenseMask2FormerRefinementSettings,
+)
 from fashion_semantic_parser.service.parser_service import FashionParserService
 from fashion_semantic_parser.service.region_localization import (
     GroundedSAMHQRegionLocalizationService,
@@ -60,6 +64,16 @@ def create_app(
         if localization_settings.backend == "dense_local_reencoding":
             localization_service = DenseLocalReencodingRegionLocalizationService(
                 localization_settings.dense_config_path
+            )
+        elif localization_settings.backend == "dense_mask2former_refinement":
+            localization_service = DenseMask2FormerRefinementRegionLocalizationService(
+                DenseLocalReencodingRegionLocalizationService(
+                    localization_settings.dense_config_path
+                ),
+                Mask2FormerPartLocalizationService(localization_settings.config_path),
+                settings=DenseMask2FormerRefinementSettings(
+                    minimum_box_iou=(localization_settings.refinement_minimum_box_iou)
+                ),
             )
         elif localization_settings.backend == "grounded_sam_hq":
             localization_service = GroundedSAMHQRegionLocalizationService(

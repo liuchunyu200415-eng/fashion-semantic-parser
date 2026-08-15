@@ -354,6 +354,24 @@ class Mask2FormerPartLocalizationService:
             subject_roi=subject_roi,
             auto_subject_roi=auto_subject_roi,
         )
+        return self.localize_from_segmentation(prediction, query)
+
+    def localize_from_segmentation(
+        self,
+        prediction: SegmentationPrediction,
+        query: str,
+    ) -> RegionLocalizationPrediction:
+        """Filter one reusable part prediction with the complete query.
+
+        This method lets batch evaluation run Mask2Former once per image while
+        retaining the exact production query filtering and spatial constraints.
+        """
+        prompt = _resolve_prompt_or_error(query)
+        target_labels = _supervised_labels_for_prompt(prompt)
+        if not target_labels:
+            raise ModelNotReadyError(
+                f"No directly supervised Mask2Former category covers query: {query}"
+            )
         regions = [
             LocalizedRegion(
                 region_label=instance.category_label,
@@ -372,7 +390,7 @@ class Mask2FormerPartLocalizationService:
         ]
         return _apply_spatial_query_constraints(
             RegionLocalizationPrediction(
-                image_path=image_path,
+                image_path=prediction.image_path,
                 query=query,
                 regions=regions,
                 subject_roi=prediction.subject_roi,

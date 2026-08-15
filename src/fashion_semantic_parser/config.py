@@ -46,6 +46,7 @@ class LocalizationServiceSettings(BaseModel):
 
     backend: Literal[
         "dense_local_reencoding",
+        "dense_mask2former_refinement",
         "grounded_sam_hq",
         "mask2former_parts",
         "hybrid",
@@ -53,6 +54,7 @@ class LocalizationServiceSettings(BaseModel):
     config_path: str = "configs/localization_mask2former_parts_deployment.yaml"
     fallback_config_path: str = "configs/localization_grounded_sam_hq.yaml"
     dense_config_path: str = "configs/localization_dense_local_reencoding.yaml"
+    refinement_minimum_box_iou: float = Field(default=0.05, ge=0.0, le=1.0)
 
 
 class DatasetSettings(BaseModel):

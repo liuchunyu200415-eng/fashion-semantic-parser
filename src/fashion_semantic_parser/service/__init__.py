@@ -3,6 +3,10 @@
 from fashion_semantic_parser.service.dense_local_reencoding import (
     DenseLocalReencodingRegionLocalizationService,
 )
+from fashion_semantic_parser.service.dense_mask2former_refinement import (
+    DenseMask2FormerRefinementRegionLocalizationService,
+    DenseMask2FormerRefinementSettings,
+)
 from fashion_semantic_parser.service.region_localization import (
     GroundedSAMHQRegionLocalizationService,
     HybridRegionLocalizationService,
@@ -36,6 +40,8 @@ __all__ = [
     "Detectron2SegmentationBaseline",
     "Detectron2PersonROIDetector",
     "DenseLocalReencodingRegionLocalizationService",
+    "DenseMask2FormerRefinementRegionLocalizationService",
+    "DenseMask2FormerRefinementSettings",
     "GarmentSegmentationService",
     "GroundedSAMHQRegionLocalizationService",
     "HybridRegionLocalizationService",

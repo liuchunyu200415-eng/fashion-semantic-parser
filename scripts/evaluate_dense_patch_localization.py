@@ -1,5 +1,8 @@
 """Evaluate supervised full-query DINOv2 patch Masks on complete images."""
 
+# Direct execution resolves optional heavy ML dependencies only after adding src.
+# pylint: disable=import-outside-toplevel
+
 import argparse
 import sys
 import time
@@ -44,12 +47,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dinov2-config", default=None)
     parser.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT)
     parser.add_argument(
+        "--mask2former-part-config",
+        default=None,
+        help="Optional known-part Mask refinement config.",
+    )
+    parser.add_argument(
+        "--refinement-minimum-box-iou",
+        type=float,
+        default=0.05,
+    )
+    parser.add_argument(
         "--output-dir",
         default="outputs/localization/dinov2_dense_patch_localization",
     )
     return parser.parse_args()
 
 
+# The evaluation keeps all metric inputs and provenance in one explicit pass.
+# pylint: disable-next=too-many-locals,too-many-branches,too-many-statements
 def main() -> None:
     """Predict full-image Masks with one frozen learned probability threshold.
 
@@ -62,6 +77,8 @@ def main() -> None:
         raise ValueError("--image-limit must be at least one")
     if args.image_offset < 0:
         raise ValueError("--image-offset cannot be negative")
+    if not 0.0 <= args.refinement_minimum_box_iou <= 1.0:
+        raise ValueError("--refinement-minimum-box-iou must be in [0, 1]")
     add_src_to_python_path()
     try:
         import torch  # type: ignore[import-not-found]
@@ -90,6 +107,14 @@ def main() -> None:
         predict_patch_outputs,
     )
     from fashion_semantic_parser.service.dense_patch_metrics import write_dense_json
+    from fashion_semantic_parser.models.localization import (
+        LocalizationBoundingBox,
+        LocalizedRegion,
+    )
+    from fashion_semantic_parser.service.dense_mask2former_refinement import (
+        localization_polygons_to_mask,
+        select_mask2former_refinements,
+    )
     from fashion_semantic_parser.service.dense_region_localization import (
         binary_mask_iou,
         box_iou,
@@ -99,6 +124,9 @@ def main() -> None:
     from fashion_semantic_parser.service.dinov2_region_encoder import (
         DinoV2RegionEncoder,
         load_dinov2_region_settings,
+    )
+    from fashion_semantic_parser.service.region_localization import (
+        Mask2FormerPartLocalizationService,
     )
 
     project_settings = load_settings()
@@ -154,14 +182,29 @@ def main() -> None:
         )
     )
     apply_finetuned_dinov2_checkpoint(image_encoder, checkpoint)
+    part_localizer = (
+        Mask2FormerPartLocalizationService(args.mask2former_part_config)
+        if args.mask2former_part_config
+        else None
+    )
     cases: list[dict[str, object]] = []
     image_rows: list[dict[str, object]] = []
     threshold = checkpoint.dense_settings.probability_threshold
     for image_number, (image_id, item_indices) in enumerate(groups.items(), start=1):
         image_started = time.perf_counter()
+        part_prediction = None
+        mask2former_seconds = 0.0
+        if part_localizer is not None:
+            mask2former_started = time.perf_counter()
+            part_prediction = part_localizer.segmentation_service.segment(
+                items[item_indices[0]].sample.image_path,
+                auto_subject_roi=False,
+            )
+            mask2former_seconds = time.perf_counter() - mask2former_started
+        dinov2_started = time.perf_counter()
         dense = image_encoder.encode_dense(items[item_indices[0]].image_rgb)
         image_encoder.synchronize()
-        encode_seconds = time.perf_counter() - image_started
+        encode_seconds = time.perf_counter() - dinov2_started
         scoring_started = time.perf_counter()
         probabilities, predicted_area_fractions = predict_patch_outputs(
             checkpoint,
@@ -192,6 +235,50 @@ def main() -> None:
                     dense.geometry,
                     threshold=0.5,
                 )
+            predicted_box = mask_box(predicted_mask)
+            refinement_applied = False
+            refinement_box_iou = None
+            if (
+                part_localizer is not None
+                and part_prediction is not None
+                and predicted_box is not None
+                and part_localizer.supports_query(item.sample.query)
+            ):
+                dense_region = LocalizedRegion(
+                    region_label="open_query_region",
+                    matched_text=item.sample.query,
+                    confidence=float(probabilities[local_index].max()),
+                    box=LocalizationBoundingBox(
+                        x_min=predicted_box[0],
+                        y_min=predicted_box[1],
+                        x_max=predicted_box[2],
+                        y_max=predicted_box[3],
+                    ),
+                    mask=[],
+                    box_source="dense_coarse_localization",
+                )
+                compatible_parts = part_localizer.localize_from_segmentation(
+                    part_prediction,
+                    item.sample.query,
+                )
+                refinements = select_mask2former_refinements(
+                    dense_region,
+                    compatible_parts.regions,
+                    minimum_box_iou=args.refinement_minimum_box_iou,
+                )
+                if refinements:
+                    refined_mask = localization_polygons_to_mask(
+                        [
+                            polygon
+                            for refinement in refinements
+                            for polygon in refinement.region.mask
+                        ],
+                        item.image_rgb.shape[:2],
+                    )
+                    if refined_mask.any():
+                        predicted_mask = refined_mask
+                        refinement_applied = True
+                        refinement_box_iou = refinements[0].box_iou
             target_patch_fractions = mask_to_patch_fractions(
                 target_mask,
                 dense.geometry,
@@ -221,10 +308,14 @@ def main() -> None:
                     "target_annotation_ids": list(item.source_annotation_ids),
                     "target_count": len(item.source_annotation_ids),
                     "mask_iou": mask_iou,
-                    "box_iou": box_iou(
-                        mask_box(target_mask),
-                        mask_box(predicted_mask),
+                    "box_iou": box_iou(mask_box(target_mask), predicted_box),
+                    "mask_source": (
+                        "mask2former_box_guided"
+                        if refinement_applied
+                        else "dense_patch_localization"
                     ),
+                    "mask2former_refinement_applied": refinement_applied,
+                    "mask2former_refinement_box_iou": refinement_box_iou,
                     "mask_recall50_passed": mask_iou >= 0.50,
                     "target_area": int(target_mask.sum()),
                     "predicted_area": int(predicted_mask.sum()),
@@ -253,6 +344,7 @@ def main() -> None:
                 "source_image_id": image_id,
                 "query_count": len(item_indices),
                 "dinov2_encode_seconds": encode_seconds,
+                "mask2former_seconds": mask2former_seconds,
                 "dense_scoring_seconds": scoring_seconds,
                 "total_image_seconds": total_seconds,
             }
@@ -260,7 +352,8 @@ def main() -> None:
         print(
             f"[{image_number}/{len(groups)}] image={image_id} "
             + f"queries={len(item_indices)} encode={encode_seconds:.3f}s "
-            + f"score={scoring_seconds:.3f}s"
+            + f"score={scoring_seconds:.3f}s "
+            + f"mask2former={mask2former_seconds:.3f}s"
         )
 
     summary = _summarize(cases, image_rows)
@@ -289,11 +382,23 @@ def main() -> None:
             "warm_image_count": max(0, len(image_rows) - 1),
             "warm_mean_image_seconds": _warm_mean(image_rows),
             "checkpoint_path": str(resolve_project_path(args.checkpoint)),
-            "candidate_region_scope": "full_image_supervised_dinov2_patch_similarity",
+            "candidate_region_scope": (
+                "full_query_dinov2_box_then_known_part_mask2former"
+                if part_localizer is not None
+                else "full_image_supervised_dinov2_patch_similarity"
+            ),
             "full_image_candidate_coverage": True,
             "uses_oracle_candidates": False,
             "oracle_area_diagnostics_use_ground_truth": True,
             "full_language_query_used": True,
+            "mask2former_refinement_enabled": part_localizer is not None,
+            "mask2former_refinement_minimum_box_iou": (
+                args.refinement_minimum_box_iou if part_localizer is not None else None
+            ),
+            "mask2former_refinement_applied_count": sum(
+                bool(case["mask2former_refinement_applied"]) for case in cases
+            ),
+            "mask2former_refinement_uses_ground_truth": False,
             "mask_localization_evaluated": True,
             "independent_manual_test_set": False,
             "prd_accuracy_92_passed": None,
@@ -313,6 +418,7 @@ def main() -> None:
         "mask_recall75",
         "mean_mask_iou",
         "box_recall50",
+        "mask2former_refinement_applied_count",
         "oracle_pixel_area_topk_mask_recall50",
         "oracle_support_topk_mask_recall50",
         "warm_mean_image_seconds",

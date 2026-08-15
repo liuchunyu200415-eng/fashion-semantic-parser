@@ -3,6 +3,7 @@
 import pytest
 from fastapi import HTTPException
 
+from fashion_semantic_parser.api import app as app_module
 from fashion_semantic_parser.api.app import create_app
 from fashion_semantic_parser.common.exceptions import (
     InvalidImageInputError,
@@ -264,6 +265,59 @@ def test_localize_route_returns_mask_and_box_for_language_query() -> None:
     assert localization_service.calls == [
         ("data/example.jpg", "这件衣服的领口", None, True)
     ]
+
+
+def test_app_factory_wires_staged_dense_mask2former_backend(monkeypatch) -> None:
+    """The refinement backend must compose the two configured lazy runtimes."""
+    localization_service = _FakeLocalizationService()
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        app_module,
+        "DenseLocalReencodingRegionLocalizationService",
+        lambda path: ("dense", path),
+    )
+    monkeypatch.setattr(
+        app_module,
+        "Mask2FormerPartLocalizationService",
+        lambda path: ("parts", path),
+    )
+
+    def build_refinement(dense, parts, *, settings):
+        captured.update(dense=dense, parts=parts, settings=settings)
+        return localization_service
+
+    monkeypatch.setattr(
+        app_module,
+        "DenseMask2FormerRefinementRegionLocalizationService",
+        build_refinement,
+    )
+    settings = Settings.model_validate(
+        {
+            "localization": {
+                "backend": "dense_mask2former_refinement",
+                "refinement_minimum_box_iou": 0.10,
+            }
+        }
+    )
+
+    app = create_app(
+        settings=settings,
+        segmentation_service=_FakeSegmentationService(),
+    )
+    response = _localize_endpoint(app)(  # type: ignore[operator]
+        RegionLocalizationRequest(
+            image_path="data/example.jpg",
+            query="衣服右侧的口袋",
+        )
+    )
+
+    assert response.regions
+    assert captured["dense"] == (
+        "dense",
+        settings.localization.dense_config_path,
+    )
+    assert captured["parts"] == ("parts", settings.localization.config_path)
+    assert captured["settings"].minimum_box_iou == 0.10
 
 
 def test_localize_route_manual_roi_disables_automatic_default() -> None:

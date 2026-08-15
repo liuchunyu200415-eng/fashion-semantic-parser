@@ -36,7 +36,13 @@ class LocalizedRegion(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     box: LocalizationBoundingBox
     mask: list[list[float]] = Field(default_factory=list)
-    mask_source: Literal["dense_local_reencoding"] | None = None
+    mask_source: (
+        Literal[
+            "dense_local_reencoding",
+            "mask2former_box_guided",
+        ]
+        | None
+    ) = None
     box_source: Literal["dense_coarse_localization"] | None = None
 
 
