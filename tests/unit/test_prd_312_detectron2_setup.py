@@ -57,6 +57,8 @@ def test_joint_runtime_readiness_requires_exact_cuda_stack() -> None:
         "torch": "2.1.2+cu121",
         "cuda_available": True,
         "detectron2": "0.6",
+        "detectron2_has_cuda": True,
+        "detectron2_cuda_version": "CUDA 12.1",
         "detectron2_cuda_arch": ["8.6"],
         "sentence_transformers": "3.0.1",
         "mask2former_importable": True,
@@ -65,4 +67,22 @@ def test_joint_runtime_readiness_requires_exact_cuda_stack() -> None:
 
     assert detectron2_runtime_ready(report)
     report["cuda_available"] = False
+    assert not detectron2_runtime_ready(report)
+
+
+def test_joint_runtime_rejects_cpu_only_detectron2_extension() -> None:
+    """A loadable CPU-only extension must not satisfy the CUDA runtime gate."""
+    report = {
+        "python": "3.10.12",
+        "torch": "2.1.2+cu121",
+        "cuda_available": True,
+        "detectron2": "0.6",
+        "detectron2_has_cuda": False,
+        "detectron2_cuda_version": "not available",
+        "detectron2_cuda_arch": [],
+        "sentence_transformers": "3.0.1",
+        "mask2former_importable": True,
+        "errors": [],
+    }
+
     assert not detectron2_runtime_ready(report)

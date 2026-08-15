@@ -2672,3 +2672,7 @@ cannot import the PRD environment's PyTorch CUDA extension toolchain.
 The setup also retains Detectron2 0.6's declared `black==21.4b2`, `future`, and
 `pydot` runtime metadata so the isolated environment passes `pip check` before
 the joint Detectron2, Mask2Former, and BGE-M3 import gate.
+The joint gate uses Detectron2 0.6's actual `has_cuda()` and
+`get_cuda_version()` extension APIs, then inspects the compiled shared object
+with `cuobjdump` to require `sm_86`; later-version-only extension APIs are not
+used.

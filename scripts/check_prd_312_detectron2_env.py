@@ -6,6 +6,8 @@
 import importlib
 import json
 import platform
+import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,6 +16,7 @@ EXPECTED_PYTHON = "3.10.12"
 EXPECTED_TORCH = "2.1.2+cu121"
 EXPECTED_DETECTRON2 = "0.6"
 EXPECTED_CUDA_ARCH = "8.6"
+EXPECTED_DETECTRON2_CUDA = "CUDA 12.1"
 
 
 def add_src_to_python_path() -> None:
@@ -41,6 +44,8 @@ def _runtime_report() -> dict[str, Any]:
         "torch": None,
         "cuda_available": False,
         "detectron2": None,
+        "detectron2_has_cuda": False,
+        "detectron2_cuda_version": None,
         "detectron2_cuda_arch": [],
         "sentence_transformers": None,
         "mask2former_importable": False,
@@ -55,7 +60,9 @@ def _runtime_report() -> dict[str, Any]:
         detectron2 = importlib.import_module("detectron2")
         extension = importlib.import_module("detectron2._C")
         report["detectron2"] = detectron2.__version__
-        report["detectron2_cuda_arch"] = extension.get_cuda_arch_flags()
+        report["detectron2_has_cuda"] = bool(extension.has_cuda())
+        report["detectron2_cuda_version"] = extension.get_cuda_version()
+        report["detectron2_cuda_arch"] = _detect_cuda_architectures(extension)
         from fashion_semantic_parser.service.segmentation_baseline import (
             _append_local_mask2former_path,
         )
@@ -66,6 +73,25 @@ def _runtime_report() -> dict[str, Any]:
     except (AttributeError, ImportError, OSError, RuntimeError) as error:
         errors.append(f"{type(error).__name__}: {error}")
     return report
+
+
+def _detect_cuda_architectures(extension: Any) -> list[str]:
+    """Read compiled CUDA architectures from the Detectron2 shared object."""
+    torch_cpp_extension = importlib.import_module("torch.utils.cpp_extension")
+    cuda_home = torch_cpp_extension.CUDA_HOME
+    if cuda_home is None:
+        raise RuntimeError("CUDA_HOME is unavailable for Detectron2 inspection.")
+    cuobjdump = Path(cuda_home) / "bin" / "cuobjdump"
+    if not cuobjdump.is_file():
+        raise RuntimeError(f"cuobjdump is unavailable: {cuobjdump}")
+    completed = subprocess.run(
+        [str(cuobjdump), "--list-elf", str(extension.__file__)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    architecture_codes = sorted(set(re.findall(r"\.sm_([0-9]+)\.", completed.stdout)))
+    return [".".join(code) for code in architecture_codes]
 
 
 def detectron2_runtime_ready(report: dict[str, Any]) -> bool:
@@ -79,6 +105,8 @@ def detectron2_runtime_ready(report: dict[str, Any]) -> bool:
         and report["torch"] == EXPECTED_TORCH
         and report["cuda_available"]
         and report["detectron2"] == EXPECTED_DETECTRON2
+        and report["detectron2_has_cuda"]
+        and report["detectron2_cuda_version"] == EXPECTED_DETECTRON2_CUDA
         and architecture_ready
         and report["sentence_transformers"] is not None
         and report["mask2former_importable"]
