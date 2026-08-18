@@ -14,17 +14,14 @@ conda run --no-capture-output -n "$environment_name" \
   datasets==2.21.0 \
   einops==0.8.0 \
   gekko==1.2.1 \
+  optimum==1.22.0 \
   peft==0.12.0 \
   rouge==1.0.1 \
   sentencepiece==0.2.0 \
   tiktoken==0.7.0 \
   transformers-stream-generator==0.0.4
 
-# Remove the dependency that caused the failed first setup to downgrade
-# Transformers, then restore every project-pinned Hugging Face runtime version.
-conda run --no-capture-output -n "$environment_name" \
-  python -m pip uninstall --yes optimum
-
+# Optimum 1.22 supports Transformers 4.44; restore the project pins explicitly.
 conda run --no-capture-output -n "$environment_name" \
   python -m pip install --no-deps \
   transformers==4.44.2 \
@@ -44,4 +41,4 @@ conda run --no-capture-output -n "$environment_name" \
 
 conda run --no-capture-output -n "$environment_name" \
   python -c \
-  'import auto_gptq, tiktoken, transformers_stream_generator; print("qwen_vl_runtime: ready")'
+  'import auto_gptq, optimum, tiktoken, transformers_stream_generator; print("optimum:", optimum.__version__); print("qwen_vl_runtime: ready")'

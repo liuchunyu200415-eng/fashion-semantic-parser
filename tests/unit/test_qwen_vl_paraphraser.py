@@ -183,11 +183,17 @@ def test_qwen_setup_pins_official_prd_model() -> None:
     setup_source = (script_path / "setup_qwen_vl_paraphrase_model.py").read_text(
         encoding="utf-8"
     )
+    setup_shell = (script_path / "setup_qwen_vl_paraphrase_model.sh").read_text(
+        encoding="utf-8"
+    )
 
     assert 'MODEL_NAME = "Qwen/Qwen-VL-Chat-Int4"' in setup_source
     assert "55acaf444e9f5adfd47105b875571a23d7f7fa30" in setup_source
     assert "OpenAI" not in setup_source
     assert "DeepSeek" not in setup_source
+    assert "optimum==1.22.0" in setup_shell
+    assert "optimum==1.21.4" not in setup_shell
+    assert "transformers==4.44.2" in setup_shell
 
 
 def test_qwen_setup_accepts_absolute_data_volume_path(tmp_path: Path) -> None:
