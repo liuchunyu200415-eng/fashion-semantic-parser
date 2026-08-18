@@ -110,11 +110,12 @@ class QwenVlParaphraser:
         prompt = build_qwen_vl_paraphrase_prompt(job)
         last_error: Exception | None = None
         last_response = ""
+        collected: list[str] = []
         for attempt in range(self.settings.retry_count + 1):
             try:
                 attempt_prompt = prompt
                 if attempt:
-                    attempt_prompt += _retry_instruction(last_error)
+                    attempt_prompt += _retry_instruction(last_error, collected)
                 response, _ = self._model.chat(
                     self._tokenizer,
                     query=attempt_prompt,
@@ -123,19 +124,27 @@ class QwenVlParaphraser:
                     max_new_tokens=self.settings.max_new_tokens,
                 )
                 last_response = response
-                paraphrases = parse_qwen_vl_paraphrases(
+                candidates = collect_qwen_vl_paraphrase_candidates(
                     response,
-                    expected_count=job.requested_paraphrase_count,
                     source_query=job.source_query,
                     language=job.language,
                 )
+                for candidate in candidates:
+                    if candidate not in collected:
+                        collected.append(candidate)
+                if len(collected) < job.requested_paraphrase_count:
+                    last_error = ValueError(
+                        f"Collected {len(collected)} distinct non-source "
+                        f"paraphrases; need {job.requested_paraphrase_count}."
+                    )
+                    continue
                 return ReferringParaphraseResult(
                     source_sample_id=job.source_sample_id,
                     source_fingerprint=job.source_fingerprint,
                     language=job.language,
                     generator_model=self.generator_identity,
                     review_status="unreviewed",
-                    paraphrases=paraphrases,
+                    paraphrases=collected[: job.requested_paraphrase_count],
                 )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 last_error = error
@@ -223,14 +232,7 @@ def parse_qwen_vl_paraphrases(
     language: Literal["zh", "en"],
 ) -> list[str]:
     """Parse and structurally validate one deterministic Qwen-VL response."""
-    if not isinstance(response, str) or not response.strip():
-        raise ValueError("Qwen-VL response is empty.")
-    payload = _extract_json_array(response)
-    if not isinstance(payload, list) or any(
-        not isinstance(item, str) for item in payload
-    ):
-        raise ValueError("Qwen-VL response must be a JSON array of strings.")
-    normalized = [" ".join(item.strip().split()) for item in payload]
+    normalized = _parse_qwen_vl_string_array(response)
     if len(normalized) != expected_count:
         raise ValueError(
             f"Expected {expected_count} paraphrases, received {len(normalized)}."
@@ -246,6 +248,42 @@ def parse_qwen_vl_paraphrases(
     return normalized
 
 
+def collect_qwen_vl_paraphrase_candidates(
+    response: str,
+    *,
+    source_query: str,
+    language: Literal["zh", "en"],
+) -> list[str]:
+    """Keep unique non-source candidates for accumulation across retries."""
+    normalized = _parse_qwen_vl_string_array(response)
+    _validate_output_language(normalized, language)
+    source_key = " ".join(source_query.strip().split()).casefold()
+    candidates: list[str] = []
+    seen_keys: set[str] = set()
+    for candidate in normalized:
+        candidate_key = candidate.casefold()
+        if candidate_key == source_key or candidate_key in seen_keys:
+            continue
+        seen_keys.add(candidate_key)
+        candidates.append(candidate)
+    return candidates
+
+
+def _parse_qwen_vl_string_array(response: str) -> list[str]:
+    """Decode one non-empty JSON string array without semantic filtering."""
+    if not isinstance(response, str) or not response.strip():
+        raise ValueError("Qwen-VL response is empty.")
+    payload = _extract_json_array(response)
+    if not isinstance(payload, list) or any(
+        not isinstance(item, str) for item in payload
+    ):
+        raise ValueError("Qwen-VL response must be a JSON array of strings.")
+    normalized = [" ".join(item.strip().split()) for item in payload]
+    if any(not item for item in normalized):
+        raise ValueError("Qwen-VL paraphrases cannot be empty.")
+    return normalized
+
+
 def _extract_json_array(response: str) -> object:
     """Accept a bare array or one fenced JSON payload without surrounding prose."""
     stripped = response.strip()
@@ -258,14 +296,23 @@ def _extract_json_array(response: str) -> object:
     return json.loads(candidate)
 
 
-def _retry_instruction(last_error: Exception | None) -> str:
+def _retry_instruction(
+    last_error: Exception | None,
+    collected: list[str],
+) -> str:
     """Turn the prior structural failure into one bounded correction prompt."""
     detail = str(last_error) if last_error else ""
     instruction = (
         "\nThe prior response was invalid. Return only the bare JSON array "
         "with no Markdown or explanation."
     )
-    if "copied the source query" in detail:
+    if collected:
+        excluded = json.dumps(collected, ensure_ascii=False)
+        instruction += (
+            " Do not repeat the source or these already accepted candidates: "
+            f"{excluded}. Produce genuinely different wording."
+        )
+    elif "copied the source query" in detail:
         instruction += (
             " Replace every sentence that matches the source after ignoring "
             "capitalization; all candidates need genuinely different wording."

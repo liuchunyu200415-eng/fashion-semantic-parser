@@ -16,6 +16,7 @@ from fashion_semantic_parser.service.qwen_vl_paraphraser import (
     QwenVlParaphraser,
     QwenVlParaphraseSettings,
     build_qwen_vl_paraphrase_prompt,
+    collect_qwen_vl_paraphrase_candidates,
     parse_qwen_vl_paraphrases,
     resolve_qwen_vl_model_path,
 )
@@ -133,7 +134,22 @@ def test_qwen_retry_targets_source_copy() -> None:
     result = paraphraser.paraphrase(_job())
 
     assert len(result.paraphrases) == 2
-    assert "ignoring capitalization" in model.prompts[1]
+    assert "already accepted candidates" in model.prompts[1]
+
+
+def test_qwen_candidate_collection_filters_source_and_duplicates() -> None:
+    """Useful candidates survive even when one model response is imperfect."""
+    response = """```json
+["衣服右侧的口袋", "衣服右边的口袋", "衣服右边的口袋"]
+```"""
+
+    candidates = collect_qwen_vl_paraphrase_candidates(
+        response,
+        source_query="衣服右侧的口袋",
+        language="zh",
+    )
+
+    assert candidates == ["衣服右边的口袋"]
 
 
 def test_qwen_parser_rejects_count_language_and_source_copy() -> None:
