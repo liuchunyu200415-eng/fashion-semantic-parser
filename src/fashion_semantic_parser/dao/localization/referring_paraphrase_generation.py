@@ -18,6 +18,10 @@ class ReferringParaphraseGenerator(Protocol):
     # The runner needs exactly one vendor-independent generation operation.
     # pylint: disable=too-few-public-methods
 
+    @property
+    def generator_identity(self) -> str:
+        """Return the versioned generator identity stored in result rows."""
+
     def paraphrase(self, job: ReferringParaphraseJob) -> ReferringParaphraseResult:
         """Generate one auditable unreviewed result."""
 
@@ -65,7 +69,11 @@ def run_referring_paraphrase_jobs(
     if len(jobs_by_id) != len(jobs):
         raise ValueError("Paraphrase jobs contain duplicate source_sample_id.")
     existing_results = _read_existing_results(output_path)
-    _validate_existing_results(existing_results, jobs_by_id)
+    _validate_existing_results(
+        existing_results,
+        jobs_by_id,
+        expected_generator_model=generator.generator_identity,
+    )
     existing_ids = {result.source_sample_id for result in existing_results}
     pending_jobs = [job for job in jobs if job.source_sample_id not in existing_ids]
     selected_jobs = pending_jobs[:limit] if limit is not None else pending_jobs
@@ -76,7 +84,11 @@ def run_referring_paraphrase_jobs(
     for index, job in enumerate(selected_jobs, start=1):
         try:
             result = generator.paraphrase(job)
-            _validate_generated_result(result, job)
+            _validate_generated_result(
+                result,
+                job,
+                expected_generator_model=generator.generator_identity,
+            )
             results.append(result)
             generated_count += 1
             print(
@@ -141,6 +153,8 @@ def _read_existing_results(path: Path) -> list[ReferringParaphraseResult]:
 def _validate_existing_results(
     results: list[ReferringParaphraseResult],
     jobs_by_id: dict[str, ReferringParaphraseJob],
+    *,
+    expected_generator_model: str,
 ) -> None:
     """Ensure a resume checkpoint still belongs to the immutable job file."""
     result_ids = [result.source_sample_id for result in results]
@@ -152,12 +166,18 @@ def _validate_existing_results(
             raise ValueError(
                 f"Paraphrase result references unknown job: {result.source_sample_id}"
             )
-        _validate_generated_result(result, job)
+        _validate_generated_result(
+            result,
+            job,
+            expected_generator_model=expected_generator_model,
+        )
 
 
 def _validate_generated_result(
     result: ReferringParaphraseResult,
     job: ReferringParaphraseJob,
+    *,
+    expected_generator_model: str,
 ) -> None:
     """Reject provenance, language, review, or result-count drift."""
     if result.source_sample_id != job.source_sample_id:
@@ -168,6 +188,10 @@ def _validate_generated_result(
         raise ValueError("Generated result language differs from its job.")
     if result.review_status != "unreviewed":
         raise ValueError("Model generation cannot mark its own output as reviewed.")
+    if result.generator_model != expected_generator_model:
+        raise ValueError(
+            "Generated result model identity differs from the active generator."
+        )
     if len(result.paraphrases) != job.requested_paraphrase_count:
         raise ValueError("Generated paraphrase count differs from its job.")
 

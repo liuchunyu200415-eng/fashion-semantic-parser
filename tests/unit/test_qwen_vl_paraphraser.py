@@ -31,6 +31,7 @@ class _FakeQwenVlModel:
     def __init__(self, responses: list[str]) -> None:
         self.responses = responses
         self.prompts: list[str] = []
+        self.generation_kwargs: list[dict[str, object]] = []
 
     def chat(
         self,
@@ -40,8 +41,9 @@ class _FakeQwenVlModel:
         **kwargs: object,
     ) -> tuple[str, object]:
         """Return the next configured model response."""
-        del tokenizer, history, kwargs
+        del tokenizer, history
         self.prompts.append(query)
+        self.generation_kwargs.append(kwargs)
         return self.responses.pop(0), None
 
 
@@ -52,11 +54,11 @@ def test_qwen_prompt_preserves_full_referent_constraints() -> None:
     prompt = build_qwen_vl_paraphrase_prompt(job)
 
     assert "衣服右侧的口袋" in prompt
-    assert "Target part: pocket" in prompt
-    assert "Target instance count: 1" in prompt
+    assert "目标部件：pocket" in prompt
+    assert "目标实例数量：1" in prompt
     assert "basic, spatial" in prompt
-    assert "exactly 2" in prompt
-    assert "JSON array" in prompt
+    assert "恰好包含 2 条" in prompt
+    assert "JSON 字符串数组" in prompt
 
 
 def test_qwen_paraphraser_outputs_unreviewed_pinned_provenance() -> None:
@@ -73,10 +75,19 @@ def test_qwen_paraphraser_outputs_unreviewed_pinned_provenance() -> None:
     assert result.review_status == "unreviewed"
     assert result.generator_model == (
         "Qwen/Qwen-VL-Chat-Int4@55acaf444e9f5adfd47105b875571a23d7f7fa30"
+        ":prd312-sampling-v2"
     )
     assert result.source_fingerprint == "a" * 64
     assert len(result.paraphrases) == 2
     assert model.prompts[0].count("衣服右侧的口袋") == 1
+    assert model.generation_kwargs == [
+        {
+            "do_sample": True,
+            "temperature": 0.7,
+            "top_p": 0.8,
+            "max_new_tokens": 256,
+        }
+    ]
 
 
 def test_qwen_paraphraser_retries_with_stricter_format_instruction() -> None:
@@ -97,8 +108,8 @@ def test_qwen_paraphraser_retries_with_stricter_format_instruction() -> None:
 
     assert len(result.paraphrases) == 2
     assert len(model.prompts) == 2
-    assert "prior response was invalid" not in model.prompts[0]
-    assert "prior response was invalid" in model.prompts[1]
+    assert "上一次回答无效" not in model.prompts[0]
+    assert "上一次回答无效" in model.prompts[1]
 
 
 def test_qwen_parser_accepts_mislabeled_fenced_json() -> None:
@@ -134,7 +145,7 @@ def test_qwen_retry_targets_source_copy() -> None:
     result = paraphraser.paraphrase(_job())
 
     assert len(result.paraphrases) == 2
-    assert "already accepted candidates" in model.prompts[1]
+    assert "已接受的候选表达" in model.prompts[1]
 
 
 def test_qwen_candidate_collection_filters_source_and_duplicates() -> None:
@@ -230,6 +241,40 @@ def test_generation_runner_resumes_and_retains_failed_job(tmp_path: Path) -> Non
     assert retry_summary.remaining_job_count == 0
     assert len(output_path.read_text(encoding="utf-8").splitlines()) == 2
     assert failure_path.read_text(encoding="utf-8") == ""
+
+
+def test_generation_runner_rejects_results_from_an_old_strategy(
+    tmp_path: Path,
+) -> None:
+    """Resume cannot silently mix rows produced by two generation policies."""
+    job_path = tmp_path / "jobs.jsonl"
+    _write_models(job_path, [_job()])
+    output_path = tmp_path / "results.jsonl"
+    failure_path = tmp_path / "failures.jsonl"
+    first_generator = QwenVlParaphraser(
+        QwenVlParaphraseSettings(retry_count=0),
+        tokenizer=object(),
+        model=_FakeQwenVlModel(['["请定位衣服右边的口袋", "找出衣服右侧口袋"]']),
+    )
+    run_referring_paraphrase_jobs(
+        job_path=job_path,
+        output_path=output_path,
+        failure_path=failure_path,
+        generator=first_generator,
+    )
+    changed_generator = QwenVlParaphraser(
+        QwenVlParaphraseSettings(model_revision="b" * 40, retry_count=0),
+        tokenizer=object(),
+        model=_FakeQwenVlModel([]),
+    )
+
+    with pytest.raises(ValueError, match="model identity"):
+        run_referring_paraphrase_jobs(
+            job_path=job_path,
+            output_path=output_path,
+            failure_path=failure_path,
+            generator=changed_generator,
+        )
 
 
 def test_qwen_setup_pins_official_prd_model() -> None:

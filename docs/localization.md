@@ -2551,6 +2551,14 @@ relation, and reference frame still requires human review. The merge rejects
 these raw outputs until a reviewer records `reviewed_by`, `reviewed_at`, and
 `review_status=reviewed`.
 
+The current `prd312-sampling-v2` policy uses language-matched prompts, a stable
+per-job seed, bounded sampling, and up to five attempts that accumulate only
+unique non-source candidates. Resume validation rejects rows created by another
+generation-policy identity, so an earlier deterministic smoke must be archived
+or removed before starting this policy. Parser recovery never approves a row:
+JSON objects, wrong-language text, copied source queries, and insufficient
+candidate counts still fail closed.
+
 The first command selects exactly 100,000 records by deterministic water-filled
 strata over target label, language, and the complete modifier signature. Within
 each stratum it uses a stable SHA-256 rank instead of an image prefix, then
