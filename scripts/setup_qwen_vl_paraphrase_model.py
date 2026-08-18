@@ -51,15 +51,23 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def resolve_model_path(value: str) -> Path:
+    """Allow an explicit absolute data-volume path or a project-relative path."""
+    model_path = Path(value).expanduser()
+    if model_path.is_absolute():
+        return model_path.resolve()
+    from fashion_semantic_parser.common.paths import resolve_project_path
+
+    return Path(resolve_project_path(model_path))
+
+
 def main() -> None:
     """Download one immutable official snapshot and validate its files."""
     args = parse_args()
     add_src_to_python_path()
     from huggingface_hub import snapshot_download  # type: ignore[import-not-found]
 
-    from fashion_semantic_parser.common.paths import resolve_project_path
-
-    model_path = resolve_project_path(args.model_path)
+    model_path = resolve_model_path(args.model_path)
     model_path.mkdir(parents=True, exist_ok=True)
     missing = [name for name in REQUIRED_FILES if not (model_path / name).is_file()]
     existing_weights_size = sum(

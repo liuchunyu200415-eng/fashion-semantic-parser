@@ -13,11 +13,12 @@ from fashion_semantic_parser.dao.localization.referring_paraphrase_generation im
     run_referring_paraphrase_jobs,
 )
 from fashion_semantic_parser.service.qwen_vl_paraphraser import (
-    QwenVlParaphraseSettings,
     QwenVlParaphraser,
+    QwenVlParaphraseSettings,
     build_qwen_vl_paraphrase_prompt,
     parse_qwen_vl_paraphrases,
 )
+from scripts.setup_qwen_vl_paraphrase_model import resolve_model_path
 
 
 class _FakeQwenVlModel:
@@ -187,6 +188,13 @@ def test_qwen_setup_pins_official_prd_model() -> None:
     assert "55acaf444e9f5adfd47105b875571a23d7f7fa30" in setup_source
     assert "OpenAI" not in setup_source
     assert "DeepSeek" not in setup_source
+
+
+def test_qwen_setup_accepts_absolute_data_volume_path(tmp_path: Path) -> None:
+    """Large model assets may be placed outside the capacity-limited repo disk."""
+    model_path = tmp_path / "qwen-vl-chat-int4"
+
+    assert resolve_model_path(str(model_path)) == model_path.resolve()
 
 
 def _job(
