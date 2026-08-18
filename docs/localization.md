@@ -2635,14 +2635,20 @@ Clean audit loss fell from `0.8962` to `0.8422`, but refined Mask Recall50 fell
 from `57.48%` to `56.82%`, mean Mask IoU from `51.16%` to `50.87%`, and Box
 Recall50 from `55.64%` to `52.89%`. Zipper, rivet, and pocket did not improve;
 the checkpoint is rejected. The next 10k gate uses the scale-safe config with
-lower head/backbone learning rates and no Copy-Paste so data scale remains the
-only major changed factor.
+lower head/backbone learning rates and no Copy-Paste. This tests a safer scaled
+recipe against the frozen baseline; Copy-Paste remains a separate 10k A/B only
+after the no-augmentation checkpoint passes.
 
 Training batches now use a deterministic shuffled epoch iterator. Every query
 is visited once before reshuffling, while batch selection and Copy-Paste retain
 independent seeds. The earlier independent per-step sampling could revisit
 queries before covering the selected set and was unsuitable for a 100k scale
 claim.
+
+Copy-Paste Mask downsampling uses area coverage rather than a single nearest
+sample. This prevents sparse zipper or rivet donor pixels from disappearing
+when resized into a one- or few-pixel receiver box; an empty result remains a
+hard error instead of silently changing positive supervision to background.
 
 ### DINOv2 Box-Guided Mask2Former Refinement
 

@@ -116,6 +116,34 @@ def test_copy_paste_rejects_different_labels() -> None:
         )
 
 
+def test_copy_paste_preserves_sparse_donor_when_downsampling() -> None:
+    """Tiny target boxes cannot erase a valid sparse donor instance."""
+    receiver = _item(
+        "rivet",
+        image_id=1,
+        mask_slice=(slice(2, 3), slice(2, 3)),
+    )
+    donor = _item(
+        "rivet",
+        image_id=2,
+        mask_slice=(slice(0, 1), slice(0, 1)),
+        color=(200, 100, 50),
+    )
+    donor.target_masks[:] = 0
+    donor.target_masks[0, 0, 2] = 1
+    donor.target_masks[0, 2, 0] = 1
+
+    image, union_mask = copy_paste_same_label_instance(
+        receiver,
+        donor,
+        np.random.default_rng(7),
+    )
+
+    assert union_mask.sum() == 1
+    assert union_mask[2, 2]
+    assert np.all(image[2, 2] == [200, 100, 50])
+
+
 def test_deterministic_batches_cover_each_epoch_without_replacement() -> None:
     """A nominal epoch must expose every selected query exactly once."""
     first = list(

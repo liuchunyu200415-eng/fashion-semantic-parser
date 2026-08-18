@@ -418,11 +418,16 @@ def _resize_donor_instance(
         (output_width, output_height),
         interpolation=cv2.INTER_LINEAR,
     )
-    resized_mask = cv2.resize(
-        np.asarray(mask_crop, dtype=np.uint8),
+    downsampling = (
+        output_width < mask_crop.shape[1] or output_height < mask_crop.shape[0]
+    )
+    mask_interpolation = cv2.INTER_AREA if downsampling else cv2.INTER_NEAREST
+    resized_coverage = cv2.resize(
+        np.asarray(mask_crop, dtype=np.float32),
         (output_width, output_height),
-        interpolation=cv2.INTER_NEAREST,
-    ).astype(bool)
+        interpolation=mask_interpolation,
+    )
+    resized_mask = resized_coverage > 0.0
     if not resized_mask.any():
         raise ValueError("Copy-Paste resize removed the donor instance.")
     return resized_image, resized_mask
