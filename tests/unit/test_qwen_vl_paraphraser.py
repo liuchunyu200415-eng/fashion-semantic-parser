@@ -194,6 +194,8 @@ def test_qwen_setup_pins_official_prd_model() -> None:
     assert "optimum==1.22.0" in setup_shell
     assert "optimum==1.21.4" not in setup_shell
     assert "transformers==4.44.2" in setup_shell
+    assert 'version("optimum")' in setup_shell
+    assert "optimum.__version__" not in setup_shell
 
 
 def test_qwen_setup_accepts_absolute_data_volume_path(tmp_path: Path) -> None:

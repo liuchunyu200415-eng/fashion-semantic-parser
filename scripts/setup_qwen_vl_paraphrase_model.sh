@@ -41,4 +41,4 @@ conda run --no-capture-output -n "$environment_name" \
 
 conda run --no-capture-output -n "$environment_name" \
   python -c \
-  'import auto_gptq, optimum, tiktoken, transformers_stream_generator; print("optimum:", optimum.__version__); print("qwen_vl_runtime: ready")'
+  'from importlib.metadata import version; import auto_gptq, optimum, tiktoken, transformers_stream_generator; print("optimum:", version("optimum")); print("qwen_vl_runtime: ready")'
