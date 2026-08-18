@@ -68,7 +68,7 @@ class QwenVlParaphraser:
         """Load pinned local Qwen-VL assets and reject runtime downloads."""
         if self._tokenizer is not None and self._model is not None:
             return
-        model_path = resolve_project_path(self.settings.model_path)
+        model_path = resolve_qwen_vl_model_path(self.settings.model_path)
         self._validate_local_assets(model_path)
         try:
             # Optional model dependencies are validated only on this route.
@@ -180,6 +180,14 @@ def load_qwen_vl_paraphrase_settings(
         QwenVlParaphraseSettings,
         QwenVlParaphraseSettings.model_validate(raw),
     )
+
+
+def resolve_qwen_vl_model_path(value: str | Path) -> Path:
+    """Resolve an explicit data-volume path or a project-relative model path."""
+    model_path = Path(value).expanduser()
+    if model_path.is_absolute():
+        return model_path.resolve()
+    return Path(resolve_project_path(model_path))
 
 
 def build_qwen_vl_paraphrase_prompt(job: ReferringParaphraseJob) -> str:

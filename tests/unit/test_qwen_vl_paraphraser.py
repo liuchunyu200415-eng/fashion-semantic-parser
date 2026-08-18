@@ -17,8 +17,8 @@ from fashion_semantic_parser.service.qwen_vl_paraphraser import (
     QwenVlParaphraseSettings,
     build_qwen_vl_paraphrase_prompt,
     parse_qwen_vl_paraphrases,
+    resolve_qwen_vl_model_path,
 )
-from scripts.setup_qwen_vl_paraphrase_model import resolve_model_path
 
 
 class _FakeQwenVlModel:
@@ -194,7 +194,19 @@ def test_qwen_setup_accepts_absolute_data_volume_path(tmp_path: Path) -> None:
     """Large model assets may be placed outside the capacity-limited repo disk."""
     model_path = tmp_path / "qwen-vl-chat-int4"
 
-    assert resolve_model_path(str(model_path)) == model_path.resolve()
+    assert resolve_qwen_vl_model_path(str(model_path)) == model_path.resolve()
+
+
+def test_qwen_runtime_accepts_absolute_data_volume_path(tmp_path: Path) -> None:
+    """Inference reaches asset validation instead of rejecting an absolute path."""
+    model_path = tmp_path / "qwen-vl-chat-int4"
+    model_path.mkdir()
+    paraphraser = QwenVlParaphraser(
+        QwenVlParaphraseSettings(model_path=str(model_path))
+    )
+
+    with pytest.raises(RuntimeError, match="Pinned Qwen-VL assets are missing"):
+        paraphraser.load()
 
 
 def _job(
