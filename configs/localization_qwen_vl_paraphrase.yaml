@@ -1,0 +1,6 @@
+model_name: Qwen/Qwen-VL-Chat-Int4
+model_revision: 55acaf444e9f5adfd47105b875571a23d7f7fa30
+model_path: models/checkpoints/localization/qwen-vl-chat-int4
+device_map: cuda
+max_new_tokens: 256
+retry_count: 2

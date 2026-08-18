@@ -2517,6 +2517,40 @@ python scripts/export_referring_paraphrase_jobs.py \
   --paraphrases-per-sample 3
 ```
 
+The PRD-listed rewrite model for this repository is the official
+`Qwen/Qwen-VL-Chat-Int4` checkpoint. It is the 4-bit release of
+Qwen-VL-7B-Chat, not an unlisted OpenAI, DeepSeek, or text-only Qwen substitute.
+The revision is pinned, the model loads from local files only during generation,
+and the INT4 artifact is used because the official FP16 snapshot is about
+19 GB while the AutoDL data volume is capacity-constrained. Model setup requires
+at least 11 GB free on the selected volume:
+
+```bash
+QWEN_VL_MODEL_PATH=/root/autodl-tmp/fashion-semantic-parser-storage/models/qwen-vl-chat-int4 \
+QWEN_VL_ENDPOINT=https://hf-mirror.com \
+bash scripts/setup_qwen_vl_paraphrase_model.sh
+```
+
+Run a 20-job quality smoke first. The same command is resume-safe: after the
+smoke is reviewed, omit `--limit` and it skips every valid completed row.
+
+```bash
+python -u scripts/generate_referring_paraphrases_qwen_vl.py \
+  --model-path \
+    /root/autodl-tmp/fashion-semantic-parser-storage/models/qwen-vl-chat-int4 \
+  --limit 20 \
+  --checkpoint-every 10
+```
+
+Generation sends only the existing text job to the local model; no image or
+Mask leaves the machine. Every row records the pinned model identity and is
+forced to `review_status=unreviewed`. Exact output count, non-duplication,
+language, source ID, source fingerprint, and requested rewrite count are checked
+automatically. Semantic preservation of target count, direction, attribute,
+relation, and reference frame still requires human review. The merge rejects
+these raw outputs until a reviewer records `reviewed_by`, `reviewed_at`, and
+`review_status=reviewed`.
+
 The first command selects exactly 100,000 records by deterministic water-filled
 strata over target label, language, and the complete modifier signature. Within
 each stratum it uses a stable SHA-256 rank instead of an image prefix, then
@@ -2649,6 +2683,15 @@ Copy-Paste Mask downsampling uses area coverage rather than a single nearest
 sample. This prevents sparse zipper or rivet donor pixels from disappearing
 when resized into a one- or few-pixel receiver box; an empty result remains a
 hard error instead of silently changing positive supervision to background.
+
+The completed balanced 10k gate did not beat the frozen baseline. Without
+Copy-Paste, refined Mask Recall50 was `56.69%`, Recall75 `31.50%`, and mean Mask
+IoU `50.80%`. With 1,155 successful Copy-Paste applications, the corresponding
+results were `56.82%`, `31.63%`, and `50.90%`. The frozen baseline remains
+`57.48%`, `31.76%`, and `51.16%`; both 10k checkpoints are rejected. Therefore
+the current template-only 10k recipe must not be scaled to 100k. The next data
+experiment first adds reviewed Qwen-VL paraphrases, then reruns the same frozen
+single-query Top-1 Mask-IoU gate.
 
 ### DINOv2 Box-Guided Mask2Former Refinement
 
