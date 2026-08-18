@@ -155,6 +155,9 @@ def test_generation_runner_resumes_and_retains_failed_job(tmp_path: Path) -> Non
     assert first_summary.generated_result_count == 1
     assert first_summary.failed_result_count == 1
     assert first_summary.remaining_job_count == 1
+    failure = json.loads(failure_path.read_text(encoding="utf-8"))
+    assert "JSONDecodeError" in failure["message"]
+    assert 'response_preview="not-json"' in failure["message"]
     retry_model = _FakeQwenVlModel(['["请找到服装右边的口袋", "定位服装右侧的口袋"]'])
     retry_generator = QwenVlParaphraser(
         QwenVlParaphraseSettings(retry_count=0),

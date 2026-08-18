@@ -109,6 +109,7 @@ class QwenVlParaphraser:
             raise RuntimeError("Qwen-VL paraphrase model did not initialize.")
         prompt = build_qwen_vl_paraphrase_prompt(job)
         last_error: Exception | None = None
+        last_response = ""
         for attempt in range(self.settings.retry_count + 1):
             try:
                 attempt_prompt = prompt
@@ -124,6 +125,7 @@ class QwenVlParaphraser:
                     do_sample=False,
                     max_new_tokens=self.settings.max_new_tokens,
                 )
+                last_response = response
                 paraphrases = parse_qwen_vl_paraphrases(
                     response,
                     expected_count=job.requested_paraphrase_count,
@@ -140,8 +142,13 @@ class QwenVlParaphraser:
                 )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 last_error = error
+        error_name = type(last_error).__name__ if last_error else "unknown"
+        error_message = str(last_error) if last_error else "unknown validation error"
+        response_preview = json.dumps(last_response[:1000], ensure_ascii=False)
         raise RuntimeError(
-            f"Qwen-VL returned no valid paraphrases for {job.source_sample_id!r}."
+            f"Qwen-VL returned no valid paraphrases for {job.source_sample_id!r}; "
+            f"validation={error_name}: {error_message}; "
+            f"response_preview={response_preview}"
         ) from last_error
 
     def _validate_local_assets(self, model_path: Path) -> None:
