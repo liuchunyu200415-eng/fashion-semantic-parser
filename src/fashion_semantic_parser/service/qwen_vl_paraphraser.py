@@ -114,10 +114,7 @@ class QwenVlParaphraser:
             try:
                 attempt_prompt = prompt
                 if attempt:
-                    attempt_prompt += (
-                        "\nThe prior format was invalid. Return only the bare "
-                        "JSON array with no Markdown or explanation."
-                    )
+                    attempt_prompt += _retry_instruction(last_error)
                 response, _ = self._model.chat(
                     self._tokenizer,
                     query=attempt_prompt,
@@ -250,11 +247,34 @@ def parse_qwen_vl_paraphrases(
 
 
 def _extract_json_array(response: str) -> object:
-    """Accept a bare array or one fenced array, but no explanatory prose."""
+    """Accept a bare array or one fenced JSON payload without surrounding prose."""
     stripped = response.strip()
-    fenced = re.fullmatch(r"```(?:json)?\s*(\[.*\])\s*```", stripped, re.DOTALL)
+    fenced = re.fullmatch(
+        r"```[A-Za-z0-9_-]*\s*(\[.*\])\s*```",
+        stripped,
+        re.DOTALL,
+    )
     candidate = fenced.group(1) if fenced else stripped
     return json.loads(candidate)
+
+
+def _retry_instruction(last_error: Exception | None) -> str:
+    """Turn the prior structural failure into one bounded correction prompt."""
+    detail = str(last_error) if last_error else ""
+    instruction = (
+        "\nThe prior response was invalid. Return only the bare JSON array "
+        "with no Markdown or explanation."
+    )
+    if "copied the source query" in detail:
+        instruction += (
+            " Replace every sentence that matches the source after ignoring "
+            "capitalization; all candidates need genuinely different wording."
+        )
+    elif "duplicates" in detail:
+        instruction += " Make every candidate distinct."
+    elif "Expected" in detail:
+        instruction += " Return exactly the requested number of strings."
+    return instruction
 
 
 def _validate_output_language(

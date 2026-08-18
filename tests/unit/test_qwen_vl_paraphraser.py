@@ -96,8 +96,44 @@ def test_qwen_paraphraser_retries_with_stricter_format_instruction() -> None:
 
     assert len(result.paraphrases) == 2
     assert len(model.prompts) == 2
-    assert "prior format was invalid" not in model.prompts[0]
-    assert "prior format was invalid" in model.prompts[1]
+    assert "prior response was invalid" not in model.prompts[0]
+    assert "prior response was invalid" in model.prompts[1]
+
+
+def test_qwen_parser_accepts_mislabeled_fenced_json() -> None:
+    """A wrong Markdown language tag cannot hide an otherwise valid JSON array."""
+    response = """```css
+["A round neckline", "A neckline in a round shape"]
+```"""
+
+    result = parse_qwen_vl_paraphrases(
+        response,
+        expected_count=2,
+        source_query="the garment neckline with round shaping",
+        language="en",
+    )
+
+    assert result == ["A round neckline", "A neckline in a round shape"]
+
+
+def test_qwen_retry_targets_source_copy() -> None:
+    """A copied source candidate receives a specific correction on retry."""
+    model = _FakeQwenVlModel(
+        [
+            '["衣服右侧的口袋", "找出衣服右侧口袋"]',
+            '["请定位衣服右边的口袋", "找出衣服右侧口袋"]',
+        ]
+    )
+    paraphraser = QwenVlParaphraser(
+        QwenVlParaphraseSettings(retry_count=1),
+        tokenizer=object(),
+        model=model,
+    )
+
+    result = paraphraser.paraphrase(_job())
+
+    assert len(result.paraphrases) == 2
+    assert "ignoring capitalization" in model.prompts[1]
 
 
 def test_qwen_parser_rejects_count_language_and_source_copy() -> None:
