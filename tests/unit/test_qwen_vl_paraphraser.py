@@ -298,6 +298,16 @@ def test_qwen_setup_pins_official_prd_model() -> None:
     assert "optimum.__version__" not in setup_shell
 
 
+def test_qwen_sampling_policy_has_bounded_hard_case_retries() -> None:
+    """Hard cases receive ten deterministic attempts without unbounded loops."""
+    settings = QwenVlParaphraseSettings()
+
+    assert settings.retry_count + 1 == 10
+    assert settings.generation_seed == 312
+    assert settings.temperature == 0.7
+    assert settings.top_p == 0.8
+
+
 def test_qwen_setup_accepts_absolute_data_volume_path(tmp_path: Path) -> None:
     """Large model assets may be placed outside the capacity-limited repo disk."""
     model_path = tmp_path / "qwen-vl-chat-int4"

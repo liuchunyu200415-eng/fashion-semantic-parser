@@ -2552,7 +2552,7 @@ these raw outputs until a reviewer records `reviewed_by`, `reviewed_at`, and
 `review_status=reviewed`.
 
 The current `prd312-sampling-v2` policy uses language-matched prompts, a stable
-per-job seed, bounded sampling, and up to five attempts that accumulate only
+per-job seed, bounded sampling, and up to ten attempts that accumulate only
 unique non-source candidates. Resume validation rejects rows created by another
 generation-policy identity, so an earlier deterministic smoke must be archived
 or removed before starting this policy. Parser recovery never approves a row:

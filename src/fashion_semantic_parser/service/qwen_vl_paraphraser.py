@@ -26,7 +26,7 @@ class QwenVlParaphraseSettings(BaseModel):
     model_path: str = "models/checkpoints/localization/qwen-vl-chat-int4"
     device_map: Literal["cuda", "auto"] = "cuda"
     max_new_tokens: int = Field(default=256, ge=32, le=1024)
-    retry_count: int = Field(default=4, ge=0, le=10)
+    retry_count: int = Field(default=9, ge=0, le=10)
     temperature: float = Field(default=0.7, ge=0.1, le=2.0)
     top_p: float = Field(default=0.8, gt=0.0, le=1.0)
     generation_seed: int = Field(default=312, ge=0)
