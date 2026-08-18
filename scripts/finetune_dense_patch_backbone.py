@@ -107,6 +107,7 @@ def main() -> None:
         build_copy_paste_donor_groups,
         clean_finetuning_audit_loss,
         copy_paste_same_label_instance,
+        deterministic_epoch_batch_indices,
         load_dense_patch_finetuning_settings,
         query_loss_weight_from_area_fraction,
         select_copy_paste_donor,
@@ -265,17 +266,17 @@ def main() -> None:
         audit_indices,
     )
     print(f"initial_clean_audit_loss: {initial_clean_audit_loss:.6f}")
-    batch_rng = np.random.default_rng(settings.seed)
     augmentation_rng = np.random.default_rng(settings.seed + 2)
     losses: list[float] = []
     copy_paste_count = 0
     started = time.perf_counter()
-    for step in range(1, steps + 1):
-        batch_indices = batch_rng.choice(
-            len(dataset),
-            size=min(batch_size, len(dataset)),
-            replace=False,
-        )
+    batches = deterministic_epoch_batch_indices(
+        sample_count=len(dataset),
+        batch_size=batch_size,
+        steps=steps,
+        seed=settings.seed,
+    )
+    for step, batch_indices in enumerate(batches, start=1):
         images: list[np.ndarray] = []
         target_masks: list[np.ndarray] = []
         for raw_index in batch_indices:
@@ -403,6 +404,7 @@ def main() -> None:
         ),
         "copy_paste_applied_count": copy_paste_count,
         "batch_sampling_seed": settings.seed,
+        "batch_sampling_mode": "deterministic_without_replacement_per_epoch",
         "augmentation_seed": settings.seed + 2,
         "small_target_weighted_query_count": int(
             np.sum(target_area_fractions < settings.small_target_area_threshold)

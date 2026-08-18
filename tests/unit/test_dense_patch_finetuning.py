@@ -9,6 +9,7 @@ from fashion_semantic_parser.service.dense_patch_finetuning import (
     DensePatchFineTuningSettings,
     configure_dinov2_last_blocks,
     copy_paste_same_label_instance,
+    deterministic_epoch_batch_indices,
     load_dense_patch_finetuning_settings,
     load_trainable_dinov2_state_dict,
     query_loss_weight,
@@ -43,6 +44,21 @@ def test_conservative_config_reduces_update_scope_and_learning_rates() -> None:
     assert conservative.head_learning_rate < baseline.head_learning_rate
     assert conservative.backbone_learning_rate < baseline.backbone_learning_rate
     assert conservative.copy_paste_probability == baseline.copy_paste_probability
+
+
+def test_scale_safe_config_reduces_optimizer_dose_after_1k_regression() -> None:
+    """The 10k gate must not reuse the rejected 1k learning rates."""
+    conservative = load_dense_patch_finetuning_settings(
+        "configs/localization_dense_patch_finetuning_conservative.yaml"
+    )
+    scale_safe = load_dense_patch_finetuning_settings(
+        "configs/localization_dense_patch_finetuning_scale_safe.yaml"
+    )
+
+    assert scale_safe.unfreeze_last_blocks == 1
+    assert scale_safe.head_learning_rate < conservative.head_learning_rate
+    assert scale_safe.backbone_learning_rate < conservative.backbone_learning_rate
+    assert scale_safe.training_steps == 2500
 
 
 def test_query_loss_weight_combines_small_and_weak_factors_with_cap() -> None:
@@ -98,6 +114,32 @@ def test_copy_paste_rejects_different_labels() -> None:
             donor,
             np.random.default_rng(7),
         )
+
+
+def test_deterministic_batches_cover_each_epoch_without_replacement() -> None:
+    """A nominal epoch must expose every selected query exactly once."""
+    first = list(
+        deterministic_epoch_batch_indices(
+            sample_count=6,
+            batch_size=2,
+            steps=6,
+            seed=312,
+        )
+    )
+    second = list(
+        deterministic_epoch_batch_indices(
+            sample_count=6,
+            batch_size=2,
+            steps=6,
+            seed=312,
+        )
+    )
+
+    assert [batch.tolist() for batch in first] == [
+        batch.tolist() for batch in second
+    ]
+    assert sorted(np.concatenate(first[:3]).tolist()) == list(range(6))
+    assert sorted(np.concatenate(first[3:]).tolist()) == list(range(6))
 
 
 def test_dinov2_finetuning_selects_and_restores_only_last_blocks() -> None:

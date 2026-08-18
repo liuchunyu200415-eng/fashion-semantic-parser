@@ -5,7 +5,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, Sequence, cast
+from typing import Any, Iterator, Protocol, Sequence, cast
 
 import cv2
 import numpy as np
@@ -245,6 +245,35 @@ def select_copy_paste_donor(
     if not candidates:
         return None
     return int(candidates[int(rng.integers(0, len(candidates)))])
+
+
+def deterministic_epoch_batch_indices(
+    *,
+    sample_count: int,
+    batch_size: int,
+    steps: int,
+    seed: int,
+) -> Iterator[np.ndarray]:
+    """Yield reproducible batches without replacement inside each epoch."""
+    if sample_count < 1 or batch_size < 1 or steps < 1:
+        raise ValueError("Sample count, batch size, and steps must be positive.")
+    effective_batch_size = min(batch_size, sample_count)
+    rng = np.random.default_rng(seed)
+    order = rng.permutation(sample_count)
+    cursor = 0
+    for _ in range(steps):
+        parts: list[np.ndarray] = []
+        remaining = effective_batch_size
+        while remaining:
+            available = sample_count - cursor
+            take = min(remaining, available)
+            parts.append(order[cursor : cursor + take])
+            cursor += take
+            remaining -= take
+            if cursor == sample_count:
+                order = rng.permutation(sample_count)
+                cursor = 0
+        yield np.concatenate(parts).astype(np.int64, copy=False)
 
 
 def copy_paste_same_label_instance(
