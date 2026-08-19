@@ -13,6 +13,52 @@ from fashion_semantic_parser.dao.localization.referring_paraphrase import (
     ReferringParaphraseJob,
     ReferringParaphraseResult,
 )
+from fashion_semantic_parser.dao.localization.taxonomy import (
+    FASHIONPEDIA_PART_CATEGORIES,
+)
+
+_SPATIAL_TERMS: dict[
+    Literal["zh", "en"],
+    dict[str, tuple[str, ...]],
+] = {
+    "en": {
+        "left": ("left",),
+        "right": ("right",),
+        "upper": ("upper", "top", "above"),
+        "lower": ("lower", "bottom", "below"),
+    },
+    "zh": {
+        "left": ("左",),
+        "right": ("右",),
+        "upper": ("上", "顶部"),
+        "lower": ("下", "底部"),
+    },
+}
+
+_GARMENT_TERMS: dict[
+    str,
+    dict[Literal["zh", "en"], tuple[str, ...]],
+] = {
+    "shirt": {"en": ("shirt", "blouse"), "zh": ("衬衫",)},
+    "top": {"en": ("top", "t-shirt", "sweatshirt"), "zh": ("上衣",)},
+    "sweater": {"en": ("sweater",), "zh": ("毛衣",)},
+    "cardigan": {"en": ("cardigan",), "zh": ("开衫",)},
+    "jacket": {"en": ("jacket",), "zh": ("夹克",)},
+    "vest": {"en": ("vest",), "zh": ("马甲",)},
+    "pants": {"en": ("pants", "trousers", "jeans"), "zh": ("裤",)},
+    "shorts": {"en": ("shorts",), "zh": ("短裤",)},
+    "skirt": {"en": ("skirt",), "zh": ("裙",)},
+    "coat": {"en": ("coat",), "zh": ("大衣", "外套")},
+    "dress": {"en": ("dress",), "zh": ("连衣裙",)},
+    "jumpsuit": {"en": ("jumpsuit",), "zh": ("连体裤",)},
+    "cape": {"en": ("cape",), "zh": ("披肩",)},
+}
+
+_META_PREFIX = re.compile(
+    r"^(?:请求式表达|疑问式表达|定位式表达|查询|request|question|location)"
+    r"\s*[：:]\s*",
+    re.IGNORECASE,
+)
 
 
 class QwenVlParaphraseSettings(BaseModel):
@@ -68,7 +114,7 @@ class QwenVlParaphraser:
         """Return immutable model identity stored with every generated row."""
         return (
             f"{self.settings.model_name}@{self.settings.model_revision}"
-            ":prd312-sampling-v2"
+            ":prd312-semantic-gate-v3"
         )
 
     def load(self) -> None:
@@ -86,6 +132,7 @@ class QwenVlParaphraser:
                 AutoTokenizer,
                 GenerationConfig,
             )
+
             # pylint: enable=import-outside-toplevel
         except ImportError as error:
             raise RuntimeError(
@@ -145,10 +192,9 @@ class QwenVlParaphraser:
                     response,
                     source_query=job.source_query,
                     language=job.language,
+                    job=job,
                 )
-                for candidate in candidates:
-                    if candidate not in collected:
-                        collected.append(candidate)
+                _append_unique_candidates(collected, candidates)
                 if len(collected) < job.requested_paraphrase_count:
                     last_error = ValueError(
                         f"Collected {len(collected)} distinct non-source "
@@ -233,6 +279,7 @@ def resolve_qwen_vl_model_path(value: str | Path) -> Path:
 def build_qwen_vl_paraphrase_prompt(job: ReferringParaphraseJob) -> str:
     """Request strict JSON while retaining all referent-changing constraints."""
     dimensions = ", ".join(job.dimensions)
+    constraints = _prompt_constraints(job)
     if job.language == "zh":
         return (
             "你正在为语言引导的服饰区域定位任务生成训练语料。\n"
@@ -240,6 +287,7 @@ def build_qwen_vl_paraphrase_prompt(job: ReferringParaphraseJob) -> str:
             f"目标部件：{job.target_label}\n"
             f"目标实例数量：{job.target_count}\n"
             f"必须保留的语义维度：{dimensions}\n"
+            f"必须逐条保留的明确约束：{constraints}\n"
             f"任务要求：将原始查询改写为 {job.requested_paraphrase_count} 条中文表达。\n"
             "可以改成请求式、疑问式或定位式表达，但不能扩大或缩小目标集合；"
             "必须保留方位、属性、服装关系、单复数含义和参照系。"
@@ -256,6 +304,7 @@ def build_qwen_vl_paraphrase_prompt(job: ReferringParaphraseJob) -> str:
         f"Target part: {job.target_label}\n"
         f"Target instance count: {job.target_count}\n"
         f"Required meaning dimensions: {dimensions}\n"
+        f"Explicit constraints every rewrite must retain: {constraints}\n"
         f"Task: {job.instruction}\n"
         "Never broaden or narrow the target set. Keep every direction, "
         "attribute, garment relation, singular/plural meaning, and reference "
@@ -280,7 +329,7 @@ def parse_qwen_vl_paraphrases(
         )
     if any(not item for item in normalized):
         raise ValueError("Qwen-VL paraphrases cannot be empty.")
-    if len(set(normalized)) != len(normalized):
+    if len({item.casefold() for item in normalized}) != len(normalized):
         raise ValueError("Qwen-VL paraphrases cannot contain duplicates.")
     source_key = " ".join(source_query.strip().split()).casefold()
     if any(item.casefold() == source_key for item in normalized):
@@ -294,6 +343,7 @@ def collect_qwen_vl_paraphrase_candidates(
     *,
     source_query: str,
     language: Literal["zh", "en"],
+    job: ReferringParaphraseJob | None = None,
 ) -> list[str]:
     """Keep unique non-source candidates for accumulation across retries."""
     normalized = _parse_qwen_vl_string_array(response)
@@ -304,6 +354,8 @@ def collect_qwen_vl_paraphrase_candidates(
     for candidate in normalized:
         candidate_key = candidate.casefold()
         if candidate_key == source_key or candidate_key in seen_keys:
+            continue
+        if job is not None and not _preserves_semantic_constraints(candidate, job):
             continue
         seen_keys.add(candidate_key)
         candidates.append(candidate)
@@ -319,10 +371,101 @@ def _parse_qwen_vl_string_array(response: str) -> list[str]:
         not isinstance(item, str) for item in payload
     ):
         raise ValueError("Qwen-VL response must be a JSON array of strings.")
-    normalized = [" ".join(item.strip().split()) for item in payload]
+    normalized = [_normalize_candidate(item) for item in payload]
     if any(not item for item in normalized):
         raise ValueError("Qwen-VL paraphrases cannot be empty.")
     return normalized
+
+
+def _normalize_candidate(value: str) -> str:
+    """Remove model-added format labels before validating training text."""
+    normalized = " ".join(value.strip().split())
+    return _META_PREFIX.sub("", normalized).strip()
+
+
+def _append_unique_candidates(
+    collected: list[str],
+    candidates: list[str],
+) -> None:
+    """Accumulate candidates with case-insensitive identity across attempts."""
+    collected_keys = {candidate.casefold() for candidate in collected}
+    for candidate in candidates:
+        if candidate.casefold() not in collected_keys:
+            collected.append(candidate)
+            collected_keys.add(candidate.casefold())
+
+
+def _prompt_constraints(job: ReferringParaphraseJob) -> str:
+    """Render structured anchors explicitly instead of relying on prose alone."""
+    constraints = [f"target={job.target_label}"]
+    if job.spatial_modifier is not None:
+        constraints.append(f"spatial={job.spatial_modifier}")
+    if job.reference_category is not None:
+        constraints.append(f"garment_relation={job.reference_category}")
+    if job.attribute_phrase is not None:
+        constraints.append(f"attribute={job.attribute_phrase}")
+    constraints.append(f"target_count={job.target_count}")
+    return ", ".join(constraints)
+
+
+def _preserves_semantic_constraints(
+    candidate: str,
+    job: ReferringParaphraseJob,
+) -> bool:
+    """Reject rewrites that drop a target, direction, attribute, or relation."""
+    if not _contains_target_term(candidate, job):
+        return False
+    if job.spatial_modifier is not None:
+        spatial_terms = _SPATIAL_TERMS[job.language][job.spatial_modifier]
+        if not any(_contains_term(candidate, term) for term in spatial_terms):
+            return False
+    if job.reference_category is not None:
+        garment_terms = _GARMENT_TERMS.get(job.reference_category, {}).get(
+            job.language,
+            (job.reference_category,),
+        )
+        if not any(_contains_term(candidate, term) for term in garment_terms):
+            return False
+    if job.attribute_phrase is not None:
+        attribute_anchor = job.attribute_phrase.split(" (", maxsplit=1)[0]
+        if not _contains_term(candidate, attribute_anchor):
+            return False
+    return True
+
+
+def _contains_target_term(candidate: str, job: ReferringParaphraseJob) -> bool:
+    """Check the localized Fashionpedia target without collapsing its query."""
+    category = next(
+        (
+            item
+            for item in FASHIONPEDIA_PART_CATEGORIES
+            if item.english_name == job.target_label
+        ),
+        None,
+    )
+    if category is None:
+        return _contains_term(candidate, job.target_label)
+    terms = [category.english_name]
+    if job.language == "zh":
+        terms = [
+            term
+            for term in category.prompt_terms
+            if re.search(r"[\u3400-\u9fff]", term)
+        ]
+        terms.append(category.chinese_name)
+    return any(_contains_term(candidate, term) for term in terms)
+
+
+def _contains_term(text: str, term: str) -> bool:
+    """Match English tokens by boundaries and Chinese anchors by substring."""
+    if re.search(r"[\u3400-\u9fff]", term):
+        return term in text
+    return bool(
+        re.search(
+            rf"(?<![a-z0-9]){re.escape(term.casefold())}(?![a-z0-9])",
+            text.casefold(),
+        )
+    )
 
 
 def _extract_json_array(response: str) -> object:

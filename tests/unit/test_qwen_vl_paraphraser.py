@@ -75,7 +75,7 @@ def test_qwen_paraphraser_outputs_unreviewed_pinned_provenance() -> None:
     assert result.review_status == "unreviewed"
     assert result.generator_model == (
         "Qwen/Qwen-VL-Chat-Int4@55acaf444e9f5adfd47105b875571a23d7f7fa30"
-        ":prd312-sampling-v2"
+        ":prd312-semantic-gate-v3"
     )
     assert result.source_fingerprint == "a" * 64
     assert len(result.paraphrases) == 2
@@ -161,6 +161,47 @@ def test_qwen_candidate_collection_filters_source_and_duplicates() -> None:
     )
 
     assert candidates == ["衣服右边的口袋"]
+
+
+def test_qwen_candidate_gate_strips_meta_labels_and_requires_direction() -> None:
+    """Meta prose is removed while candidates that drop right are rejected."""
+    response = """```json
+["请求式表达：请指出衣服右侧的口袋", "请指出衣服上的口袋"]
+```"""
+
+    candidates = collect_qwen_vl_paraphrase_candidates(
+        response,
+        source_query="衣服右侧的口袋",
+        language="zh",
+        job=_job(),
+    )
+
+    assert candidates == ["请指出衣服右侧的口袋"]
+
+
+def test_qwen_candidate_gate_rejects_changed_garment_relation() -> None:
+    """A neckline on a dress cannot become an invented neckline style."""
+    job = ReferringParaphraseJob(
+        source_sample_id="relation-sample",
+        source_fingerprint="c" * 64,
+        source_query="the neckline on the dress",
+        language="en",
+        dimensions=["basic", "relation"],
+        target_label="neckline",
+        target_count=1,
+        reference_category="dress",
+        requested_paraphrase_count=3,
+        instruction="Preserve the dress relation.",
+    )
+
+    candidates = collect_qwen_vl_paraphrase_candidates(
+        '["A sleek V-neckline", "Locate the neckline on the dress"]',
+        source_query=job.source_query,
+        language="en",
+        job=job,
+    )
+
+    assert candidates == ["Locate the neckline on the dress"]
 
 
 def test_qwen_parser_rejects_count_language_and_source_copy() -> None:
@@ -340,6 +381,7 @@ def _job(
         dimensions=["basic", "spatial"],
         target_label="pocket",
         target_count=1,
+        spatial_modifier="right",
         requested_paraphrase_count=2,
         instruction=(
             "Rewrite into exactly 2 Chinese expressions without changing "

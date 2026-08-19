@@ -2551,13 +2551,17 @@ relation, and reference frame still requires human review. The merge rejects
 these raw outputs until a reviewer records `reviewed_by`, `reviewed_at`, and
 `review_status=reviewed`.
 
-The current `prd312-sampling-v2` policy uses language-matched prompts, a stable
-per-job seed, bounded sampling, and up to ten attempts that accumulate only
-unique non-source candidates. Resume validation rejects rows created by another
-generation-policy identity, so an earlier deterministic smoke must be archived
-or removed before starting this policy. Parser recovery never approves a row:
-JSON objects, wrong-language text, copied source queries, and insufficient
-candidate counts still fail closed.
+The current `prd312-semantic-gate-v3` policy uses language-matched prompts, a
+stable per-job seed, bounded sampling, and up to ten attempts that accumulate
+only unique non-source candidates. Version-2 jobs record the exact spatial
+modifier, garment relation, and Fashionpedia attribute phrase. Candidate text
+must retain those anchors and the localized target-part term; model-added labels
+such as `请求式表达：` are removed before validation, and case-only duplicates
+are rejected. Resume validation rejects rows created by another generation
+policy, so the job file must be re-exported and an earlier smoke must use a
+separate result path before starting this policy. Parser recovery never approves
+a row: JSON objects, wrong-language text, copied source queries, missing semantic
+anchors, and insufficient candidate counts still fail closed.
 
 The first command selects exactly 100,000 records by deterministic water-filled
 strata over target label, language, and the complete modifier signature. Within

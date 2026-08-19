@@ -35,6 +35,7 @@ def test_export_jobs_records_referent_fingerprint_and_constraints(
 
     assert count == 1
     assert job["source_sample_id"] == "fashionpedia-train-10-pocket-basic-zh-1"
+    assert job["schema_version"] == 2
     assert len(job["source_fingerprint"]) == 64
     assert job["requested_paraphrase_count"] == 2
     assert "Preserve target 'pocket'" in job["instruction"]
@@ -51,7 +52,7 @@ def test_targeted_export_prioritizes_weak_modifier_queries(tmp_path: Path) -> No
             "query": "the zipper on the lower side of the garment",
             "dimensions": ["basic", "spatial"],
             "reference_frame": "image",
-            "template_id": "spatial-en",
+            "template_id": "spatial-lower-en",
         }
     )
     rows.append(weak_spatial)
@@ -70,6 +71,7 @@ def test_targeted_export_prioritizes_weak_modifier_queries(tmp_path: Path) -> No
     assert count == 1
     assert job["source_sample_id"] == weak_spatial["id"]
     assert job["dimensions"] == ["basic", "spatial"]
+    assert job["spatial_modifier"] == "lower"
 
 
 def test_merge_reviewed_paraphrases_preserves_source_targets_and_provenance(

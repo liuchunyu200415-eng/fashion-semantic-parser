@@ -26,7 +26,7 @@ WEAK_PART_LABELS = ("zipper", "rivet", "neckline", "pocket")
 class ReferringParaphraseJob(BaseModel):
     """One vendor-neutral request to paraphrase without changing the referent."""
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     source_sample_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")
     source_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_query: str = Field(min_length=1)
@@ -34,8 +34,37 @@ class ReferringParaphraseJob(BaseModel):
     dimensions: list[ReferringQueryDimension] = Field(min_length=1)
     target_label: str = Field(min_length=1)
     target_count: int = Field(ge=1)
+    spatial_modifier: Literal["left", "right", "upper", "lower"] | None = None
+    reference_category: str | None = None
+    attribute_phrase: str | None = None
     requested_paraphrase_count: int = Field(ge=1, le=20)
     instruction: str = Field(min_length=1)
+
+    @field_validator("reference_category", "attribute_phrase")
+    @classmethod
+    def normalize_optional_constraint(cls, value: str | None) -> str | None:
+        """Normalize optional semantic anchors used by the generation gate."""
+        if value is None:
+            return None
+        normalized = " ".join(value.strip().split())
+        if not normalized:
+            raise ValueError("Paraphrase semantic constraints cannot be empty.")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_semantic_constraints(self) -> "ReferringParaphraseJob":
+        """Require an explicit anchor for every referent-changing dimension."""
+        requirements = (
+            ("spatial", self.spatial_modifier, "spatial_modifier"),
+            ("relation", self.reference_category, "reference_category"),
+            ("attribute", self.attribute_phrase, "attribute_phrase"),
+        )
+        for dimension, value, field_name in requirements:
+            if dimension in self.dimensions and value is None:
+                raise ValueError(f"{dimension} jobs require {field_name}.")
+            if dimension not in self.dimensions and value is not None:
+                raise ValueError(f"Non-{dimension} jobs cannot define {field_name}.")
+        return self
 
 
 class ReferringParaphraseResult(BaseModel):
@@ -69,7 +98,7 @@ class ReferringParaphraseResult(BaseModel):
         normalized = [" ".join(value.strip().split()) for value in values]
         if any(not value for value in normalized):
             raise ValueError("Paraphrases cannot be empty.")
-        if len(set(normalized)) != len(normalized):
+        if len({value.casefold() for value in normalized}) != len(normalized):
             raise ValueError("Paraphrases cannot contain duplicates.")
         return normalized
 
@@ -135,6 +164,9 @@ def export_referring_paraphrase_jobs(
             dimensions=list(sample.dimensions),
             target_label=sample.target_label,
             target_count=len(sample.targets),
+            spatial_modifier=_spatial_modifier(sample),
+            reference_category=sample.reference_category,
+            attribute_phrase=_attribute_phrase(sample),
             requested_paraphrase_count=paraphrases_per_sample,
             instruction=_paraphrase_instruction(sample, paraphrases_per_sample),
         )
@@ -142,6 +174,31 @@ def export_referring_paraphrase_jobs(
     ]
     _write_jsonl_atomic(output_path, [job.model_dump(mode="json") for job in jobs])
     return len(jobs)
+
+
+def _spatial_modifier(
+    sample: ReferringTrainingSample,
+) -> Literal["left", "right", "upper", "lower"] | None:
+    """Recover the controlled spatial modifier from its template identity."""
+    if "spatial" not in sample.dimensions:
+        return None
+    for modifier in ("left", "right", "upper", "lower"):
+        if f"spatial-{modifier}-" in sample.template_id:
+            return modifier
+    raise ValueError(f"Spatial sample has no recognized modifier: {sample.id}")
+
+
+def _attribute_phrase(sample: ReferringTrainingSample) -> str | None:
+    """Recover the explicit Fashionpedia attribute phrase from its template."""
+    if "attribute" not in sample.dimensions:
+        return None
+    marker = " with "
+    if sample.language != "en" or marker not in sample.query:
+        raise ValueError(f"Attribute sample has no recognized phrase: {sample.id}")
+    attribute_phrase = sample.query.split(marker, maxsplit=1)[1].strip()
+    if not attribute_phrase:
+        raise ValueError(f"Attribute sample has an empty phrase: {sample.id}")
+    return str(attribute_phrase)
 
 
 # The merge boundary intentionally exposes CLI provenance and audit controls.
