@@ -75,7 +75,7 @@ def test_qwen_paraphraser_outputs_unreviewed_pinned_provenance() -> None:
     assert result.review_status == "unreviewed"
     assert result.generator_model == (
         "Qwen/Qwen-VL-Chat-Int4@55acaf444e9f5adfd47105b875571a23d7f7fa30"
-        ":prd312-semantic-gate-v5"
+        ":prd312-semantic-gate-v6"
     )
     assert result.source_fingerprint == "a" * 64
     assert len(result.paraphrases) == 2
@@ -300,6 +300,73 @@ def test_qwen_candidate_gate_rejects_english_labels_in_chinese_text() -> None:
     )
 
     assert candidates == ["请定位衣服下方的铆钉"]
+
+
+def test_qwen_candidate_gate_rejects_new_ordinal_and_garment_relation() -> None:
+    """A rewrite cannot select an indexed instance or invent a garment class."""
+    relation_job = ReferringParaphraseJob(
+        source_sample_id="pants-rivet",
+        source_fingerprint="2" * 64,
+        source_query="the rivet on the pants",
+        language="en",
+        dimensions=["basic", "relation"],
+        target_label="rivet",
+        target_count=2,
+        reference_category="pants",
+        requested_paraphrase_count=3,
+        instruction="Preserve the pants rivet set.",
+    )
+    attribute_job = ReferringParaphraseJob(
+        source_sample_id="boat-neckline-relation-drift",
+        source_fingerprint="3" * 64,
+        source_query="the boat neckline",
+        language="en",
+        dimensions=["basic", "attribute"],
+        target_label="neckline",
+        target_count=1,
+        attribute_phrase="boat",
+        requested_paraphrase_count=3,
+        instruction="Preserve boat as the neckline attribute.",
+    )
+
+    assert collect_qwen_vl_paraphrase_candidates(
+        '["Where is the second rivet on the pants?", ' '"Find the rivet on the pants"]',
+        source_query=relation_job.source_query,
+        language="en",
+        job=relation_job,
+    ) == ["Find the rivet on the pants"]
+    assert collect_qwen_vl_paraphrase_candidates(
+        '["boat neckline top", "boat neckline shirt", ' '"Find the boat neckline"]',
+        source_query=attribute_job.source_query,
+        language="en",
+        job=attribute_job,
+    ) == ["Find the boat neckline"]
+
+
+def test_qwen_candidate_gate_rejects_existence_and_quoted_meta_text() -> None:
+    """Presence classification and quoted meta formatting are not localization."""
+    job = ReferringParaphraseJob(
+        source_sample_id="lower-rivet-existence",
+        source_fingerprint="4" * 64,
+        source_query="衣服下部的铆钉",
+        language="zh",
+        dimensions=["basic", "spatial"],
+        target_label="rivet",
+        target_count=1,
+        spatial_modifier="lower",
+        requested_paraphrase_count=3,
+        instruction="Preserve the lower rivet target.",
+    )
+
+    candidates = collect_qwen_vl_paraphrase_candidates(
+        '["衣服的下部有铆钉", "衣服的下部有没有铆钉？", '
+        '"定位 \'衣服下部的铆钉\'", "请定位衣服下部的铆钉"]',
+        source_query=job.source_query,
+        language="zh",
+        job=job,
+    )
+
+    assert candidates == ["请定位衣服下部的铆钉"]
 
 
 def test_qwen_parser_rejects_count_language_and_source_copy() -> None:

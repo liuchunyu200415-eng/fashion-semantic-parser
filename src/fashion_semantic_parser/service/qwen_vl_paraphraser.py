@@ -156,7 +156,7 @@ class QwenVlParaphraser:
         """Return immutable model identity stored with every generated row."""
         return (
             f"{self.settings.model_name}@{self.settings.model_revision}"
-            ":prd312-semantic-gate-v5"
+            ":prd312-semantic-gate-v6"
         )
 
     def load(self) -> None:
@@ -513,7 +513,13 @@ def _is_clean_localization_expression(
         re.search(r"[A-Za-z]{2,}", candidate)
     )
     has_confirmation_intent = _has_confirmation_intent(candidate, job.language)
+    has_existence_intent = _has_existence_intent(candidate, job.language)
     adds_spatial = _adds_unrequested_spatial_modifier(candidate, job)
+    adds_garment_relation = _adds_unrequested_garment_relation(candidate, job)
+    adds_ordinal = _adds_unrequested_ordinal(candidate, job)
+    has_formatting_quotes = job.language == "zh" and bool(
+        re.search(r"['\"‘’“”]", candidate)
+    )
     return not any(
         (
             has_parentheses,
@@ -523,7 +529,11 @@ def _is_clean_localization_expression(
             target_is_late,
             has_cross_language_label,
             has_confirmation_intent,
+            has_existence_intent,
             adds_spatial,
+            adds_garment_relation,
+            adds_ordinal,
+            has_formatting_quotes,
         )
     )
 
@@ -565,6 +575,22 @@ def _has_confirmation_intent(
     return bool(re.match(r"^(?:is|are|does|do|has|have)\b", candidate, re.IGNORECASE))
 
 
+def _has_existence_intent(
+    candidate: str,
+    language: Literal["zh", "en"],
+) -> bool:
+    """Reject presence claims or questions that do not request localization."""
+    if language == "zh":
+        return bool(re.search(r"(?:有没有|是否有|有)", candidate))
+    return bool(
+        re.match(
+            r"^(?:is|are)\s+there\b|^there\s+(?:is|are)\b",
+            candidate,
+            re.IGNORECASE,
+        )
+    )
+
+
 def _english_target_appears_early(
     candidate: str,
     job: ReferringParaphraseJob,
@@ -596,7 +622,18 @@ def _adds_unrequested_spatial_modifier(
         return False
     terms: tuple[str, ...]
     if job.language == "en":
-        terms = ("left", "right", "upper", "lower", "front", "back", "above", "below")
+        terms = (
+            "left",
+            "right",
+            "upper",
+            "lower",
+            "top",
+            "bottom",
+            "front",
+            "back",
+            "above",
+            "below",
+        )
     else:
         terms = (
             "左侧",
@@ -614,6 +651,43 @@ def _adds_unrequested_spatial_modifier(
         _contains_term(candidate, term) and not _contains_term(job.source_query, term)
         for term in terms
     )
+
+
+def _adds_unrequested_garment_relation(
+    candidate: str,
+    job: ReferringParaphraseJob,
+) -> bool:
+    """Reject a specific garment category invented by a non-relation query."""
+    if job.reference_category is not None:
+        return False
+    for language_terms in _GARMENT_TERMS.values():
+        for term in language_terms[job.language]:
+            if _contains_term(candidate, term) and not _contains_term(
+                job.source_query,
+                term,
+            ):
+                return True
+    return False
+
+
+def _adds_unrequested_ordinal(
+    candidate: str,
+    job: ReferringParaphraseJob,
+) -> bool:
+    """Reject an invented instance index such as 'second rivet'."""
+    if job.language == "zh":
+        pattern = r"第(?:[一二三四五六七八九十百0-9]+)(?:个|颗|枚|处|条)?"
+    else:
+        pattern = r"\b(?:first|second|third|fourth|fifth|[0-9]+(?:st|nd|rd|th))\b"
+    candidate_ordinals = {
+        match.casefold()
+        for match in re.findall(pattern, candidate, flags=re.IGNORECASE)
+    }
+    source_ordinals = {
+        match.casefold()
+        for match in re.findall(pattern, job.source_query, flags=re.IGNORECASE)
+    }
+    return not candidate_ordinals.issubset(source_ordinals)
 
 
 def _contains_target_term(candidate: str, job: ReferringParaphraseJob) -> bool:

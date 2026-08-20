@@ -2551,7 +2551,7 @@ relation, and reference frame still requires human review. The merge rejects
 these raw outputs until a reviewer records `reviewed_by`, `reviewed_at`, and
 `review_status=reviewed`.
 
-The current `prd312-semantic-gate-v5` policy uses language-matched prompts, a
+The current `prd312-semantic-gate-v6` policy uses language-matched prompts, a
 stable per-job seed, bounded sampling, and up to ten attempts that accumulate
 only unique non-source candidates. Version-2 jobs record the exact spatial
 modifier, garment relation, and Fashionpedia attribute phrase. Candidate text
@@ -2562,8 +2562,11 @@ spatial modifiers, repeated words, and candidates whose English target appears
 only late in a garment-led sentence are also rejected. Attribute terms must be
 attached to their target (`boat neckline`, not `neckline on boat`), Chinese
 outputs cannot contain English model labels, and yes/no confirmation questions
-are excluded. Source templates spell the garment category as `top garment` and
-use `上部/下部` for vertical image position to remove two recurring ambiguities.
+are excluded. Presence claims/questions, invented instance ordinals, specific
+garment categories absent from non-relation sources, and quoted Chinese meta
+formatting are also excluded. Source templates spell the garment category as
+`top garment` and use `上部/下部` for vertical image position to remove two
+recurring ambiguities.
 Parenthetical
 Fashionpedia hints are normalized into natural source queries, while a direct
 part hint such as `(pocket)` is excluded when attached to an incompatible target
