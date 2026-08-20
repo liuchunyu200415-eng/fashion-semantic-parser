@@ -156,7 +156,7 @@ class QwenVlParaphraser:
         """Return immutable model identity stored with every generated row."""
         return (
             f"{self.settings.model_name}@{self.settings.model_revision}"
-            ":prd312-semantic-gate-v4"
+            ":prd312-semantic-gate-v5"
         )
 
     def load(self) -> None:
@@ -481,8 +481,12 @@ def _preserves_semantic_constraints(
             (job.reference_category,),
         )
         valid = valid and any(_contains_term(candidate, term) for term in garment_terms)
+        if job.reference_category == "top" and job.language == "en":
+            valid = valid and bool(
+                re.search(r"\btop(?:\s+garment|'s)\b", candidate, re.IGNORECASE)
+            )
     if job.attribute_phrase is not None:
-        valid = valid and _contains_term(candidate, job.attribute_phrase)
+        valid = valid and _contains_attribute_target_phrase(candidate, job)
     return valid
 
 
@@ -505,6 +509,10 @@ def _is_clean_localization_expression(
     target_is_late = job.language == "en" and not _english_target_appears_early(
         candidate, job
     )
+    has_cross_language_label = job.language == "zh" and bool(
+        re.search(r"[A-Za-z]{2,}", candidate)
+    )
+    has_confirmation_intent = _has_confirmation_intent(candidate, job.language)
     adds_spatial = _adds_unrequested_spatial_modifier(candidate, job)
     return not any(
         (
@@ -513,9 +521,48 @@ def _is_clean_localization_expression(
             too_long,
             has_forbidden_intent,
             target_is_late,
+            has_cross_language_label,
+            has_confirmation_intent,
             adds_spatial,
         )
     )
+
+
+def _contains_attribute_target_phrase(
+    candidate: str,
+    job: ReferringParaphraseJob,
+) -> bool:
+    """Keep attributes attached to their target instead of a new object."""
+    if job.attribute_phrase is None:
+        return True
+    candidate_key = candidate.casefold()
+    attribute = re.escape(job.attribute_phrase.casefold())
+    attribute_matches = re.findall(
+        rf"(?<![a-z0-9]){attribute}(?![a-z0-9])",
+        candidate_key,
+    )
+    if len(attribute_matches) != 1:
+        return False
+    for target_term in _localized_target_terms(job):
+        target = re.escape(target_term.casefold())
+        patterns = (
+            rf"(?<![a-z0-9]){attribute}\s+{target}(?![a-z0-9])",
+            rf"(?<![a-z0-9]){target}\s+with\s+"
+            rf"(?:a\s+|an\s+|the\s+)?{attribute}(?![a-z0-9])",
+        )
+        if any(re.search(pattern, candidate_key) for pattern in patterns):
+            return True
+    return False
+
+
+def _has_confirmation_intent(
+    candidate: str,
+    language: Literal["zh", "en"],
+) -> bool:
+    """Reject yes/no or object-identification questions instead of localization."""
+    if language == "zh":
+        return candidate.startswith(("这是", "这是什么", "是不是", "是否"))
+    return bool(re.match(r"^(?:is|are|does|do|has|have)\b", candidate, re.IGNORECASE))
 
 
 def _english_target_appears_early(

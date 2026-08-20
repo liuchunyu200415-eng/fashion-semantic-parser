@@ -472,6 +472,9 @@ def build_referring_samples_for_image(
     for key, rows in sorted(relation_groups.items()):
         garment = relation_garments[key]
         category = rows[0].category
+        english_garment = garment.english_name
+        if english_garment == "top":
+            english_garment = "top garment"
         samples.extend(
             _bilingual_samples(
                 split=split,
@@ -482,7 +485,7 @@ def build_referring_samples_for_image(
                 dimensions=["basic", "relation"],
                 template=f"relation-{garment.english_name}",
                 zh_query=(f"这件{garment.chinese_name}上的{category.chinese_name}"),
-                en_query=(f"the {category.english_name} on the {garment.english_name}"),
+                en_query=(f"the {category.english_name} on the {english_garment}"),
                 reference_category=garment.english_name,
             )
         )
@@ -614,15 +617,15 @@ def _spatial_samples(
             "upper",
             1,
             height,
-            f"衣服上方的{category.chinese_name}",
-            f"the upper {category.english_name} on the garment",
+            f"衣服上部的{category.chinese_name}",
+            f"the {category.english_name} in the upper part of the garment",
         ),
         (
             "lower",
             1,
             height,
-            f"衣服下方的{category.chinese_name}",
-            f"the lower {category.english_name} on the garment",
+            f"衣服下部的{category.chinese_name}",
+            f"the {category.english_name} in the lower part of the garment",
         ),
     )
     for modifier, axis, axis_size, zh_query, en_query in specifications:

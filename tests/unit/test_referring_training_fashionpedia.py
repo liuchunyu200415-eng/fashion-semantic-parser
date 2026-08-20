@@ -152,6 +152,51 @@ def test_ambiguous_containment_does_not_create_relation_labels(tmp_path: Path) -
     assert not any("relation" in sample["dimensions"] for sample in samples)
 
 
+def test_templates_disambiguate_top_garment_and_vertical_position(
+    tmp_path: Path,
+) -> None:
+    """Top as a garment and upper/lower as positions remain compositionally clear."""
+    root = _fashionpedia_root(tmp_path)
+    source = {
+        "categories": [
+            {"id": 1, "name": "top, t-shirt, sweatshirt"},
+            {"id": 32, "name": "pocket"},
+        ],
+        "images": [{"id": 10, "file_name": "a.jpg", "width": 200, "height": 200}],
+        "annotations": [
+            _annotation(1, 10, 1, [10, 10, 180, 180]),
+            _annotation(2, 10, 32, [40, 30, 20, 20]),
+            _annotation(3, 10, 32, [40, 150, 20, 20]),
+        ],
+    }
+    _write_train_source(root, source, image_names=("a.jpg",))
+    output_path = tmp_path / "referring.jsonl"
+
+    prepare_fashionpedia_referring_training_data(
+        root=root,
+        split="train",
+        output_path=output_path,
+        summary_output_path=tmp_path / "summary.json",
+    )
+    samples = _read_jsonl(output_path)
+
+    relation = next(
+        sample
+        for sample in samples
+        if sample["template_id"] == "relation-top-en"
+        and sample["target_label"] == "pocket"
+    )
+    lower = next(
+        sample
+        for sample in samples
+        if sample["template_id"] == "spatial-lower-zh"
+        and sample["target_label"] == "pocket"
+    )
+
+    assert relation["query"] == "the pocket on the top garment"
+    assert lower["query"] == "衣服下部的口袋"
+
+
 def test_missing_part_image_keeps_final_output_atomic(tmp_path: Path) -> None:
     """A missing image must fail without leaving a partial JSONL index."""
     root = _fashionpedia_root(tmp_path)

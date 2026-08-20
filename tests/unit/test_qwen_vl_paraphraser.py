@@ -75,7 +75,7 @@ def test_qwen_paraphraser_outputs_unreviewed_pinned_provenance() -> None:
     assert result.review_status == "unreviewed"
     assert result.generator_model == (
         "Qwen/Qwen-VL-Chat-Int4@55acaf444e9f5adfd47105b875571a23d7f7fa30"
-        ":prd312-semantic-gate-v4"
+        ":prd312-semantic-gate-v5"
     )
     assert result.source_fingerprint == "a" * 64
     assert len(result.paraphrases) == 2
@@ -204,6 +204,31 @@ def test_qwen_candidate_gate_rejects_changed_garment_relation() -> None:
     assert candidates == ["Locate the neckline on the dress"]
 
 
+def test_qwen_candidate_gate_disambiguates_top_garment_from_position() -> None:
+    """Top garment relations cannot become a pocket at the garment's top."""
+    job = ReferringParaphraseJob(
+        source_sample_id="top-pocket",
+        source_fingerprint="1" * 64,
+        source_query="the pocket on the top garment",
+        language="en",
+        dimensions=["basic", "relation"],
+        target_label="pocket",
+        target_count=1,
+        reference_category="top",
+        requested_paraphrase_count=3,
+        instruction="Top is the garment category.",
+    )
+
+    candidates = collect_qwen_vl_paraphrase_candidates(
+        '["the pocket on top of the garment", "Locate the top garment\'s pocket"]',
+        source_query=job.source_query,
+        language="en",
+        job=job,
+    )
+
+    assert candidates == ["Locate the top garment's pocket"]
+
+
 def test_qwen_candidate_gate_rejects_prose_actions_and_repeated_words() -> None:
     """Passing lexical anchors cannot admit prose, actions, or malformed text."""
     job = ReferringParaphraseJob(
@@ -227,6 +252,54 @@ def test_qwen_candidate_gate_rejects_prose_actions_and_repeated_words() -> None:
     )
 
     assert candidates == ["请定位衣服下方的拉链"]
+
+
+def test_qwen_candidate_gate_rejects_attribute_object_and_confirmation_drift() -> None:
+    """Boat stays a neckline attribute and yes/no questions are not localization."""
+    job = ReferringParaphraseJob(
+        source_sample_id="boat-neckline",
+        source_fingerprint="e" * 64,
+        source_query="the boat neckline",
+        language="en",
+        dimensions=["basic", "attribute"],
+        target_label="neckline",
+        target_count=1,
+        attribute_phrase="boat",
+        requested_paraphrase_count=3,
+        instruction="Preserve boat as the neckline attribute.",
+    )
+
+    candidates = collect_qwen_vl_paraphrase_candidates(
+        '["neckline on boat", "Is this the boat neckline?", "Find the boat neckline"]',
+        source_query=job.source_query,
+        language="en",
+        job=job,
+    )
+
+    assert candidates == ["Find the boat neckline"]
+
+
+def test_qwen_candidate_gate_rejects_english_labels_in_chinese_text() -> None:
+    """Chinese localization text cannot retain an English model-side label."""
+    candidates = collect_qwen_vl_paraphrase_candidates(
+        '["定位衣服下方的 rivet 部件", "请定位衣服下方的铆钉"]',
+        source_query="衣服下方的铆钉",
+        language="zh",
+        job=ReferringParaphraseJob(
+            source_sample_id="lower-rivet",
+            source_fingerprint="f" * 64,
+            source_query="衣服下方的铆钉",
+            language="zh",
+            dimensions=["basic", "spatial"],
+            target_label="rivet",
+            target_count=1,
+            spatial_modifier="lower",
+            requested_paraphrase_count=3,
+            instruction="Preserve the lower rivet target.",
+        ),
+    )
+
+    assert candidates == ["请定位衣服下方的铆钉"]
 
 
 def test_qwen_parser_rejects_count_language_and_source_copy() -> None:
