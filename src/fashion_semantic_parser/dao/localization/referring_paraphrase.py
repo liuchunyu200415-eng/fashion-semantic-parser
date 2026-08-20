@@ -192,10 +192,19 @@ def _attribute_phrase(sample: ReferringTrainingSample) -> str | None:
     """Recover the explicit Fashionpedia attribute phrase from its template."""
     if "attribute" not in sample.dimensions:
         return None
-    marker = " with "
-    if sample.language != "en" or marker not in sample.query:
+    if sample.language != "en":
         raise ValueError(f"Attribute sample has no recognized phrase: {sample.id}")
-    attribute_phrase = sample.query.split(marker, maxsplit=1)[1].strip()
+    marker = " with "
+    if marker in sample.query:
+        attribute_phrase = sample.query.split(marker, maxsplit=1)[1].strip()
+    else:
+        prefix = "the "
+        suffix = f" {sample.target_label}"
+        if not sample.query.startswith(prefix) or not sample.query.endswith(suffix):
+            raise ValueError(
+                f"Attribute sample has no recognized phrase: {sample.id}"
+            )
+        attribute_phrase = sample.query[len(prefix) : -len(suffix)].strip()
     if not attribute_phrase:
         raise ValueError(f"Attribute sample has an empty phrase: {sample.id}")
     return str(attribute_phrase)
