@@ -28,13 +28,14 @@ def test_prepare_referring_training_data_covers_composable_language(
         "attributes": [
             {"id": 100, "name": "red"},
             {"id": 101, "name": "striped"},
+            {"id": 102, "name": "welt (pocket)"},
         ],
         "images": [{"id": 10, "file_name": "a.jpg", "width": 200, "height": 200}],
         "annotations": [
             _annotation(1, 10, 4, [20, 10, 160, 180], attributes=[]),
-            _annotation(2, 10, 32, [40, 60, 20, 20], attributes=[100]),
+            _annotation(2, 10, 32, [40, 60, 20, 20], attributes=[100, 102]),
             _annotation(3, 10, 32, [140, 64, 20, 20], attributes=[100, 101]),
-            _annotation(4, 10, 35, [95, 30, 10, 100], attributes=None),
+            _annotation(4, 10, 35, [95, 30, 10, 100], attributes=[102]),
         ],
     }
     _write_train_source(root, source, image_names=("a.jpg",))
@@ -84,6 +85,16 @@ def test_prepare_referring_training_data_covers_composable_language(
         sample for sample in samples if sample["template_id"] == "attribute-101-en"
     )
     assert striped_pocket["targets"][0]["source_annotation_id"] == 3
+    welt_pocket = next(
+        sample for sample in samples if sample["template_id"] == "attribute-102-en"
+    )
+    assert welt_pocket["query"] == "the welt pocket"
+    assert welt_pocket["target_label"] == "pocket"
+    assert not any(
+        sample["template_id"] == "attribute-102-en"
+        and sample["target_label"] == "zipper"
+        for sample in samples
+    )
 
     jacket_pocket = next(
         sample
@@ -100,8 +111,9 @@ def test_prepare_referring_training_data_covers_composable_language(
     assert summary.unmatched_relation_part_count == 0
     assert summary.dimension_counts["basic"] == summary.output_sample_count
     assert summary.dimension_counts["spatial"] == 4
-    assert summary.dimension_counts["attribute"] == 2
+    assert summary.dimension_counts["attribute"] == 3
     assert summary.dimension_counts["relation"] == 4
+    assert summary.incompatible_attribute_group_count == 1
     assert (
         json.loads(summary_path.read_text(encoding="utf-8"))["mask_storage"]
         == "source_annotation_reference"

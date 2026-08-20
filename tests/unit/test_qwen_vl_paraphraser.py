@@ -75,7 +75,7 @@ def test_qwen_paraphraser_outputs_unreviewed_pinned_provenance() -> None:
     assert result.review_status == "unreviewed"
     assert result.generator_model == (
         "Qwen/Qwen-VL-Chat-Int4@55acaf444e9f5adfd47105b875571a23d7f7fa30"
-        ":prd312-semantic-gate-v3"
+        ":prd312-semantic-gate-v4"
     )
     assert result.source_fingerprint == "a" * 64
     assert len(result.paraphrases) == 2
@@ -202,6 +202,31 @@ def test_qwen_candidate_gate_rejects_changed_garment_relation() -> None:
     )
 
     assert candidates == ["Locate the neckline on the dress"]
+
+
+def test_qwen_candidate_gate_rejects_prose_actions_and_repeated_words() -> None:
+    """Passing lexical anchors cannot admit prose, actions, or malformed text."""
+    job = ReferringParaphraseJob(
+        source_sample_id="zipper-sample",
+        source_fingerprint="d" * 64,
+        source_query="衣服下方的拉链",
+        language="zh",
+        dimensions=["basic", "spatial"],
+        target_label="zipper",
+        target_count=1,
+        spatial_modifier="lower",
+        requested_paraphrase_count=3,
+        instruction="Preserve the lower zipper target.",
+    )
+
+    candidates = collect_qwen_vl_paraphrase_candidates(
+        '["拉开衣服下方的拉链", "请定位衣服下方的拉链", "衣服下方的拉链"]',
+        source_query=job.source_query,
+        language="zh",
+        job=job,
+    )
+
+    assert candidates == ["请定位衣服下方的拉链"]
 
 
 def test_qwen_parser_rejects_count_language_and_source_copy() -> None:

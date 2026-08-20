@@ -60,6 +60,48 @@ _META_PREFIX = re.compile(
     re.IGNORECASE,
 )
 
+_FORBIDDEN_INTENT_TERMS = {
+    "en": (
+        "describe",
+        "description",
+        "fashion advice",
+        "outfit",
+        "feel confident",
+        "beautiful",
+        "elegance",
+        "sophistication",
+        "unzip",
+        "zip up",
+        "open the zipper",
+        "close the zipper",
+    ),
+    "zh": ("描述", "穿搭", "好看", "拉开", "拉上", "解开", "打开拉链", "关闭拉链"),
+}
+
+_SPATIAL_REFERENCE_TERMS = {
+    "en": (
+        "garment",
+        "clothing",
+        "apparel",
+        "dress",
+        "shirt",
+        "top",
+        "sweater",
+        "cardigan",
+        "jacket",
+        "vest",
+        "pants",
+        "trousers",
+        "jeans",
+        "shorts",
+        "skirt",
+        "coat",
+        "jumpsuit",
+        "cape",
+    ),
+    "zh": ("衣服", "服装", "衣物", "衬衫", "上衣", "裤", "裙", "大衣", "外套"),
+}
+
 
 class QwenVlParaphraseSettings(BaseModel):
     """Pinned, local-only Qwen-VL paraphrase-generation settings."""
@@ -114,7 +156,7 @@ class QwenVlParaphraser:
         """Return immutable model identity stored with every generated row."""
         return (
             f"{self.settings.model_name}@{self.settings.model_revision}"
-            ":prd312-semantic-gate-v3"
+            ":prd312-semantic-gate-v4"
         )
 
     def load(self) -> None:
@@ -292,6 +334,8 @@ def build_qwen_vl_paraphrase_prompt(job: ReferringParaphraseJob) -> str:
             "可以改成请求式、疑问式或定位式表达，但不能扩大或缩小目标集合；"
             "必须保留方位、属性、服装关系、单复数含义和参照系。"
             "每条表达都必须与原句有明显文字差异，不能照抄原句。"
+            "每条必须是简短的区域定位短语或定位问题，禁止输出说明、穿搭建议、"
+            "描述任务或操作衣物的动作。"
             "只输出一个 JSON 字符串数组，不要输出 Markdown、字段名或解释；"
             f"数组必须恰好包含 {job.requested_paraphrase_count} 条互不重复的中文字符串。"
         )
@@ -308,7 +352,9 @@ def build_qwen_vl_paraphrase_prompt(job: ReferringParaphraseJob) -> str:
         f"Task: {job.instruction}\n"
         "Never broaden or narrow the target set. Keep every direction, "
         "attribute, garment relation, singular/plural meaning, and reference "
-        "frame unchanged. Do not copy the source sentence. Return only one "
+        "frame unchanged. Every output must be a short region-locating phrase "
+        "or question, never a description, fashion advice, or garment action. "
+        "Do not copy the source sentence. Return only one "
         f"JSON array containing exactly {job.requested_paraphrase_count} "
         f"distinct {language_name} strings."
     )
@@ -401,7 +447,10 @@ def _prompt_constraints(job: ReferringParaphraseJob) -> str:
     if job.spatial_modifier is not None:
         constraints.append(f"spatial={job.spatial_modifier}")
     if job.reference_category is not None:
-        constraints.append(f"garment_relation={job.reference_category}")
+        relation = job.reference_category
+        if relation == "top":
+            relation += " (the garment category, never the upper position)"
+        constraints.append(f"garment_relation={relation}")
     if job.attribute_phrase is not None:
         constraints.append(f"attribute={job.attribute_phrase}")
     constraints.append(f"target_count={job.target_count}")
@@ -413,28 +462,120 @@ def _preserves_semantic_constraints(
     job: ReferringParaphraseJob,
 ) -> bool:
     """Reject rewrites that drop a target, direction, attribute, or relation."""
-    if not _contains_target_term(candidate, job):
+    if not (
+        _is_clean_localization_expression(candidate, job)
+        and _contains_target_term(candidate, job)
+    ):
         return False
+    valid = True
     if job.spatial_modifier is not None:
         spatial_terms = _SPATIAL_TERMS[job.language][job.spatial_modifier]
-        if not any(_contains_term(candidate, term) for term in spatial_terms):
-            return False
+        reference_terms = _SPATIAL_REFERENCE_TERMS[job.language]
+        valid = valid and any(_contains_term(candidate, term) for term in spatial_terms)
+        valid = valid and any(
+            _contains_term(candidate, term) for term in reference_terms
+        )
     if job.reference_category is not None:
         garment_terms = _GARMENT_TERMS.get(job.reference_category, {}).get(
             job.language,
             (job.reference_category,),
         )
-        if not any(_contains_term(candidate, term) for term in garment_terms):
-            return False
+        valid = valid and any(_contains_term(candidate, term) for term in garment_terms)
     if job.attribute_phrase is not None:
-        attribute_anchor = job.attribute_phrase.split(" (", maxsplit=1)[0]
-        if not _contains_term(candidate, attribute_anchor):
-            return False
-    return True
+        valid = valid and _contains_term(candidate, job.attribute_phrase)
+    return valid
+
+
+def _is_clean_localization_expression(
+    candidate: str,
+    job: ReferringParaphraseJob,
+) -> bool:
+    """Block prose, garment actions, invented directions, and malformed text."""
+    has_parentheses = "(" in candidate or ")" in candidate
+    has_repeated_word = bool(
+        re.search(r"\b([A-Za-z]+)\s+\1\b", candidate, re.IGNORECASE)
+    )
+    too_long = (job.language == "en" and len(candidate.split()) > 20) or (
+        job.language == "zh" and len(candidate) > 40
+    )
+    has_forbidden_intent = any(
+        term.casefold() in candidate.casefold()
+        for term in _FORBIDDEN_INTENT_TERMS[job.language]
+    )
+    target_is_late = job.language == "en" and not _english_target_appears_early(
+        candidate, job
+    )
+    adds_spatial = _adds_unrequested_spatial_modifier(candidate, job)
+    return not any(
+        (
+            has_parentheses,
+            has_repeated_word,
+            too_long,
+            has_forbidden_intent,
+            target_is_late,
+            adds_spatial,
+        )
+    )
+
+
+def _english_target_appears_early(
+    candidate: str,
+    job: ReferringParaphraseJob,
+) -> bool:
+    """Keep the requested region as the phrase head instead of the garment."""
+    target_positions = [
+        match.start()
+        for term in _localized_target_terms(job)
+        for match in [
+            re.search(
+                rf"(?<![a-z0-9]){re.escape(term.casefold())}(?![a-z0-9])",
+                candidate.casefold(),
+            )
+        ]
+        if match is not None
+    ]
+    if not target_positions:
+        return False
+    preceding_word_count = len(candidate[: min(target_positions)].split())
+    return preceding_word_count <= 4
+
+
+def _adds_unrequested_spatial_modifier(
+    candidate: str,
+    job: ReferringParaphraseJob,
+) -> bool:
+    """Reject invented positions on non-spatial source expressions."""
+    if job.spatial_modifier is not None:
+        return False
+    terms: tuple[str, ...]
+    if job.language == "en":
+        terms = ("left", "right", "upper", "lower", "front", "back", "above", "below")
+    else:
+        terms = (
+            "左侧",
+            "右侧",
+            "左边",
+            "右边",
+            "上方",
+            "下方",
+            "前面",
+            "后面",
+            "底部",
+            "顶部",
+        )
+    return any(
+        _contains_term(candidate, term) and not _contains_term(job.source_query, term)
+        for term in terms
+    )
 
 
 def _contains_target_term(candidate: str, job: ReferringParaphraseJob) -> bool:
     """Check the localized Fashionpedia target without collapsing its query."""
+    return any(_contains_term(candidate, term) for term in _localized_target_terms(job))
+
+
+def _localized_target_terms(job: ReferringParaphraseJob) -> list[str]:
+    """Return accepted target aliases for the job language."""
     category = next(
         (
             item
@@ -444,7 +585,7 @@ def _contains_target_term(candidate: str, job: ReferringParaphraseJob) -> bool:
         None,
     )
     if category is None:
-        return _contains_term(candidate, job.target_label)
+        return [job.target_label]
     terms = [category.english_name]
     if job.language == "zh":
         terms = [
@@ -453,7 +594,7 @@ def _contains_target_term(candidate: str, job: ReferringParaphraseJob) -> bool:
             if re.search(r"[\u3400-\u9fff]", term)
         ]
         terms.append(category.chinese_name)
-    return any(_contains_term(candidate, term) for term in terms)
+    return terms
 
 
 def _contains_term(text: str, term: str) -> bool:

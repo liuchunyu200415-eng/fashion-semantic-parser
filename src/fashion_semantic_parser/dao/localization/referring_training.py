@@ -1,7 +1,9 @@
 """Build compact Fashionpedia query-region records for DINOv2 alignment."""
 
 import json
+import re
 from collections import Counter, defaultdict
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Literal
 
@@ -144,6 +146,7 @@ class ReferringTrainingPreparationSummary(BaseModel):
     relation_association_count: int
     unmatched_relation_part_count: int
     spatial_ambiguous_group_count: int
+    incompatible_attribute_group_count: int
     source_annotation_path: str
     output_path: str
     summary_output_path: str
@@ -186,6 +189,9 @@ _GARMENT_NAMES: dict[str, tuple[str, str]] = {
 }
 
 
+# Full-dataset ETL keeps source validation, atomic writes, and audit counters in
+# one transaction boundary so a partial index can never be published.
+# pylint: disable-next=R0913,R0914,R0912,R0915
 def prepare_fashionpedia_referring_training_data(
     *,
     root: Path,
@@ -249,6 +255,7 @@ def prepare_fashionpedia_referring_training_data(
     relation_association_count = 0
     unmatched_relation_part_count = 0
     spatial_ambiguous_group_count = 0
+    incompatible_attribute_group_count = 0
     last_progress_index = 0
 
     try:
@@ -301,6 +308,9 @@ def prepare_fashionpedia_referring_training_data(
                 relation_association_count += audit["relation_association_count"]
                 unmatched_relation_part_count += audit["unmatched_relation_part_count"]
                 spatial_ambiguous_group_count += audit["spatial_ambiguous_group_count"]
+                incompatible_attribute_group_count += audit[
+                    "incompatible_attribute_group_count"
+                ]
                 for sample in samples:
                     output_file.write(
                         json.dumps(sample.model_dump(mode="json"), ensure_ascii=False)
@@ -349,6 +359,7 @@ def prepare_fashionpedia_referring_training_data(
         relation_association_count=relation_association_count,
         unmatched_relation_part_count=unmatched_relation_part_count,
         spatial_ambiguous_group_count=spatial_ambiguous_group_count,
+        incompatible_attribute_group_count=incompatible_attribute_group_count,
         source_annotation_path=to_project_relative_path(annotation_path),
         output_path=to_project_relative_path(output_path),
         summary_output_path=to_project_relative_path(summary_output_path),
@@ -361,6 +372,9 @@ def prepare_fashionpedia_referring_training_data(
     return summary
 
 
+# One image is the semantic grouping boundary for basic, spatial, attribute,
+# and garment-relation targets.
+# pylint: disable-next=too-many-arguments,too-many-locals
 def build_referring_samples_for_image(
     *,
     split: TrainingSplit,
@@ -380,7 +394,7 @@ def build_referring_samples_for_image(
         part_groups[row.category.english_name].append(row)
 
     spatial_ambiguous_group_count = 0
-    for label, rows in sorted(part_groups.items()):
+    for _, rows in sorted(part_groups.items()):
         category = rows[0].category
         rows = sorted(rows, key=lambda row: row.annotation_id)
         samples.extend(
@@ -414,9 +428,14 @@ def build_referring_samples_for_image(
         for attribute_id in row.attribute_ids:
             if attribute_id in attribute_names:
                 attribute_groups[(row.category.english_name, attribute_id)].append(row)
-    for (label, attribute_id), rows in sorted(attribute_groups.items()):
+    incompatible_attribute_group_count = 0
+    for (_, attribute_id), rows in sorted(attribute_groups.items()):
         category = rows[0].category
         attribute_name = attribute_names[attribute_id]
+        attribute_query = _attribute_query(category, attribute_name)
+        if attribute_query is None:
+            incompatible_attribute_group_count += 1
+            continue
         samples.append(
             _sample(
                 split=split,
@@ -426,7 +445,7 @@ def build_referring_samples_for_image(
                 rows=rows,
                 dimensions=["basic", "attribute"],
                 template_id=f"attribute-{attribute_id}-en",
-                query=f"the {category.english_name} with {attribute_name}",
+                query=attribute_query,
                 language="en",
                 source_attribute_ids=[attribute_id],
             )
@@ -472,7 +491,32 @@ def build_referring_samples_for_image(
         "relation_association_count": relation_association_count,
         "unmatched_relation_part_count": unmatched_relation_part_count,
         "spatial_ambiguous_group_count": spatial_ambiguous_group_count,
+        "incompatible_attribute_group_count": incompatible_attribute_group_count,
     }
+
+
+def _attribute_query(
+    category: FashionpediaPartCategory,
+    attribute_name: str,
+) -> str | None:
+    """Create natural attribute text and reject cross-part attribute hints."""
+    match = re.fullmatch(r"(.+?)\s*\(([^()]+)\)", attribute_name)
+    if match is None:
+        return f"the {category.english_name} with {attribute_name}"
+    value = match.group(1).strip()
+    hint = match.group(2).strip().casefold()
+    compatible_targets = {
+        "neck": {"neckline", "collar"},
+        "neckline": {"neckline", "collar"},
+        "pocket": {"pocket"},
+        "sleeve": {"sleeve"},
+    }.get(hint)
+    if (
+        compatible_targets is not None
+        and category.english_name not in compatible_targets
+    ):
+        return None
+    return f"the {value} {category.english_name}"
 
 
 def _source_rows_for_image(
@@ -533,6 +577,8 @@ def _source_rows_for_image(
     return parts, garments, invalid_part_count
 
 
+# Spatial extrema need the image geometry and complete same-part instance set.
+# pylint: disable-next=too-many-arguments,too-many-locals
 def _spatial_samples(
     *,
     split: TrainingSplit,
@@ -583,7 +629,7 @@ def _spatial_samples(
         reverse = modifier in ("right", "lower")
         ranked = sorted(
             rows,
-            key=lambda row: _box_center(row.bbox)[axis],
+            key=partial(_part_center_coordinate, axis=axis),
             reverse=reverse,
         )
         separation = abs(
@@ -609,6 +655,8 @@ def _spatial_samples(
     return samples, ambiguous
 
 
+# Shared sample construction deliberately keeps both language variants aligned.
+# pylint: disable-next=too-many-arguments
 def _bilingual_samples(
     *,
     split: TrainingSplit,
@@ -646,6 +694,8 @@ def _bilingual_samples(
     ]
 
 
+# Stable training provenance requires all source identifiers at construction.
+# pylint: disable-next=too-many-arguments
 def _sample(
     *,
     split: TrainingSplit,
@@ -718,6 +768,11 @@ def _attribute_names_by_id(records: list[dict[str, Any]]) -> dict[int, str]:
 def _box_center(box: tuple[float, float, float, float]) -> tuple[float, float]:
     """Return the center of one xywh box."""
     return box[0] + box[2] / 2.0, box[1] + box[3] / 2.0
+
+
+def _part_center_coordinate(row: _PartRow, *, axis: int) -> float:
+    """Return one typed center coordinate for deterministic spatial ranking."""
+    return _box_center(row.bbox)[axis]
 
 
 def _box_containment_ratio(
