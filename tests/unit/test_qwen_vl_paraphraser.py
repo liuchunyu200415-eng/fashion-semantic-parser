@@ -75,7 +75,7 @@ def test_qwen_paraphraser_outputs_unreviewed_pinned_provenance() -> None:
     assert result.review_status == "unreviewed"
     assert result.generator_model == (
         "Qwen/Qwen-VL-Chat-Int4@55acaf444e9f5adfd47105b875571a23d7f7fa30"
-        ":prd312-semantic-gate-v6"
+        ":prd312-semantic-gate-v7"
     )
     assert result.source_fingerprint == "a" * 64
     assert len(result.paraphrases) == 2
@@ -110,6 +110,26 @@ def test_qwen_paraphraser_retries_with_stricter_format_instruction() -> None:
     assert len(model.prompts) == 2
     assert "上一次回答无效" not in model.prompts[0]
     assert "上一次回答无效" in model.prompts[1]
+
+
+def test_qwen_paraphraser_retains_partial_semantically_valid_result() -> None:
+    """One valid rewrite survives when retries cannot safely produce two."""
+    model = _FakeQwenVlModel(
+        [
+            '["请定位衣服右边的口袋"]',
+            '["衣服右侧的口袋"]',
+        ]
+    )
+    paraphraser = QwenVlParaphraser(
+        QwenVlParaphraseSettings(retry_count=1),
+        tokenizer=object(),
+        model=model,
+    )
+
+    result = paraphraser.paraphrase(_job())
+
+    assert result.paraphrases == ["请定位衣服右边的口袋"]
+    assert result.generator_model.endswith(":prd312-semantic-gate-v7")
 
 
 def test_qwen_parser_accepts_mislabeled_fenced_json() -> None:
@@ -422,7 +442,10 @@ def test_generation_runner_resumes_and_retains_failed_job(tmp_path: Path) -> Non
     )
 
     assert first_summary.generated_result_count == 1
+    assert first_summary.generated_paraphrase_count == 2
+    assert first_summary.partial_generated_result_count == 0
     assert first_summary.failed_result_count == 1
+    assert first_summary.total_paraphrase_count == 2
     assert first_summary.remaining_job_count == 1
     failure = json.loads(failure_path.read_text(encoding="utf-8"))
     assert "JSONDecodeError" in failure["message"]
@@ -443,7 +466,10 @@ def test_generation_runner_resumes_and_retains_failed_job(tmp_path: Path) -> Non
 
     assert retry_summary.preexisting_result_count == 1
     assert retry_summary.generated_result_count == 1
+    assert retry_summary.generated_paraphrase_count == 2
+    assert retry_summary.partial_generated_result_count == 0
     assert retry_summary.failed_result_count == 0
+    assert retry_summary.total_paraphrase_count == 4
     assert retry_summary.remaining_job_count == 0
     assert len(output_path.read_text(encoding="utf-8").splitlines()) == 2
     assert failure_path.read_text(encoding="utf-8") == ""
@@ -480,6 +506,87 @@ def test_generation_runner_rejects_results_from_an_old_strategy(
             output_path=output_path,
             failure_path=failure_path,
             generator=changed_generator,
+        )
+
+
+def test_generation_runner_resumes_from_semantically_compatible_v6(
+    tmp_path: Path,
+) -> None:
+    """Validated complete v6 rows seed v7 while retaining original provenance."""
+    job = _job()
+    job_path = tmp_path / "jobs.jsonl"
+    _write_models(job_path, [job])
+    output_path = tmp_path / "results.jsonl"
+    failure_path = tmp_path / "failures.jsonl"
+    v7_generator = QwenVlParaphraser(
+        QwenVlParaphraseSettings(retry_count=0),
+        tokenizer=object(),
+        model=_FakeQwenVlModel([]),
+    )
+    v6_result = {
+        "source_sample_id": job.source_sample_id,
+        "source_fingerprint": job.source_fingerprint,
+        "language": job.language,
+        "generator_model": v7_generator.generator_identity.replace(
+            "semantic-gate-v7",
+            "semantic-gate-v6",
+        ),
+        "review_status": "unreviewed",
+        "paraphrases": ["请定位衣服右边的口袋", "找出衣服右侧口袋"],
+    }
+    output_path.write_text(
+        json.dumps(v6_result, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = run_referring_paraphrase_jobs(
+        job_path=job_path,
+        output_path=output_path,
+        failure_path=failure_path,
+        generator=v7_generator,
+    )
+
+    assert summary.preexisting_result_count == 1
+    assert summary.generated_result_count == 0
+    assert summary.total_paraphrase_count == 2
+
+
+def test_generation_runner_rejects_partial_v6_compatibility_row(
+    tmp_path: Path,
+) -> None:
+    """Only complete v6 rows qualify for the explicit v7 compatibility rule."""
+    job = _job()
+    job_path = tmp_path / "jobs.jsonl"
+    _write_models(job_path, [job])
+    output_path = tmp_path / "results.jsonl"
+    failure_path = tmp_path / "failures.jsonl"
+    generator = QwenVlParaphraser(
+        QwenVlParaphraseSettings(retry_count=0),
+        tokenizer=object(),
+        model=_FakeQwenVlModel([]),
+    )
+    partial_v6 = {
+        "source_sample_id": job.source_sample_id,
+        "source_fingerprint": job.source_fingerprint,
+        "language": job.language,
+        "generator_model": generator.generator_identity.replace(
+            "semantic-gate-v7",
+            "semantic-gate-v6",
+        ),
+        "review_status": "unreviewed",
+        "paraphrases": ["请定位衣服右边的口袋"],
+    }
+    output_path.write_text(
+        json.dumps(partial_v6, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Compatible v6"):
+        run_referring_paraphrase_jobs(
+            job_path=job_path,
+            output_path=output_path,
+            failure_path=failure_path,
+            generator=generator,
         )
 
 

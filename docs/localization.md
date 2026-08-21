@@ -2551,7 +2551,7 @@ relation, and reference frame still requires human review. The merge rejects
 these raw outputs until a reviewer records `reviewed_by`, `reviewed_at`, and
 `review_status=reviewed`.
 
-The current `prd312-semantic-gate-v6` policy uses language-matched prompts, a
+The current `prd312-semantic-gate-v7` policy uses language-matched prompts, a
 stable per-job seed, bounded sampling, and up to ten attempts that accumulate
 only unique non-source candidates. Version-2 jobs record the exact spatial
 modifier, garment relation, and Fashionpedia attribute phrase. Candidate text
@@ -2571,11 +2571,15 @@ Parenthetical
 Fashionpedia hints are normalized into natural source queries, while a direct
 part hint such as `(pocket)` is excluded when attached to an incompatible target
 such as `zipper`; the preparation summary reports the excluded group count.
-Resume validation rejects rows created by another generation policy, so the
-base referring index, balanced 100k subset, and version-2 job file must all be
-regenerated before starting this policy. Parser recovery never approves a row:
-JSON objects, wrong-language text, copied source queries, missing semantic
-anchors, and insufficient candidate counts still fail closed.
+Resume validation rejects incompatible generation policies. Complete v6 rows
+are explicitly compatible with v7 and keep their original generator identity,
+so the verified checkpoint is reused without relabelling. Parser recovery never
+approves a row: JSON objects, wrong-language text, copied source queries, and
+missing semantic anchors still fail closed. After all bounded retries, v7 keeps
+one to three distinct candidates only when every retained string independently
+passes the same semantic gate; jobs with zero valid candidates remain explicit
+failures. Generation summaries report result counts, retained paraphrase counts,
+and partial-result counts separately.
 
 The first command selects exactly 100,000 records by deterministic water-filled
 strata over target label, language, and the complete modifier signature. Within

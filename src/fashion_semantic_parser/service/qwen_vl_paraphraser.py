@@ -156,8 +156,14 @@ class QwenVlParaphraser:
         """Return immutable model identity stored with every generated row."""
         return (
             f"{self.settings.model_name}@{self.settings.model_revision}"
-            ":prd312-semantic-gate-v6"
+            ":prd312-semantic-gate-v7"
         )
+
+    @property
+    def resume_compatible_generator_identities(self) -> tuple[str, ...]:
+        """Allow complete v6 rows to seed v7 without changing provenance."""
+        model = f"{self.settings.model_name}@{self.settings.model_revision}"
+        return (self.generator_identity, f"{model}:prd312-semantic-gate-v6")
 
     def load(self) -> None:
         """Load pinned local Qwen-VL assets and reject runtime downloads."""
@@ -253,6 +259,15 @@ class QwenVlParaphraser:
                 )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 last_error = error
+        if collected:
+            return ReferringParaphraseResult(
+                source_sample_id=job.source_sample_id,
+                source_fingerprint=job.source_fingerprint,
+                language=job.language,
+                generator_model=self.generator_identity,
+                review_status="unreviewed",
+                paraphrases=collected,
+            )
         error_name = type(last_error).__name__ if last_error else "unknown"
         error_message = str(last_error) if last_error else "unknown validation error"
         response_preview = json.dumps(last_response[:1000], ensure_ascii=False)
