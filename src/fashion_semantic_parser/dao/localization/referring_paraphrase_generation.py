@@ -216,10 +216,6 @@ def _validate_generated_result(
         )
     if len(result.paraphrases) > job.requested_paraphrase_count:
         raise ValueError("Generated paraphrase count exceeds its job request.")
-    if result.generator_model.endswith(":prd312-semantic-gate-v6") and (
-        len(result.paraphrases) != job.requested_paraphrase_count
-    ):
-        raise ValueError("Compatible v6 results must contain the requested count.")
 
 
 def _write_models_atomic(path: Path, rows: Sequence[BaseModel]) -> None:

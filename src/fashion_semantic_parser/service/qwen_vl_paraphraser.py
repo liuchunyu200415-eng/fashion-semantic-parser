@@ -156,14 +156,13 @@ class QwenVlParaphraser:
         """Return immutable model identity stored with every generated row."""
         return (
             f"{self.settings.model_name}@{self.settings.model_revision}"
-            ":prd312-semantic-gate-v7"
+            ":prd312-semantic-gate-v8"
         )
 
     @property
     def resume_compatible_generator_identities(self) -> tuple[str, ...]:
-        """Allow complete v6 rows to seed v7 without changing provenance."""
-        model = f"{self.settings.model_name}@{self.settings.model_revision}"
-        return (self.generator_identity, f"{model}:prd312-semantic-gate-v6")
+        """Resume only rows produced by the exact active semantic policy."""
+        return (self.generator_identity,)
 
     def load(self) -> None:
         """Load pinned local Qwen-VL assets and reject runtime downloads."""
@@ -350,7 +349,7 @@ def build_qwen_vl_paraphrase_prompt(job: ReferringParaphraseJob) -> str:
             "必须保留方位、属性、服装关系、单复数含义和参照系。"
             "每条表达都必须与原句有明显文字差异，不能照抄原句。"
             "每条必须是简短的区域定位短语或定位问题，禁止输出说明、穿搭建议、"
-            "描述任务或操作衣物的动作。"
+            "描述任务或操作衣物的动作，也不能重复词组或句子片段。"
             "只输出一个 JSON 字符串数组，不要输出 Markdown、字段名或解释；"
             f"数组必须恰好包含 {job.requested_paraphrase_count} 条互不重复的中文字符串。"
         )
@@ -369,6 +368,7 @@ def build_qwen_vl_paraphrase_prompt(job: ReferringParaphraseJob) -> str:
         "attribute, garment relation, singular/plural meaning, and reference "
         "frame unchanged. Every output must be a short region-locating phrase "
         "or question, never a description, fashion advice, or garment action. "
+        "Do not repeat a phrase or sentence fragment inside one rewrite. "
         "Do not copy the source sentence. Return only one "
         f"JSON array containing exactly {job.requested_paraphrase_count} "
         f"distinct {language_name} strings."
@@ -514,6 +514,7 @@ def _is_clean_localization_expression(
     has_repeated_word = bool(
         re.search(r"\b([A-Za-z]+)\s+\1\b", candidate, re.IGNORECASE)
     )
+    has_repeated_phrase = _has_repeated_phrase(candidate)
     too_long = (job.language == "en" and len(candidate.split()) > 20) or (
         job.language == "zh" and len(candidate) > 40
     )
@@ -539,6 +540,7 @@ def _is_clean_localization_expression(
         (
             has_parentheses,
             has_repeated_word,
+            has_repeated_phrase,
             too_long,
             has_forbidden_intent,
             target_is_late,
@@ -551,6 +553,20 @@ def _is_clean_localization_expression(
             has_formatting_quotes,
         )
     )
+
+
+def _has_repeated_phrase(candidate: str) -> bool:
+    """Reject a non-overlapping token sequence repeated in one candidate."""
+    tokens = re.findall(r"[A-Za-z0-9]+|[\u3400-\u9fff]", candidate.casefold())
+    maximum_size = min(6, len(tokens) // 2)
+    for size in range(2, maximum_size + 1):
+        first_positions: dict[tuple[str, ...], int] = {}
+        for index in range(len(tokens) - size + 1):
+            phrase = tuple(tokens[index : index + size])
+            first_position = first_positions.setdefault(phrase, index)
+            if index - first_position >= size:
+                return True
+    return False
 
 
 def _contains_attribute_target_phrase(
