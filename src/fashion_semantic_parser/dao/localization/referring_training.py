@@ -30,6 +30,7 @@ from fashion_semantic_parser.dao.localization.referring_smoke import (
 from fashion_semantic_parser.dao.localization.taxonomy import (
     FashionpediaPartCategory,
     map_fashionpedia_part_category,
+    pluralize_english_part_name,
 )
 from fashion_semantic_parser.models.localization import LocalizationBoundingBox
 
@@ -397,6 +398,7 @@ def build_referring_samples_for_image(
     for _, rows in sorted(part_groups.items()):
         category = rows[0].category
         rows = sorted(rows, key=lambda row: row.annotation_id)
+        zh_target, en_target = _target_phrases(category, len(rows))
         samples.extend(
             _bilingual_samples(
                 split=split,
@@ -406,8 +408,8 @@ def build_referring_samples_for_image(
                 rows=rows,
                 dimensions=["basic"],
                 template="basic",
-                zh_query=f"这件衣服的{category.chinese_name}",
-                en_query=f"the {category.english_name} on the garment",
+                zh_query=f"这件衣服的{zh_target}",
+                en_query=f"{en_target} on the garment",
             )
         )
         spatial_samples, ambiguous = _spatial_samples(
@@ -432,7 +434,7 @@ def build_referring_samples_for_image(
     for (_, attribute_id), rows in sorted(attribute_groups.items()):
         category = rows[0].category
         attribute_name = attribute_names[attribute_id]
-        attribute_query = _attribute_query(category, attribute_name)
+        attribute_query = _attribute_query(category, attribute_name, len(rows))
         if attribute_query is None:
             incompatible_attribute_group_count += 1
             continue
@@ -475,6 +477,7 @@ def build_referring_samples_for_image(
         english_garment = garment.english_name
         if english_garment == "top":
             english_garment = "top garment"
+        zh_target, en_target = _target_phrases(category, len(rows))
         samples.extend(
             _bilingual_samples(
                 split=split,
@@ -484,8 +487,8 @@ def build_referring_samples_for_image(
                 rows=rows,
                 dimensions=["basic", "relation"],
                 template=f"relation-{garment.english_name}",
-                zh_query=(f"这件{garment.chinese_name}上的{category.chinese_name}"),
-                en_query=(f"the {category.english_name} on the {english_garment}"),
+                zh_query=(f"这件{garment.chinese_name}上的{zh_target}"),
+                en_query=(f"{en_target} on the {english_garment}"),
                 reference_category=garment.english_name,
             )
         )
@@ -501,11 +504,13 @@ def build_referring_samples_for_image(
 def _attribute_query(
     category: FashionpediaPartCategory,
     attribute_name: str,
+    target_count: int,
 ) -> str | None:
     """Create natural attribute text and reject cross-part attribute hints."""
+    _, target = _target_phrases(category, target_count)
     match = re.fullmatch(r"(.+?)\s*\(([^()]+)\)", attribute_name)
     if match is None:
-        return f"the {category.english_name} with {attribute_name}"
+        return f"{target} with {attribute_name}"
     value = match.group(1).strip()
     hint = match.group(2).strip().casefold()
     compatible_targets = {
@@ -519,7 +524,20 @@ def _attribute_query(
         and category.english_name not in compatible_targets
     ):
         return None
-    return f"the {value} {category.english_name}"
+    if target_count == 1:
+        return f"the {value} {category.english_name}"
+    return f"all {value} {pluralize_english_part_name(category.english_name)}"
+
+
+def _target_phrases(
+    category: FashionpediaPartCategory,
+    target_count: int,
+) -> tuple[str, str]:
+    """Make the annotated target-set cardinality explicit in both languages."""
+    if target_count == 1:
+        return category.chinese_name, f"the {category.english_name}"
+    plural_name = pluralize_english_part_name(category.english_name)
+    return f"所有{category.chinese_name}", f"all {plural_name}"
 
 
 def _source_rows_for_image(

@@ -2547,11 +2547,12 @@ Mask leaves the machine. Every row records the pinned model identity and is
 forced to `review_status=unreviewed`. Exact output count, non-duplication,
 language, source ID, source fingerprint, and requested rewrite count are checked
 automatically. Semantic preservation of target count, direction, attribute,
-relation, and reference frame still requires human review. The merge rejects
+relation, and reference frame still requires human review; the automatic gate
+is a fail-closed first layer, not a substitute for that review. The merge rejects
 these raw outputs until a reviewer records `reviewed_by`, `reviewed_at`, and
 `review_status=reviewed`.
 
-The current `prd312-semantic-gate-v9` policy uses language-matched prompts, a
+The current `prd312-semantic-gate-v10` policy uses language-matched prompts, a
 stable per-job seed, bounded sampling, and up to ten attempts that accumulate
 only unique non-source candidates. Version-2 jobs record the exact spatial
 modifier, garment relation, and Fashionpedia attribute phrase. Candidate text
@@ -2571,15 +2572,22 @@ recurring ambiguities.
 Identity-style `what is` questions and rewrites that turn a definite garment
 reference (`这件/这条`, `the`) into an arbitrary one (`一件/一条`, `a/an`) are
 also rejected.
+Template queries are target-count aware: a record with multiple annotated
+instances explicitly requests `所有部件` / `all parts`, while a one-instance
+record remains singular. The semantic gate accepts an English multi-instance
+rewrite only when the target noun remains plural, requires `所有` or `全部` in a
+Chinese multi-instance rewrite, and rejects plural or universal markers added
+to a one-instance source. Regenerate the full deterministic index, balanced
+100k selection, and rewrite jobs after this policy change; v9 pilot rows have
+stale source fingerprints and are audit evidence only.
 Parenthetical
 Fashionpedia hints are normalized into natural source queries, while a direct
 part hint such as `(pocket)` is excluded when attached to an incompatible target
 such as `zipper`; the preparation summary reports the excluded group count.
 Resume validation rejects incompatible generation policies. Earlier pilot
-rows remain audit evidence but cannot seed v8 because human review found a
-repeated sentence fragment that their policy admitted. Parser recovery never
+rows remain audit evidence and cannot seed the current policy. Parser recovery never
 approves a row: JSON objects, wrong-language text, copied source queries, and
-missing semantic anchors still fail closed. After all bounded retries, v8 keeps
+missing semantic anchors still fail closed. After all bounded retries, the gate keeps
 one to three distinct candidates only when every retained string independently
 passes the same semantic gate; jobs with zero valid candidates remain explicit
 failures. Generation summaries report result counts, retained paraphrase counts,

@@ -53,11 +53,26 @@ def test_prepare_referring_training_data_covers_composable_language(
         for sample in samples
         if sample["template_id"] == "basic-zh" and sample["target_label"] == "pocket"
     )
-    assert broad_pocket["query"] == "这件衣服的口袋"
+    assert broad_pocket["query"] == "这件衣服的所有口袋"
     assert [target["source_annotation_id"] for target in broad_pocket["targets"]] == [
         2,
         3,
     ]
+    broad_pocket_en = next(
+        sample
+        for sample in samples
+        if sample["template_id"] == "basic-en" and sample["target_label"] == "pocket"
+    )
+    assert broad_pocket_en["query"] == "all pockets on the garment"
+    assert (
+        next(
+            sample
+            for sample in samples
+            if sample["template_id"] == "basic-en"
+            and sample["target_label"] == "zipper"
+        )["query"]
+        == "the zipper on the garment"
+    )
 
     right_pocket = next(
         sample
@@ -79,7 +94,7 @@ def test_prepare_referring_training_data_covers_composable_language(
         if sample["template_id"] == "attribute-100-en"
         and sample["target_label"] == "pocket"
     )
-    assert red_pocket["query"] == "the pocket with red"
+    assert red_pocket["query"] == "all pockets with red"
     assert len(red_pocket["targets"]) == 2
     striped_pocket = next(
         sample for sample in samples if sample["template_id"] == "attribute-101-en"
@@ -102,9 +117,18 @@ def test_prepare_referring_training_data_covers_composable_language(
         if sample["template_id"] == "relation-jacket-zh"
         and sample["target_label"] == "pocket"
     )
-    assert jacket_pocket["query"] == "这件夹克上的口袋"
+    assert jacket_pocket["query"] == "这件夹克上的所有口袋"
     assert jacket_pocket["reference_category"] == "jacket"
     assert len(jacket_pocket["targets"]) == 2
+    assert (
+        next(
+            sample
+            for sample in samples
+            if sample["template_id"] == "relation-jacket-en"
+            and sample["target_label"] == "pocket"
+        )["query"]
+        == "all pockets on the jacket"
+    )
 
     assert summary.valid_part_annotation_count == 3
     assert summary.relation_association_count == 3
@@ -193,7 +217,7 @@ def test_templates_disambiguate_top_garment_and_vertical_position(
         and sample["target_label"] == "pocket"
     )
 
-    assert relation["query"] == "the pocket on the top garment"
+    assert relation["query"] == "all pockets on the top garment"
     assert lower["query"] == "衣服下部的口袋"
 
 

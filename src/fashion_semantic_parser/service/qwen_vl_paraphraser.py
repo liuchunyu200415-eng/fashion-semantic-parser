@@ -15,6 +15,7 @@ from fashion_semantic_parser.dao.localization.referring_paraphrase import (
 )
 from fashion_semantic_parser.dao.localization.taxonomy import (
     FASHIONPEDIA_PART_CATEGORIES,
+    pluralize_english_part_name,
 )
 
 _SPATIAL_TERMS: dict[
@@ -156,7 +157,7 @@ class QwenVlParaphraser:
         """Return immutable model identity stored with every generated row."""
         return (
             f"{self.settings.model_name}@{self.settings.model_revision}"
-            ":prd312-semantic-gate-v9"
+            ":prd312-semantic-gate-v10"
         )
 
     @property
@@ -483,6 +484,7 @@ def _preserves_semantic_constraints(
     if not (
         _is_clean_localization_expression(candidate, job)
         and _contains_target_term(candidate, job)
+        and _preserves_target_count(candidate, job)
     ):
         return False
     valid = True
@@ -508,6 +510,8 @@ def _preserves_semantic_constraints(
     return valid
 
 
+# Candidate-policy checks are intentionally named individually for auditability.
+# pylint: disable-next=too-many-locals
 def _is_clean_localization_expression(
     candidate: str,
     job: ReferringParaphraseJob,
@@ -624,7 +628,7 @@ def _has_existence_intent(
 ) -> bool:
     """Reject presence claims or questions that do not request localization."""
     if language == "zh":
-        return bool(re.search(r"(?:有没有|是否有|有)", candidate))
+        return bool(re.search(r"(?:有没有|是否有|(?<!所)有)", candidate))
     return bool(
         re.match(
             r"^(?:is|are)\s+there\b|^there\s+(?:is|are)\b",
@@ -767,6 +771,19 @@ def _contains_target_term(candidate: str, job: ReferringParaphraseJob) -> bool:
     return any(_contains_term(candidate, term) for term in _localized_target_terms(job))
 
 
+def _preserves_target_count(candidate: str, job: ReferringParaphraseJob) -> bool:
+    """Keep single-instance and all-instance queries semantically distinct."""
+    if job.language == "zh":
+        has_all_marker = any(marker in candidate for marker in ("所有", "全部"))
+        return has_all_marker if job.target_count > 1 else not has_all_marker
+    plural_terms = _localized_english_plural_target_terms(job)
+    has_plural_target = any(_contains_term(candidate, term) for term in plural_terms)
+    has_all_marker = bool(re.search(r"\b(?:all|both)\b", candidate, re.IGNORECASE))
+    if job.target_count > 1:
+        return has_plural_target
+    return not (has_plural_target or has_all_marker)
+
+
 def _localized_target_terms(job: ReferringParaphraseJob) -> list[str]:
     """Return accepted target aliases for the job language."""
     category = next(
@@ -779,7 +796,10 @@ def _localized_target_terms(job: ReferringParaphraseJob) -> list[str]:
     )
     if category is None:
         return [job.target_label]
-    terms = [category.english_name]
+    terms = [
+        category.english_name,
+        pluralize_english_part_name(category.english_name),
+    ]
     if job.language == "zh":
         terms = [
             term
@@ -788,6 +808,20 @@ def _localized_target_terms(job: ReferringParaphraseJob) -> list[str]:
         ]
         terms.append(category.chinese_name)
     return terms
+
+
+def _localized_english_plural_target_terms(job: ReferringParaphraseJob) -> list[str]:
+    """Return controlled English plural aliases for target-count validation."""
+    category = next(
+        (
+            item
+            for item in FASHIONPEDIA_PART_CATEGORIES
+            if item.english_name == job.target_label
+        ),
+        None,
+    )
+    target = category.english_name if category is not None else job.target_label
+    return [pluralize_english_part_name(target)]
 
 
 def _contains_term(text: str, term: str) -> bool:

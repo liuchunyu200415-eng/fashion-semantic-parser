@@ -46,6 +46,16 @@ class LocalizationQueryConstraints(BaseModel):
     vertical: VerticalConstraint | None = None
 
 
+def pluralize_english_part_name(value: str) -> str:
+    """Pluralize one controlled Fashionpedia English part name."""
+    normalized = value.strip()
+    if re.search(r"[^aeiou]y$", normalized, re.IGNORECASE):
+        return f"{normalized[:-1]}ies"
+    if re.search(r"(?:s|x|z|ch|sh)$", normalized, re.IGNORECASE):
+        return f"{normalized}es"
+    return f"{normalized}s"
+
+
 FASHIONPEDIA_PART_CATEGORIES = [
     FashionpediaPartCategory(
         id=1,

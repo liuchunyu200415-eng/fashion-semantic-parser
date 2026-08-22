@@ -75,7 +75,7 @@ def test_qwen_paraphraser_outputs_unreviewed_pinned_provenance() -> None:
     assert result.review_status == "unreviewed"
     assert result.generator_model == (
         "Qwen/Qwen-VL-Chat-Int4@55acaf444e9f5adfd47105b875571a23d7f7fa30"
-        ":prd312-semantic-gate-v9"
+        ":prd312-semantic-gate-v10"
     )
     assert result.source_fingerprint == "a" * 64
     assert len(result.paraphrases) == 2
@@ -129,7 +129,7 @@ def test_qwen_paraphraser_retains_partial_semantically_valid_result() -> None:
     result = paraphraser.paraphrase(_job())
 
     assert result.paraphrases == ["请定位衣服右边的口袋"]
-    assert result.generator_model.endswith(":prd312-semantic-gate-v9")
+    assert result.generator_model.endswith(":prd312-semantic-gate-v10")
 
 
 def test_qwen_parser_accepts_mislabeled_fenced_json() -> None:
@@ -405,7 +405,7 @@ def test_qwen_candidate_gate_rejects_new_ordinal_and_garment_relation() -> None:
     relation_job = ReferringParaphraseJob(
         source_sample_id="pants-rivet",
         source_fingerprint="2" * 64,
-        source_query="the rivet on the pants",
+        source_query="all rivets on the pants",
         language="en",
         dimensions=["basic", "relation"],
         target_label="rivet",
@@ -428,17 +428,108 @@ def test_qwen_candidate_gate_rejects_new_ordinal_and_garment_relation() -> None:
     )
 
     assert collect_qwen_vl_paraphrase_candidates(
-        '["Where is the second rivet on the pants?", ' '"Find the rivet on the pants"]',
+        '["Where is the second rivet on the pants?", '
+        '"Find the rivet on the pants", "Find all rivets on the pants"]',
         source_query=relation_job.source_query,
         language="en",
         job=relation_job,
-    ) == ["Find the rivet on the pants"]
+    ) == ["Find all rivets on the pants"]
     assert collect_qwen_vl_paraphrase_candidates(
-        '["boat neckline top", "boat neckline shirt", ' '"Find the boat neckline"]',
+        '["boat neckline top", "boat neckline shirt", "Find the boat neckline"]',
         source_query=attribute_job.source_query,
         language="en",
         job=attribute_job,
     ) == ["Find the boat neckline"]
+
+
+def test_qwen_candidate_gate_preserves_english_target_count() -> None:
+    """A multi-pocket union cannot shrink to one indefinite pocket."""
+    job = ReferringParaphraseJob(
+        source_sample_id="coat-pockets",
+        source_fingerprint="8" * 64,
+        source_query="all pockets on the coat",
+        language="en",
+        dimensions=["basic", "relation"],
+        target_label="pocket",
+        target_count=2,
+        reference_category="coat",
+        requested_paraphrase_count=3,
+        instruction="Preserve all coat pockets.",
+    )
+
+    response = json.dumps(
+        [
+            "A pocket on the coat",
+            "Find the pocket on the coat",
+            "Find all pockets on the coat",
+            "Where are the coat pockets?",
+        ]
+    )
+    candidates = collect_qwen_vl_paraphrase_candidates(
+        response,
+        source_query=job.source_query,
+        language="en",
+        job=job,
+    )
+
+    assert candidates == [
+        "Find all pockets on the coat",
+        "Where are the coat pockets?",
+    ]
+
+
+def test_qwen_candidate_gate_preserves_chinese_target_count() -> None:
+    """Chinese multi-target rewrites must keep an explicit all-instance marker."""
+    job = ReferringParaphraseJob(
+        source_sample_id="jacket-pockets",
+        source_fingerprint="9" * 64,
+        source_query="这件夹克上的所有口袋",
+        language="zh",
+        dimensions=["basic", "relation"],
+        target_label="pocket",
+        target_count=2,
+        reference_category="jacket",
+        requested_paraphrase_count=3,
+        instruction="保留夹克上的全部口袋。",
+    )
+
+    candidates = collect_qwen_vl_paraphrase_candidates(
+        '["这件夹克上的口袋", "请找出这件夹克上的所有口袋", '
+        '"这件夹克上的全部口袋在哪里"]',
+        source_query=job.source_query,
+        language="zh",
+        job=job,
+    )
+
+    assert candidates == [
+        "请找出这件夹克上的所有口袋",
+        "这件夹克上的全部口袋在哪里",
+    ]
+
+
+def test_qwen_candidate_gate_rejects_invented_multi_target() -> None:
+    """A one-instance source cannot expand to all matching parts."""
+    job = ReferringParaphraseJob(
+        source_sample_id="single-pocket",
+        source_fingerprint="a" * 64,
+        source_query="the pocket on the coat",
+        language="en",
+        dimensions=["basic", "relation"],
+        target_label="pocket",
+        target_count=1,
+        reference_category="coat",
+        requested_paraphrase_count=3,
+        instruction="Preserve the single coat pocket.",
+    )
+
+    candidates = collect_qwen_vl_paraphrase_candidates(
+        '["Find all pockets on the coat", "Find the pocket on the coat"]',
+        source_query=job.source_query,
+        language="en",
+        job=job,
+    )
+
+    assert candidates == ["Find the pocket on the coat"]
 
 
 def test_qwen_candidate_gate_rejects_existence_and_quoted_meta_text() -> None:
@@ -588,30 +679,30 @@ def test_generation_runner_rejects_results_from_an_old_strategy(
 
 
 def test_generation_runner_rejects_prior_pilot_policy(tmp_path: Path) -> None:
-    """The v9 audit fix cannot silently trust rows emitted by the v8 pilot."""
+    """The v10 count gate cannot silently trust rows emitted by the v9 pilot."""
     job = _job()
     job_path = tmp_path / "jobs.jsonl"
     _write_models(job_path, [job])
     output_path = tmp_path / "results.jsonl"
     failure_path = tmp_path / "failures.jsonl"
-    v9_generator = QwenVlParaphraser(
+    v10_generator = QwenVlParaphraser(
         QwenVlParaphraseSettings(retry_count=0),
         tokenizer=object(),
         model=_FakeQwenVlModel([]),
     )
-    v8_result = {
+    v9_result = {
         "source_sample_id": job.source_sample_id,
         "source_fingerprint": job.source_fingerprint,
         "language": job.language,
-        "generator_model": v9_generator.generator_identity.replace(
+        "generator_model": v10_generator.generator_identity.replace(
+            "semantic-gate-v10",
             "semantic-gate-v9",
-            "semantic-gate-v8",
         ),
         "review_status": "unreviewed",
         "paraphrases": ["请定位衣服右边的口袋", "找出衣服右侧口袋"],
     }
     output_path.write_text(
-        json.dumps(v8_result, ensure_ascii=False) + "\n",
+        json.dumps(v9_result, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
 
@@ -620,7 +711,7 @@ def test_generation_runner_rejects_prior_pilot_policy(tmp_path: Path) -> None:
             job_path=job_path,
             output_path=output_path,
             failure_path=failure_path,
-            generator=v9_generator,
+            generator=v10_generator,
         )
 
 
