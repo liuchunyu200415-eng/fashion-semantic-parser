@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "draft",
+  "status": "locked",
   "result_policy": "single_query_top1",
   "primary_metric": "mask_iou",
   "success_comparison": "strictly_greater_than",
@@ -43,7 +43,8 @@
     "neckline": 50,
     "pocket": 50
   },
+  "approval_basis": "user_directive",
   "product_owner_approval": null,
   "project_owner_approval": null,
-  "approved_at": null
+  "approved_at": "2026-08-23T02:30:58+08:00"
 }

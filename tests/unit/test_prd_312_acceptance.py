@@ -60,6 +60,7 @@ def _locked_contract() -> dict[str, object]:
             "neckline": 0,
             "pocket": 0,
         },
+        "approval_basis": "owner_signoff",
         "product_owner_approval": "product-owner",
         "project_owner_approval": "project-owner",
         "approved_at": "2026-08-14T12:00:00+08:00",
@@ -112,8 +113,19 @@ def test_draft_contract_reports_every_external_decision_blocker() -> None:
     assert "status is not locked" in blockers
     assert "multi_target_policy is not confirmed" in blockers
     assert "all four primary query-type counts are not confirmed" in blockers
-    assert "product owner approval is missing" in blockers
-    assert "project owner approval is missing" in blockers
+    assert "approval basis is missing" in blockers
+
+
+def test_user_directive_can_lock_contract_without_owner_names() -> None:
+    """A direct decision is recorded without fabricating external signatories."""
+    payload = _locked_contract()
+    payload["approval_basis"] = "user_directive"
+    payload["product_owner_approval"] = None
+    payload["project_owner_approval"] = None
+
+    contract = Prd312AcceptanceContract.model_validate(payload)
+
+    assert not acceptance_contract_blockers(contract)
 
 
 def test_locked_contract_requires_every_primary_query_type() -> None:

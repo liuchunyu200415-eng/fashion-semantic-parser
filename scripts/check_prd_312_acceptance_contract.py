@@ -45,6 +45,7 @@ def main() -> None:
         "acceptance_contract_locked": not blockers,
         "metric": ("single-query Top-1 Mask IoU strictly greater than 0.50"),
         "required_accuracy_percent": contract.required_accuracy * 100.0,
+        "approval_basis": contract.approval_basis,
         "benchmark_composition": {
             "required_case_count": contract.required_case_count,
             "primary_dimension_case_counts": contract.primary_dimension_case_counts,

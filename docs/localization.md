@@ -2470,9 +2470,9 @@ for example, one Chinese novel-composition relation query can also be a
 multi-target pocket case.
 
 These values are encoded in `configs/prd_312_acceptance_contract.json` and are
-validated against the eventual manifest. They remain a proposal until the
-product and project owners approve them; code must not invent approval names or
-change `status` to `locked` before that sign-off.
+validated against the eventual manifest. The contract records
+`approval_basis=user_directive`, so it is locked without requiring or inventing
+product-owner and project-owner names.
 
 The versioned draft is
 `configs/prd_312_acceptance_contract.json`. Audit it with:
@@ -2481,9 +2481,9 @@ The versioned draft is
 python scripts/check_prd_312_acceptance_contract.py
 ```
 
-Exit code `1` is expected until the proposed proportions and both owner
-approvals are formally locked. Setting `status` to `locked` without filling
-every decision is rejected by schema validation. Once approved, embed the
+Exit code `0` confirms that the metric and all benchmark proportions are
+locked. Setting `status` to `locked` without a recorded approval basis or any
+composition decision is rejected by schema validation. Next, embed the
 locked contract in a reviewed `Prd312AcceptanceManifest` and evaluate saved
 responses with:
 

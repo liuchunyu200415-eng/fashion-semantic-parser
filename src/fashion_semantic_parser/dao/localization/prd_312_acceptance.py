@@ -18,6 +18,7 @@ from fashion_semantic_parser.dao.localization.referring_smoke import (
 
 AcceptanceLanguage = Literal["zh", "en"]
 MultiTargetPolicy = Literal["union_mask", "exclude"]
+AcceptanceApprovalBasis = Literal["owner_signoff", "user_directive"]
 AcceptanceTargetCardinality = Literal["single_target", "multi_target"]
 AcceptanceTargetRegion = Literal[
     "collar",
@@ -59,7 +60,7 @@ REQUIRED_WEAK_TARGET_LABELS: tuple[str, ...] = (
 
 
 class Prd312AcceptanceContract(BaseModel):
-    """Product-approved metric and benchmark composition decisions."""
+    """Recorded metric and benchmark composition decisions."""
 
     schema_version: Literal[1] = 1
     status: Literal["draft", "locked"] = "draft"
@@ -83,6 +84,7 @@ class Prd312AcceptanceContract(BaseModel):
     )
     minimum_composite_case_count: int | None = Field(default=None, ge=0)
     minimum_target_label_case_counts: dict[str, int] = Field(default_factory=dict)
+    approval_basis: AcceptanceApprovalBasis | None = None
     product_owner_approval: str | None = None
     project_owner_approval: str | None = None
     approved_at: datetime | None = None
@@ -259,10 +261,13 @@ def acceptance_contract_blockers(contract: Prd312AcceptanceContract) -> list[str
     if contract.required_case_count is None:
         blockers.append("required_case_count is not confirmed")
     blockers.extend(_composition_blockers(contract))
-    if contract.product_owner_approval is None:
-        blockers.append("product owner approval is missing")
-    if contract.project_owner_approval is None:
-        blockers.append("project owner approval is missing")
+    if contract.approval_basis is None:
+        blockers.append("approval basis is missing")
+    elif contract.approval_basis == "owner_signoff":
+        if contract.product_owner_approval is None:
+            blockers.append("product owner approval is missing")
+        if contract.project_owner_approval is None:
+            blockers.append("project owner approval is missing")
     if contract.approved_at is None:
         blockers.append("approval timestamp is missing")
     return blockers
