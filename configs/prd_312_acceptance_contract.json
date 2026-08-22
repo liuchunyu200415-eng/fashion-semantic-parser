@@ -6,11 +6,43 @@
   "success_comparison": "strictly_greater_than",
   "mask_iou_threshold": 0.5,
   "required_accuracy": 0.92,
-  "multi_target_policy": null,
-  "required_case_count": null,
-  "primary_dimension_case_counts": {},
-  "novelty_case_counts": {},
-  "language_case_counts": {},
+  "multi_target_policy": "union_mask",
+  "required_case_count": 1000,
+  "primary_dimension_case_counts": {
+    "basic": 250,
+    "spatial": 250,
+    "attribute": 250,
+    "relation": 250
+  },
+  "novelty_case_counts": {
+    "seen": 700,
+    "novel_composition": 300
+  },
+  "language_case_counts": {
+    "zh": 500,
+    "en": 500
+  },
+  "target_cardinality_case_counts": {
+    "single_target": 850,
+    "multi_target": 150
+  },
+  "target_region_case_counts": {
+    "collar": 125,
+    "cuff": 125,
+    "hem": 125,
+    "pocket": 125,
+    "shoulder": 125,
+    "waist": 125,
+    "pattern": 125,
+    "decoration": 125
+  },
+  "minimum_composite_case_count": 200,
+  "minimum_target_label_case_counts": {
+    "zipper": 50,
+    "rivet": 50,
+    "neckline": 50,
+    "pocket": 50
+  },
   "product_owner_approval": null,
   "project_owner_approval": null,
   "approved_at": null

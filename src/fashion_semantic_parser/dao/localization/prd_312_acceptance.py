@@ -18,12 +18,43 @@ from fashion_semantic_parser.dao.localization.referring_smoke import (
 
 AcceptanceLanguage = Literal["zh", "en"]
 MultiTargetPolicy = Literal["union_mask", "exclude"]
+AcceptanceTargetCardinality = Literal["single_target", "multi_target"]
+AcceptanceTargetRegion = Literal[
+    "collar",
+    "cuff",
+    "hem",
+    "pocket",
+    "shoulder",
+    "waist",
+    "pattern",
+    "decoration",
+]
 CountKey = TypeVar("CountKey", bound=str)
 REQUIRED_PRIMARY_DIMENSIONS: tuple[ReferringQueryDimension, ...] = (
     "basic",
     "spatial",
     "attribute",
     "relation",
+)
+REQUIRED_TARGET_CARDINALITIES: tuple[AcceptanceTargetCardinality, ...] = (
+    "single_target",
+    "multi_target",
+)
+REQUIRED_TARGET_REGIONS: tuple[AcceptanceTargetRegion, ...] = (
+    "collar",
+    "cuff",
+    "hem",
+    "pocket",
+    "shoulder",
+    "waist",
+    "pattern",
+    "decoration",
+)
+REQUIRED_WEAK_TARGET_LABELS: tuple[str, ...] = (
+    "zipper",
+    "rivet",
+    "neckline",
+    "pocket",
 )
 
 
@@ -44,6 +75,14 @@ class Prd312AcceptanceContract(BaseModel):
     )
     novelty_case_counts: dict[ReferringQueryNovelty, int] = Field(default_factory=dict)
     language_case_counts: dict[AcceptanceLanguage, int] = Field(default_factory=dict)
+    target_cardinality_case_counts: dict[AcceptanceTargetCardinality, int] = Field(
+        default_factory=dict
+    )
+    target_region_case_counts: dict[AcceptanceTargetRegion, int] = Field(
+        default_factory=dict
+    )
+    minimum_composite_case_count: int | None = Field(default=None, ge=0)
+    minimum_target_label_case_counts: dict[str, int] = Field(default_factory=dict)
     product_owner_approval: str | None = None
     project_owner_approval: str | None = None
     approved_at: datetime | None = None
@@ -73,6 +112,9 @@ class Prd312AcceptanceContract(BaseModel):
             self.primary_dimension_case_counts,
             self.novelty_case_counts,
             self.language_case_counts,
+            self.target_cardinality_case_counts,
+            self.target_region_case_counts,
+            self.minimum_target_label_case_counts,
         ):
             if any(count < 0 for count in counts.values()):
                 raise ValueError("Acceptance case counts cannot be negative.")
@@ -95,6 +137,7 @@ class Prd312AcceptanceCase(BaseModel):
     primary_dimension: ReferringQueryDimension
     dimensions: list[ReferringQueryDimension] = Field(min_length=1)
     novelty: ReferringQueryNovelty
+    target_region: AcceptanceTargetRegion
     reference_frame: ReferringReferenceFrame | None = None
     target_label: str = Field(min_length=1)
     targets: list[ReferringSmokeTarget] = Field(min_length=1)
@@ -170,6 +213,35 @@ class Prd312AcceptanceManifest(BaseModel):
             actual=Counter(case.language for case in self.cases),
             name="language",
         )
+        _require_counts(
+            expected=self.contract.target_cardinality_case_counts,
+            actual=Counter(
+                "single_target" if len(case.targets) == 1 else "multi_target"
+                for case in self.cases
+            ),
+            name="target_cardinality",
+        )
+        _require_counts(
+            expected=self.contract.target_region_case_counts,
+            actual=Counter(case.target_region for case in self.cases),
+            name="target_region",
+        )
+        composite_count = sum(
+            len(set(case.dimensions) - {"basic"}) >= 2 for case in self.cases
+        )
+        if composite_count < cast(int, self.contract.minimum_composite_case_count):
+            raise ValueError(
+                "Acceptance composite case count is below the locked minimum: "
+                f"minimum={self.contract.minimum_composite_case_count}, "
+                f"actual={composite_count}"
+            )
+        label_counts = Counter(case.target_label for case in self.cases)
+        for label, minimum in self.contract.minimum_target_label_case_counts.items():
+            if label_counts[label] < minimum:
+                raise ValueError(
+                    "Acceptance target-label count is below the locked minimum: "
+                    f"label={label}, minimum={minimum}, actual={label_counts[label]}"
+                )
         if self.contract.multi_target_policy == "exclude" and any(
             len(case.targets) != 1 for case in self.cases
         ):
@@ -186,6 +258,19 @@ def acceptance_contract_blockers(contract: Prd312AcceptanceContract) -> list[str
         blockers.append("multi_target_policy is not confirmed")
     if contract.required_case_count is None:
         blockers.append("required_case_count is not confirmed")
+    blockers.extend(_composition_blockers(contract))
+    if contract.product_owner_approval is None:
+        blockers.append("product owner approval is missing")
+    if contract.project_owner_approval is None:
+        blockers.append("project owner approval is missing")
+    if contract.approved_at is None:
+        blockers.append("approval timestamp is missing")
+    return blockers
+
+
+def _composition_blockers(contract: Prd312AcceptanceContract) -> list[str]:
+    """Return unresolved benchmark-composition decisions."""
+    blockers: list[str] = []
     required_dimensions = set(REQUIRED_PRIMARY_DIMENSIONS)
     if set(contract.primary_dimension_case_counts) != required_dimensions:
         blockers.append("all four primary query-type counts are not confirmed")
@@ -198,6 +283,8 @@ def acceptance_contract_blockers(contract: Prd312AcceptanceContract) -> list[str
         ("primary_dimension", contract.primary_dimension_case_counts),
         ("novelty", contract.novelty_case_counts),
         ("language", contract.language_case_counts),
+        ("target_cardinality", contract.target_cardinality_case_counts),
+        ("target_region", contract.target_region_case_counts),
     ):
         if not counts:
             blockers.append(f"{name} counts are not confirmed")
@@ -205,12 +292,23 @@ def acceptance_contract_blockers(contract: Prd312AcceptanceContract) -> list[str
             contract.required_case_count
         ):
             blockers.append(f"{name} counts do not sum to required_case_count")
-    if contract.product_owner_approval is None:
-        blockers.append("product owner approval is missing")
-    if contract.project_owner_approval is None:
-        blockers.append("project owner approval is missing")
-    if contract.approved_at is None:
-        blockers.append("approval timestamp is missing")
+    if set(contract.target_cardinality_case_counts) != set(
+        REQUIRED_TARGET_CARDINALITIES
+    ):
+        blockers.append("single-target and multi-target counts are not confirmed")
+    if set(contract.target_region_case_counts) != set(REQUIRED_TARGET_REGIONS):
+        blockers.append("all eight PRD target-region counts are not confirmed")
+    if contract.minimum_composite_case_count is None:
+        blockers.append("minimum composite-query count is not confirmed")
+    elif (
+        contract.required_case_count is not None
+        and contract.minimum_composite_case_count > contract.required_case_count
+    ):
+        blockers.append("minimum composite-query count exceeds required_case_count")
+    if set(contract.minimum_target_label_case_counts) != set(
+        REQUIRED_WEAK_TARGET_LABELS
+    ):
+        blockers.append("all four weak-part minimum counts are not confirmed")
     return blockers
 
 
@@ -236,9 +334,11 @@ def _require_counts(
     *, expected: Mapping[CountKey, int], actual: Counter[CountKey], name: str
 ) -> None:
     """Require exact benchmark composition for one mutually exclusive axis."""
-    if dict(sorted(actual.items())) != dict(sorted(expected.items())):
+    expected_nonzero = {key: value for key, value in expected.items() if value}
+    actual_nonzero = {key: value for key, value in actual.items() if value}
+    if dict(sorted(actual_nonzero.items())) != dict(sorted(expected_nonzero.items())):
         raise ValueError(
             f"Acceptance {name} counts differ from the locked contract: "
-            f"expected={dict(sorted(expected.items()))}, "
-            f"actual={dict(sorted(actual.items()))}"
+            f"expected={dict(sorted(expected_nonzero.items()))}, "
+            f"actual={dict(sorted(actual_nonzero.items()))}"
         )

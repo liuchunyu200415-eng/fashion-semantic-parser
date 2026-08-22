@@ -39,6 +39,27 @@ def _locked_contract() -> dict[str, object]:
         },
         "novelty_case_counts": {"seen": 2, "novel_composition": 2},
         "language_case_counts": {"zh": 2, "en": 2},
+        "target_cardinality_case_counts": {
+            "single_target": 4,
+            "multi_target": 0,
+        },
+        "target_region_case_counts": {
+            "collar": 1,
+            "cuff": 1,
+            "hem": 1,
+            "pocket": 1,
+            "shoulder": 0,
+            "waist": 0,
+            "pattern": 0,
+            "decoration": 0,
+        },
+        "minimum_composite_case_count": 0,
+        "minimum_target_label_case_counts": {
+            "zipper": 0,
+            "rivet": 0,
+            "neckline": 0,
+            "pocket": 0,
+        },
         "product_owner_approval": "product-owner",
         "project_owner_approval": "project-owner",
         "approved_at": "2026-08-14T12:00:00+08:00",
@@ -49,6 +70,7 @@ def _manifest() -> Prd312AcceptanceManifest:
     """Build a four-axis locked manifest with deterministic square Masks."""
     cases = []
     dimensions = ("basic", "spatial", "attribute", "relation")
+    target_regions = ("collar", "cuff", "hem", "pocket")
     for index, primary_dimension in enumerate(dimensions):
         case_dimensions = ["basic"]
         if primary_dimension != "basic":
@@ -65,6 +87,7 @@ def _manifest() -> Prd312AcceptanceManifest:
                 "primary_dimension": primary_dimension,
                 "dimensions": case_dimensions,
                 "novelty": "seen" if index % 2 == 0 else "novel_composition",
+                "target_region": target_regions[index],
                 "reference_frame": reference_frame,
                 "target_label": "sleeve",
                 "targets": [{"segmentation": [[1, 1, 4, 1, 4, 4, 1, 4]]}],
@@ -118,6 +141,26 @@ def test_manifest_enforces_locked_composition_counts() -> None:
         Prd312AcceptanceManifest.model_validate(payload)
 
 
+def test_manifest_enforces_target_mix_and_minimums() -> None:
+    """Target cardinality, PRD region, composite, and weak labels are guarded."""
+    manifest = _manifest()
+
+    region_payload = manifest.model_dump(mode="json")
+    region_payload["cases"][0]["target_region"] = "cuff"
+    with pytest.raises(ValidationError, match="target_region counts differ"):
+        Prd312AcceptanceManifest.model_validate(region_payload)
+
+    composite_payload = manifest.model_dump(mode="json")
+    composite_payload["contract"]["minimum_composite_case_count"] = 1
+    with pytest.raises(ValidationError, match="composite case count"):
+        Prd312AcceptanceManifest.model_validate(composite_payload)
+
+    label_payload = manifest.model_dump(mode="json")
+    label_payload["contract"]["minimum_target_label_case_counts"]["zipper"] = 1
+    with pytest.raises(ValidationError, match="target-label count"):
+        Prd312AcceptanceManifest.model_validate(label_payload)
+
+
 def test_iou_boundary_is_strictly_greater_than_half() -> None:
     """Exactly 0.50 fails while any finite value above it succeeds."""
     target = np.asarray([[True, True], [False, False]])
@@ -138,6 +181,7 @@ def test_acceptance_uses_only_top1_and_unions_multi_target_gt() -> None:
         primary_dimension="basic",
         dimensions=["basic"],
         novelty="seen",
+        target_region="cuff",
         reference_frame=None,
         target_label="sleeve",
         targets=[

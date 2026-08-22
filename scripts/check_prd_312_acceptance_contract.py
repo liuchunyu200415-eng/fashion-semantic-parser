@@ -45,6 +45,18 @@ def main() -> None:
         "acceptance_contract_locked": not blockers,
         "metric": ("single-query Top-1 Mask IoU strictly greater than 0.50"),
         "required_accuracy_percent": contract.required_accuracy * 100.0,
+        "benchmark_composition": {
+            "required_case_count": contract.required_case_count,
+            "primary_dimension_case_counts": contract.primary_dimension_case_counts,
+            "novelty_case_counts": contract.novelty_case_counts,
+            "language_case_counts": contract.language_case_counts,
+            "target_cardinality_case_counts": (contract.target_cardinality_case_counts),
+            "target_region_case_counts": contract.target_region_case_counts,
+            "minimum_composite_case_count": (contract.minimum_composite_case_count),
+            "minimum_target_label_case_counts": (
+                contract.minimum_target_label_case_counts
+            ),
+        },
         "blockers": blockers,
     }
     print(json.dumps(report, ensure_ascii=False, indent=2))

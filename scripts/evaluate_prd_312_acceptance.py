@@ -142,6 +142,7 @@ def evaluate_acceptance_case(
         "primary_dimension": case.primary_dimension,
         "dimensions": case.dimensions,
         "novelty": case.novelty,
+        "target_region": case.target_region,
         "reference_frame": case.reference_frame,
         "target_label": case.target_label,
         "target_count": len(case.targets),
@@ -155,7 +156,7 @@ def evaluate_acceptance_case(
     }
 
 
-def build_acceptance_report(
+def build_acceptance_report(  # pylint: disable=too-many-locals
     *,
     manifest_path: str,
     manifest: Any,
@@ -168,6 +169,9 @@ def build_acceptance_report(
     novelty_groups: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
     language_groups: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
     label_groups: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+    region_groups: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+    cardinality_groups: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+    composite_groups: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         primary_groups[str(row["primary_dimension"])].append(row)
         for dimension in row["dimensions"]:
@@ -175,6 +179,13 @@ def build_acceptance_report(
         novelty_groups[str(row["novelty"])].append(row)
         language_groups[str(row["language"])].append(row)
         label_groups[str(row["target_label"])].append(row)
+        region_groups[str(row["target_region"])].append(row)
+        cardinality = (
+            "single_target" if int(row["target_count"]) == 1 else "multi_target"
+        )
+        cardinality_groups[cardinality].append(row)
+        composite = len(set(row["dimensions"]) - {"basic"}) >= 2
+        composite_groups["composite" if composite else "non_composite"].append(row)
     overall = summarize_acceptance_rows(rows)
     required_accuracy = float(manifest.contract.required_accuracy)
     accuracy = overall["query_accuracy"]
@@ -198,6 +209,9 @@ def build_acceptance_report(
         "by_novelty": _summarize_groups(novelty_groups),
         "by_language": _summarize_groups(language_groups),
         "by_target_label": _summarize_groups(label_groups),
+        "by_target_region": _summarize_groups(region_groups),
+        "by_target_cardinality": _summarize_groups(cardinality_groups),
+        "by_composite_status": _summarize_groups(composite_groups),
         "prd_accuracy_passed": (accuracy is not None and accuracy >= required_accuracy),
         "cases": rows,
     }
