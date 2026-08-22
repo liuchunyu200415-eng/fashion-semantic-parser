@@ -75,7 +75,7 @@ def test_qwen_paraphraser_outputs_unreviewed_pinned_provenance() -> None:
     assert result.review_status == "unreviewed"
     assert result.generator_model == (
         "Qwen/Qwen-VL-Chat-Int4@55acaf444e9f5adfd47105b875571a23d7f7fa30"
-        ":prd312-semantic-gate-v10"
+        ":prd312-semantic-gate-v11"
     )
     assert result.source_fingerprint == "a" * 64
     assert len(result.paraphrases) == 2
@@ -129,7 +129,7 @@ def test_qwen_paraphraser_retains_partial_semantically_valid_result() -> None:
     result = paraphraser.paraphrase(_job())
 
     assert result.paraphrases == ["请定位衣服右边的口袋"]
-    assert result.generator_model.endswith(":prd312-semantic-gate-v10")
+    assert result.generator_model.endswith(":prd312-semantic-gate-v11")
 
 
 def test_qwen_parser_accepts_mislabeled_fenced_json() -> None:
@@ -463,6 +463,7 @@ def test_qwen_candidate_gate_preserves_english_target_count() -> None:
             "Find the pocket on the coat",
             "Find all pockets on the coat",
             "Where are the coat pockets?",
+            "What are the two pockets on the coat?",
         ]
     )
     candidates = collect_qwen_vl_paraphrase_candidates(
@@ -495,7 +496,7 @@ def test_qwen_candidate_gate_preserves_chinese_target_count() -> None:
 
     candidates = collect_qwen_vl_paraphrase_candidates(
         '["这件夹克上的口袋", "请找出这件夹克上的所有口袋", '
-        '"这件夹克上的全部口袋在哪里"]',
+        '"这件夹克上的全部口袋在哪里", "哪些是这件夹克上的所有口袋"]',
         source_query=job.source_query,
         language="zh",
         job=job,
@@ -679,30 +680,30 @@ def test_generation_runner_rejects_results_from_an_old_strategy(
 
 
 def test_generation_runner_rejects_prior_pilot_policy(tmp_path: Path) -> None:
-    """The v10 count gate cannot silently trust rows emitted by the v9 pilot."""
+    """The v11 identity gate cannot silently trust rows emitted by v10."""
     job = _job()
     job_path = tmp_path / "jobs.jsonl"
     _write_models(job_path, [job])
     output_path = tmp_path / "results.jsonl"
     failure_path = tmp_path / "failures.jsonl"
-    v10_generator = QwenVlParaphraser(
+    v11_generator = QwenVlParaphraser(
         QwenVlParaphraseSettings(retry_count=0),
         tokenizer=object(),
         model=_FakeQwenVlModel([]),
     )
-    v9_result = {
+    v10_result = {
         "source_sample_id": job.source_sample_id,
         "source_fingerprint": job.source_fingerprint,
         "language": job.language,
-        "generator_model": v10_generator.generator_identity.replace(
+        "generator_model": v11_generator.generator_identity.replace(
+            "semantic-gate-v11",
             "semantic-gate-v10",
-            "semantic-gate-v9",
         ),
         "review_status": "unreviewed",
         "paraphrases": ["请定位衣服右边的口袋", "找出衣服右侧口袋"],
     }
     output_path.write_text(
-        json.dumps(v9_result, ensure_ascii=False) + "\n",
+        json.dumps(v10_result, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
 
@@ -711,7 +712,7 @@ def test_generation_runner_rejects_prior_pilot_policy(tmp_path: Path) -> None:
             job_path=job_path,
             output_path=output_path,
             failure_path=failure_path,
-            generator=v10_generator,
+            generator=v11_generator,
         )
 
 

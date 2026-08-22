@@ -157,7 +157,7 @@ class QwenVlParaphraser:
         """Return immutable model identity stored with every generated row."""
         return (
             f"{self.settings.model_name}@{self.settings.model_revision}"
-            ":prd312-semantic-gate-v10"
+            ":prd312-semantic-gate-v11"
         )
 
     @property
@@ -611,11 +611,15 @@ def _has_confirmation_intent(
 ) -> bool:
     """Reject yes/no or object-identification questions instead of localization."""
     if language == "zh":
-        return candidate.startswith(("这是", "这是什么", "什么是", "是不是", "是否"))
+        return candidate.startswith(
+            ("这是", "这是什么", "什么是", "哪些是", "哪个是", "是不是", "是否")
+        )
     confirmation = bool(
         re.match(r"^(?:is|are|does|do|has|have)\b", candidate, re.IGNORECASE)
     )
-    identification = bool(re.match(r"^what\b.*\bis\b", candidate, re.IGNORECASE))
+    identification = bool(
+        re.match(r"^what\b.*\b(?:is|are)\b", candidate, re.IGNORECASE)
+    )
     location_terms = bool(
         re.search(r"\b(?:location|position|where)\b", candidate, re.IGNORECASE)
     )

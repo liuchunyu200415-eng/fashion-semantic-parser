@@ -2562,7 +2562,7 @@ is a fail-closed first layer, not a substitute for that review. The merge reject
 these raw outputs until a reviewer records `reviewed_by`, `reviewed_at`, and
 `review_status=reviewed`.
 
-The current `prd312-semantic-gate-v10` policy uses language-matched prompts, a
+The current `prd312-semantic-gate-v11` policy uses language-matched prompts, a
 stable per-job seed, bounded sampling, and up to ten attempts that accumulate
 only unique non-source candidates. Version-2 jobs record the exact spatial
 modifier, garment relation, and Fashionpedia attribute phrase. Candidate text
@@ -2582,14 +2582,17 @@ recurring ambiguities.
 Identity-style `what is` questions and rewrites that turn a definite garment
 reference (`这件/这条`, `the`) into an arbitrary one (`一件/一条`, `a/an`) are
 also rejected.
+Plural identity questions such as `what are the two pockets` and their Chinese
+`哪些是/哪个是` counterparts are rejected as well; they ask what a part is
+rather than where its target region is.
 Template queries are target-count aware: a record with multiple annotated
 instances explicitly requests `所有部件` / `all parts`, while a one-instance
 record remains singular. The semantic gate accepts an English multi-instance
 rewrite only when the target noun remains plural, requires `所有` or `全部` in a
 Chinese multi-instance rewrite, and rejects plural or universal markers added
 to a one-instance source. Regenerate the full deterministic index, balanced
-100k selection, and rewrite jobs after this policy change; v9 pilot rows have
-stale source fingerprints and are audit evidence only.
+100k selection, and rewrite jobs after target-count template changes; v10 pilot
+rows remain audit evidence but cannot seed the v11 generator identity.
 Parenthetical
 Fashionpedia hints are normalized into natural source queries, while a direct
 part hint such as `(pocket)` is excluded when attached to an incompatible target
