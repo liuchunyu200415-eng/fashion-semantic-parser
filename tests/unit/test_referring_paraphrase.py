@@ -74,6 +74,47 @@ def test_targeted_export_prioritizes_weak_modifier_queries(tmp_path: Path) -> No
     assert job["spatial_modifier"] == "lower"
 
 
+def test_export_recovers_multi_target_attribute_phrase(tmp_path: Path) -> None:
+    """Count-aware `all ... parts` templates retain their attribute anchor."""
+    sample = dict(_base_samples()[1])
+    sample.update(
+        {
+            "id": "fashionpedia-train-20-pocket-attribute-223-en-2-3",
+            "query": "all welt pockets",
+            "dimensions": ["basic", "attribute"],
+            "target_label": "pocket",
+            "targets": [
+                {
+                    "source_annotation_id": 2,
+                    "label": "pocket",
+                    "box": {"x_min": 2, "y_min": 2, "x_max": 3, "y_max": 8},
+                },
+                {
+                    "source_annotation_id": 3,
+                    "label": "pocket",
+                    "box": {"x_min": 6, "y_min": 2, "x_max": 7, "y_max": 8},
+                },
+            ],
+            "template_id": "attribute-223-en",
+            "source_attribute_ids": [223],
+        }
+    )
+    index_path = tmp_path / "multi-attribute.jsonl"
+    _write_jsonl(index_path, [sample])
+    job_path = tmp_path / "jobs.jsonl"
+
+    count = export_referring_paraphrase_jobs(
+        index_path=index_path,
+        output_path=job_path,
+    )
+    job = _read_jsonl(job_path)[0]
+
+    assert count == 1
+    assert job["source_query"] == "all welt pockets"
+    assert job["target_count"] == 2
+    assert job["attribute_phrase"] == "welt"
+
+
 def test_merge_reviewed_paraphrases_preserves_source_targets_and_provenance(
     tmp_path: Path,
 ) -> None:

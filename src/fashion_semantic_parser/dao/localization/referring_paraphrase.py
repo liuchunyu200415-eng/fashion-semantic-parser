@@ -19,6 +19,9 @@ from fashion_semantic_parser.dao.localization.referring_training import (
     ReferringTrainingSample,
     TrainingLanguage,
 )
+from fashion_semantic_parser.dao.localization.taxonomy import (
+    pluralize_english_part_name,
+)
 
 WEAK_PART_LABELS = ("zipper", "rivet", "neckline", "pocket")
 
@@ -198,12 +201,15 @@ def _attribute_phrase(sample: ReferringTrainingSample) -> str | None:
     if marker in sample.query:
         attribute_phrase = sample.query.split(marker, maxsplit=1)[1].strip()
     else:
-        prefix = "the "
-        suffix = f" {sample.target_label}"
+        if len(sample.targets) == 1:
+            prefix = "the "
+            target_name = sample.target_label
+        else:
+            prefix = "all "
+            target_name = pluralize_english_part_name(sample.target_label)
+        suffix = f" {target_name}"
         if not sample.query.startswith(prefix) or not sample.query.endswith(suffix):
-            raise ValueError(
-                f"Attribute sample has no recognized phrase: {sample.id}"
-            )
+            raise ValueError(f"Attribute sample has no recognized phrase: {sample.id}")
         attribute_phrase = sample.query[len(prefix) : -len(suffix)].strip()
     if not attribute_phrase:
         raise ValueError(f"Attribute sample has an empty phrase: {sample.id}")
