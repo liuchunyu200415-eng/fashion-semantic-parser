@@ -2551,7 +2551,7 @@ relation, and reference frame still requires human review. The merge rejects
 these raw outputs until a reviewer records `reviewed_by`, `reviewed_at`, and
 `review_status=reviewed`.
 
-The current `prd312-semantic-gate-v8` policy uses language-matched prompts, a
+The current `prd312-semantic-gate-v9` policy uses language-matched prompts, a
 stable per-job seed, bounded sampling, and up to ten attempts that accumulate
 only unique non-source candidates. Version-2 jobs record the exact spatial
 modifier, garment relation, and Fashionpedia attribute phrase. Candidate text
@@ -2568,11 +2568,14 @@ garment categories absent from non-relation sources, and quoted Chinese meta
 formatting are also excluded. Source templates spell the garment category as
 `top garment` and use `上部/下部` for vertical image position to remove two
 recurring ambiguities.
+Identity-style `what is` questions and rewrites that turn a definite garment
+reference (`这件/这条`, `the`) into an arbitrary one (`一件/一条`, `a/an`) are
+also rejected.
 Parenthetical
 Fashionpedia hints are normalized into natural source queries, while a direct
 part hint such as `(pocket)` is excluded when attached to an incompatible target
 such as `zipper`; the preparation summary reports the excluded group count.
-Resume validation rejects incompatible generation policies. The v6/v7 pilot
+Resume validation rejects incompatible generation policies. Earlier pilot
 rows remain audit evidence but cannot seed v8 because human review found a
 repeated sentence fragment that their policy admitted. Parser recovery never
 approves a row: JSON objects, wrong-language text, copied source queries, and

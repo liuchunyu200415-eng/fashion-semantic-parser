@@ -156,7 +156,7 @@ class QwenVlParaphraser:
         """Return immutable model identity stored with every generated row."""
         return (
             f"{self.settings.model_name}@{self.settings.model_revision}"
-            ":prd312-semantic-gate-v8"
+            ":prd312-semantic-gate-v9"
         )
 
     @property
@@ -347,6 +347,7 @@ def build_qwen_vl_paraphrase_prompt(job: ReferringParaphraseJob) -> str:
             f"任务要求：将原始查询改写为 {job.requested_paraphrase_count} 条中文表达。\n"
             "可以改成请求式、疑问式或定位式表达，但不能扩大或缩小目标集合；"
             "必须保留方位、属性、服装关系、单复数含义和参照系。"
+            "不能把‘这件/这条’改成任意的‘一件/一条’，也不能询问目标是什么。"
             "每条表达都必须与原句有明显文字差异，不能照抄原句。"
             "每条必须是简短的区域定位短语或定位问题，禁止输出说明、穿搭建议、"
             "描述任务或操作衣物的动作，也不能重复词组或句子片段。"
@@ -366,7 +367,9 @@ def build_qwen_vl_paraphrase_prompt(job: ReferringParaphraseJob) -> str:
         f"Task: {job.instruction}\n"
         "Never broaden or narrow the target set. Keep every direction, "
         "attribute, garment relation, singular/plural meaning, and reference "
-        "frame unchanged. Every output must be a short region-locating phrase "
+        "frame unchanged. Do not change a definite garment into an arbitrary "
+        "a/an garment or ask what the target is. Every output must be a short "
+        "region-locating phrase "
         "or question, never a description, fashion advice, or garment action. "
         "Do not repeat a phrase or sentence fragment inside one rewrite. "
         "Do not copy the source sentence. Return only one "
@@ -533,6 +536,7 @@ def _is_clean_localization_expression(
     adds_spatial = _adds_unrequested_spatial_modifier(candidate, job)
     adds_garment_relation = _adds_unrequested_garment_relation(candidate, job)
     adds_ordinal = _adds_unrequested_ordinal(candidate, job)
+    adds_indefinite_relation = _adds_unrequested_indefinite_relation(candidate, job)
     has_formatting_quotes = job.language == "zh" and bool(
         re.search(r"['\"‘’“”]", candidate)
     )
@@ -550,6 +554,7 @@ def _is_clean_localization_expression(
             adds_spatial,
             adds_garment_relation,
             adds_ordinal,
+            adds_indefinite_relation,
             has_formatting_quotes,
         )
     )
@@ -602,8 +607,15 @@ def _has_confirmation_intent(
 ) -> bool:
     """Reject yes/no or object-identification questions instead of localization."""
     if language == "zh":
-        return candidate.startswith(("这是", "这是什么", "是不是", "是否"))
-    return bool(re.match(r"^(?:is|are|does|do|has|have)\b", candidate, re.IGNORECASE))
+        return candidate.startswith(("这是", "这是什么", "什么是", "是不是", "是否"))
+    confirmation = bool(
+        re.match(r"^(?:is|are|does|do|has|have)\b", candidate, re.IGNORECASE)
+    )
+    identification = bool(re.match(r"^what\b.*\bis\b", candidate, re.IGNORECASE))
+    location_terms = bool(
+        re.search(r"\b(?:location|position|where)\b", candidate, re.IGNORECASE)
+    )
+    return confirmation or (identification and not location_terms)
 
 
 def _has_existence_intent(
@@ -719,6 +731,35 @@ def _adds_unrequested_ordinal(
         for match in re.findall(pattern, job.source_query, flags=re.IGNORECASE)
     }
     return not candidate_ordinals.issubset(source_ordinals)
+
+
+def _adds_unrequested_indefinite_relation(
+    candidate: str,
+    job: ReferringParaphraseJob,
+) -> bool:
+    """Keep a definite garment reference from becoming an arbitrary instance."""
+    if job.reference_category is None:
+        return False
+    if job.language == "zh":
+        source_is_definite = bool(re.search(r"这(?:件|条|款|个)?", job.source_query))
+        return source_is_definite and bool(
+            re.search(r"(?:^|[^第])一(?:件|条|款|个)", candidate)
+        )
+    source_is_definite = bool(re.search(r"\bthe\b", job.source_query, re.IGNORECASE))
+    if not source_is_definite:
+        return False
+    garment_terms = _GARMENT_TERMS.get(job.reference_category, {}).get(
+        "en",
+        (job.reference_category,),
+    )
+    return any(
+        re.search(
+            rf"\b(?:a|an)\s+{re.escape(term)}\b",
+            candidate,
+            re.IGNORECASE,
+        )
+        for term in garment_terms
+    )
 
 
 def _contains_target_term(candidate: str, job: ReferringParaphraseJob) -> bool:
