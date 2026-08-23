@@ -2474,7 +2474,7 @@ validated against the eventual manifest. The contract records
 `approval_basis=user_directive`, so it is locked without requiring or inventing
 product-owner and project-owner names.
 
-The versioned draft is
+The locked contract is
 `configs/prd_312_acceptance_contract.json`. Audit it with:
 
 ```bash
@@ -2483,9 +2483,46 @@ python scripts/check_prd_312_acceptance_contract.py
 
 Exit code `0` confirms that the metric and all benchmark proportions are
 locked. Setting `status` to `locked` without a recorded approval basis or any
-composition decision is rejected by schema validation. Next, embed the
-locked contract in a reviewed `Prd312AcceptanceManifest` and evaluate saved
-responses with:
+composition decision is rejected by schema validation.
+
+Build the deterministic human-review plan before selecting any acceptance
+images:
+
+```bash
+python scripts/prepare_prd_312_acceptance_review.py
+```
+
+This creates exactly `1,000` pending quota slots under
+`data/benchmarks/localization/prd_312_acceptance_review_v1.json`. It does not
+copy training queries, invent images, or fabricate Masks. Fashionpedia has
+exact source Masks only for collar-related parts, pockets, and decorations.
+Cuff, hem, waist, and pattern Masks are missing, while epaulette covers only a
+shoulder decoration. Therefore `625` slots require independent manual Masks;
+sleeve, belt, or epaulette Masks must not be renamed to satisfy the missing PRD
+regions. The remaining `375` slots may reuse exact Masks only from an
+independent acceptance holdout and still require human verification.
+
+For each slot, the reviewer must provide a complete natural-language query,
+the holdout image path and SHA-256, traceable source record, all target-instance
+Masks, annotation provenance, reviewer identity, timezone-aware review time,
+and `review_status=reviewed`. Multi-target records require at least two
+instance Masks and the evaluator unions them only at scoring time. The plan
+must also attest that the entire `acceptance_holdout` partition was excluded
+from training, model selection, and threshold tuning. Rejected records remain
+visible and must be replaced with the same quota slot; pending or rejected
+records block publication.
+
+Finalize only after all review and independence gates pass:
+
+```bash
+python scripts/finalize_prd_312_acceptance_manifest.py
+```
+
+The finalizer writes schema-version `2`
+`data/benchmarks/localization/prd_312_acceptance_v1.json`. It fails closed when
+any of the 1,000 records is pending or rejected, evidence is incomplete, the
+independence attestation is missing, or any locked composition count drifts.
+Then evaluate saved responses with:
 
 ```bash
 python scripts/evaluate_prd_312_acceptance.py \

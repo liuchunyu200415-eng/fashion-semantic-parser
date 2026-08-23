@@ -82,7 +82,11 @@ def _manifest() -> Prd312AcceptanceManifest:
         cases.append(
             {
                 "id": f"case_{index}",
+                "source_dataset": "independent-test-set",
+                "source_partition": "acceptance_holdout",
+                "source_record_id": f"source-{index}",
                 "image_path": f"data/image_{index}.jpg",
+                "image_sha256": f"{index:064x}",
                 "query": f"query {index}",
                 "language": "zh" if index < 2 else "en",
                 "primary_dimension": primary_dimension,
@@ -92,12 +96,17 @@ def _manifest() -> Prd312AcceptanceManifest:
                 "reference_frame": reference_frame,
                 "target_label": "sleeve",
                 "targets": [{"segmentation": [[1, 1, 4, 1, 4, 4, 1, 4]]}],
+                "annotation_provenance": "independent_manual_mask",
+                "reviewed_by": "reviewer",
+                "reviewed_at": "2026-08-24T09:00:00+08:00",
             }
         )
     return Prd312AcceptanceManifest.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "name": "prd_312_acceptance_v1",
+            "independence_attested_by": "benchmark-owner",
+            "independence_attested_at": "2026-08-24T10:00:00+08:00",
             "contract": _locked_contract(),
             "cases": cases,
         }

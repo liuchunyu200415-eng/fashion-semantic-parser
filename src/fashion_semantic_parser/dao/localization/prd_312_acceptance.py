@@ -30,6 +30,10 @@ AcceptanceTargetRegion = Literal[
     "pattern",
     "decoration",
 ]
+AcceptanceAnnotationProvenance = Literal[
+    "independent_manual_mask",
+    "independent_existing_mask_human_verified",
+]
 CountKey = TypeVar("CountKey", bound=str)
 REQUIRED_PRIMARY_DIMENSIONS: tuple[ReferringQueryDimension, ...] = (
     "basic",
@@ -133,7 +137,11 @@ class Prd312AcceptanceCase(BaseModel):
     """One reviewed positive query with query-level target Masks."""
 
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    source_dataset: str = Field(min_length=1)
+    source_partition: Literal["acceptance_holdout"] = "acceptance_holdout"
+    source_record_id: str = Field(min_length=1)
     image_path: str = Field(min_length=1)
+    image_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     query: str = Field(min_length=1)
     language: AcceptanceLanguage
     primary_dimension: ReferringQueryDimension
@@ -143,8 +151,18 @@ class Prd312AcceptanceCase(BaseModel):
     reference_frame: ReferringReferenceFrame | None = None
     target_label: str = Field(min_length=1)
     targets: list[ReferringSmokeTarget] = Field(min_length=1)
+    annotation_provenance: AcceptanceAnnotationProvenance
+    reviewed_by: str = Field(min_length=1)
+    reviewed_at: datetime
 
-    @field_validator("image_path", "query", "target_label")
+    @field_validator(
+        "source_dataset",
+        "source_record_id",
+        "image_path",
+        "query",
+        "target_label",
+        "reviewed_by",
+    )
     @classmethod
     def normalize_required_text(cls, value: str) -> str:
         """Store stable non-empty text in the acceptance manifest."""
@@ -166,30 +184,40 @@ class Prd312AcceptanceCase(BaseModel):
             raise ValueError("Every acceptance target requires a Mask segmentation.")
         if "spatial" in self.dimensions and self.reference_frame is None:
             raise ValueError("Spatial acceptance cases require a reference_frame.")
+        if self.reviewed_at.utcoffset() is None:
+            raise ValueError("Acceptance review timestamps must include a timezone.")
         return self
 
 
 class Prd312AcceptanceManifest(BaseModel):
     """Self-contained locked benchmark for final PRD accuracy evaluation."""
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     name: str = Field(min_length=1)
     description: str | None = None
+    acceptance_partition: Literal["acceptance_holdout"] = "acceptance_holdout"
+    excluded_from_training: Literal[True] = True
+    excluded_from_model_selection: Literal[True] = True
+    excluded_from_threshold_tuning: Literal[True] = True
+    independence_attested_by: str = Field(min_length=1)
+    independence_attested_at: datetime
     contract: Prd312AcceptanceContract
     cases: list[Prd312AcceptanceCase] = Field(min_length=1)
 
-    @field_validator("name")
+    @field_validator("name", "independence_attested_by")
     @classmethod
-    def normalize_name(cls, value: str) -> str:
-        """Normalize the versioned acceptance benchmark name."""
+    def normalize_manifest_text(cls, value: str) -> str:
+        """Normalize required manifest-level text."""
         normalized = " ".join(value.strip().split())
         if not normalized:
-            raise ValueError("Acceptance manifest name cannot be empty.")
+            raise ValueError("Acceptance manifest text cannot be empty.")
         return normalized
 
     @model_validator(mode="after")
     def validate_manifest_contract(self) -> "Prd312AcceptanceManifest":
         """Reject duplicate IDs and benchmark composition drift."""
+        if self.independence_attested_at.utcoffset() is None:
+            raise ValueError("Independence attestation must include a timezone.")
         case_ids = [case.id for case in self.cases]
         duplicates = sorted(
             case_id for case_id in set(case_ids) if case_ids.count(case_id) > 1
