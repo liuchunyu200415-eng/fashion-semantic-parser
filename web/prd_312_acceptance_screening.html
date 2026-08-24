@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PRD 3.1.2 人工筛图</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: #101318;
+      color: #edf2f7;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 12px 18px;
+      background: #171c24;
+      border-bottom: 1px solid #303846;
+      position: sticky;
+      top: 0;
+      z-index: 5;
+    }
+    header h1 { font-size: 17px; margin: 0; white-space: nowrap; }
+    #progress { color: #aeb9c8; font-size: 13px; flex: 1; }
+    .jump { display: flex; gap: 6px; align-items: center; }
+    .jump input { width: 84px; }
+    main {
+      display: grid;
+      grid-template-columns: minmax(360px, 1.3fr) minmax(420px, 0.7fr);
+      gap: 16px;
+      padding: 16px;
+      height: calc(100vh - 58px);
+    }
+    .panel {
+      background: #171c24;
+      border: 1px solid #303846;
+      border-radius: 12px;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .image-panel { display: flex; flex-direction: column; }
+    .image-meta {
+      padding: 10px 14px;
+      border-bottom: 1px solid #303846;
+      font-size: 13px;
+      color: #b9c4d2;
+      word-break: break-all;
+    }
+    .image-wrap {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      place-items: center;
+      padding: 12px;
+      background: #0b0e12;
+    }
+    #candidate-image {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      border-radius: 6px;
+    }
+    .form-panel { overflow-y: auto; padding: 14px; }
+    fieldset {
+      border: 1px solid #354052;
+      border-radius: 9px;
+      margin: 0 0 13px;
+      padding: 11px;
+    }
+    legend { color: #d6dfeb; padding: 0 6px; font-weight: 600; }
+    .status-row { display: flex; gap: 16px; flex-wrap: wrap; }
+    .count-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(150px, 1fr));
+      gap: 8px 12px;
+    }
+    label { color: #cbd5e1; font-size: 13px; }
+    .count-item, .text-item { display: grid; gap: 5px; }
+    input, textarea, button {
+      font: inherit;
+      color: #edf2f7;
+      background: #222a35;
+      border: 1px solid #465368;
+      border-radius: 7px;
+      padding: 8px 9px;
+    }
+    input[type="number"] { width: 100%; }
+    textarea { width: 100%; min-height: 62px; resize: vertical; }
+    button { cursor: pointer; font-weight: 600; }
+    button:hover { background: #2d3746; }
+    button.primary { background: #1769d2; border-color: #3587ed; }
+    button.primary:hover { background: #2379e4; }
+    button.warn { background: #7a3628; border-color: #a64b38; }
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      position: sticky;
+      bottom: 0;
+      background: #171c24;
+      padding-top: 8px;
+    }
+    #message {
+      min-height: 22px;
+      padding: 4px 1px;
+      font-size: 13px;
+      color: #8fd3a5;
+    }
+    #message.error { color: #ff9b8e; }
+    .hint { color: #93a0b2; font-size: 12px; line-height: 1.5; margin-top: 7px; }
+    .key { border: 1px solid #566177; border-radius: 4px; padding: 1px 5px; }
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; height: auto; }
+      .image-panel { height: 55vh; }
+      header { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>PRD 3.1.2 人工筛图</h1>
+    <div id="progress">正在读取进度…</div>
+    <div class="jump">
+      <label for="jump-index">序号</label>
+      <input id="jump-index" type="number" min="1" value="1">
+      <button id="jump-button">跳转</button>
+    </div>
+  </header>
+  <main>
+    <section class="panel image-panel">
+      <div class="image-meta">
+        <div id="position"></div>
+        <div id="image-path"></div>
+      </div>
+      <div class="image-wrap">
+        <img id="candidate-image" alt="待筛选服饰图片">
+      </div>
+    </section>
+    <section class="panel form-panel">
+      <fieldset>
+        <legend>审核状态</legend>
+        <div class="status-row">
+          <label><input type="radio" name="status" value="pending"> 待处理</label>
+          <label><input type="radio" name="status" value="eligible"> 可用</label>
+          <label><input type="radio" name="status" value="rejected"> 拒绝</label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>八类区域实例数</legend>
+        <div class="count-grid" id="region-counts"></div>
+        <div class="hint">只填写清晰可见、后续能够独立画 Mask 的实例。</div>
+      </fieldset>
+
+      <fieldset>
+        <legend>弱类别实例数</legend>
+        <div class="count-grid" id="weak-counts"></div>
+        <div class="hint">
+          zipper/rivet 不得超过 decoration；neckline 不得超过 collar；
+          pocket label 不得超过 pocket。
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>人工证据</legend>
+        <div class="text-item">
+          <label for="reviewer">审核人</label>
+          <input id="reviewer" autocomplete="name" placeholder="例如 liuchunyu">
+        </div>
+        <div class="text-item" style="margin-top:8px">
+          <label for="rejection-reason">拒绝原因</label>
+          <textarea id="rejection-reason" placeholder="仅 rejected 必填"></textarea>
+        </div>
+        <div class="text-item" style="margin-top:8px">
+          <label for="notes">备注</label>
+          <textarea id="notes" placeholder="可选"></textarea>
+        </div>
+      </fieldset>
+
+      <div id="message"></div>
+      <div class="actions">
+        <button id="previous">上一张</button>
+        <button id="next-pending">下一张待处理</button>
+        <button id="save" class="primary">保存</button>
+        <button id="save-next" class="primary">保存并下一张</button>
+      </div>
+      <div class="hint">
+        快捷键：<span class="key">←</span>/<span class="key">→</span> 切图，
+        <span class="key">Ctrl+S</span> 保存。页面不调用任何定位模型。
+      </div>
+    </section>
+  </main>
+  <script>
+    const regions = [
+      ["collar", "领口/衣领"], ["cuff", "袖口"], ["hem", "下摆"],
+      ["pocket", "口袋"], ["shoulder", "肩部"], ["waist", "腰部"],
+      ["pattern", "图案"], ["decoration", "装饰"]
+    ];
+    const weakLabels = [
+      ["zipper", "拉链"], ["rivet", "铆钉"],
+      ["neckline", "领口弱类"], ["pocket", "口袋弱类"]
+    ];
+    const token = new URLSearchParams(window.location.search).get("token");
+    let currentIndex = 0;
+    let currentRecord = null;
+
+    function apiUrl(path) {
+      if (!token) return path;
+      const separator = path.includes("?") ? "&" : "?";
+      return `${path}${separator}token=${encodeURIComponent(token)}`;
+    }
+
+    async function api(path, options = {}) {
+      const response = await fetch(apiUrl(path), options);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      return payload;
+    }
+
+    function buildCountInputs(containerId, definitions, prefix) {
+      const container = document.getElementById(containerId);
+      definitions.forEach(([key, title]) => {
+        const wrapper = document.createElement("div");
+        wrapper.className = "count-item";
+        const label = document.createElement("label");
+        label.htmlFor = `${prefix}-${key}`;
+        label.textContent = title;
+        const input = document.createElement("input");
+        input.id = `${prefix}-${key}`;
+        input.type = "number";
+        input.min = "0";
+        input.step = "1";
+        input.value = "0";
+        wrapper.append(label, input);
+        container.appendChild(wrapper);
+      });
+    }
+
+    function countMap(definitions, prefix) {
+      const result = {};
+      definitions.forEach(([key]) => {
+        const value = Number(document.getElementById(`${prefix}-${key}`).value || 0);
+        if (value > 0) result[key] = value;
+      });
+      return result;
+    }
+
+    function setCounts(definitions, prefix, values) {
+      definitions.forEach(([key]) => {
+        document.getElementById(`${prefix}-${key}`).value = values[key] || 0;
+      });
+    }
+
+    function selectedStatus() {
+      return document.querySelector('input[name="status"]:checked').value;
+    }
+
+    function showMessage(text, error = false) {
+      const element = document.getElementById("message");
+      element.textContent = text;
+      element.className = error ? "error" : "";
+    }
+
+    async function loadRecord(index) {
+      showMessage("正在读取…");
+      try {
+        const record = await api(`/api/records/${index}`);
+        currentIndex = record.index;
+        currentRecord = record;
+        document.getElementById("position").textContent =
+          `第 ${record.index + 1} / ${record.record_count} 张 · ${record.width}×${record.height}`;
+        document.getElementById("image-path").textContent = record.image_path;
+        document.getElementById("jump-index").value = record.index + 1;
+        document.getElementById("candidate-image").src =
+          apiUrl(`/api/images/${record.index}`);
+        document.querySelector(
+          `input[name="status"][value="${record.screening_status}"]`
+        ).checked = true;
+        setCounts(regions, "region", record.target_region_instance_counts);
+        setCounts(weakLabels, "weak", record.weak_target_label_instance_counts);
+        document.getElementById("rejection-reason").value =
+          record.rejection_reason || "";
+        document.getElementById("notes").value = record.notes || "";
+        if (record.screened_by) {
+          document.getElementById("reviewer").value = record.screened_by;
+          localStorage.setItem("prd312-screening-reviewer", record.screened_by);
+        }
+        showMessage(record.screening_status === "pending" ? "待处理" : "已载入审核结果");
+      } catch (error) {
+        showMessage(error.message, true);
+      }
+    }
+
+    async function refreshProgress() {
+      try {
+        const summary = await api("/api/progress");
+        const statuses = summary.screening_status_counts;
+        document.getElementById("progress").textContent =
+          `已筛 ${summary.screened_image_count} · 待处理 ${summary.pending_image_count} · ` +
+          `可用 ${statuses.eligible || 0} · 拒绝 ${statuses.rejected || 0} · ` +
+          `供给就绪 ${summary.minimum_supply_ready ? "是" : "否"}`;
+      } catch (error) {
+        showMessage(error.message, true);
+      }
+    }
+
+    async function saveRecord(moveNext) {
+      if (!currentRecord) return;
+      const reviewer = document.getElementById("reviewer").value.trim();
+      const status = selectedStatus();
+      if (status !== "pending" && !reviewer) {
+        showMessage("eligible/rejected 必须填写审核人。", true);
+        return;
+      }
+      localStorage.setItem("prd312-screening-reviewer", reviewer);
+      const body = {
+        image_sha256: currentRecord.image_sha256,
+        screening_status: status,
+        target_region_instance_counts: status === "eligible"
+          ? countMap(regions, "region") : {},
+        weak_target_label_instance_counts: status === "eligible"
+          ? countMap(weakLabels, "weak") : {},
+        rejection_reason: status === "rejected"
+          ? document.getElementById("rejection-reason").value.trim() || null : null,
+        screened_by: status === "pending" ? null : reviewer,
+        notes: status === "pending"
+          ? null : document.getElementById("notes").value.trim() || null
+      };
+      showMessage("正在保存…");
+      try {
+        await api(`/api/records/${currentIndex}`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(body)
+        });
+        showMessage("已原子保存到 CSV。", false);
+        await refreshProgress();
+        if (moveNext) await goNextPending();
+      } catch (error) {
+        showMessage(error.message, true);
+      }
+    }
+
+    async function goNextPending() {
+      try {
+        const result = await api(`/api/records/${currentIndex}/next?status=pending`);
+        if (result.index === null) {
+          showMessage("没有待处理图片。", false);
+          return;
+        }
+        await loadRecord(result.index);
+      } catch (error) {
+        showMessage(error.message, true);
+      }
+    }
+
+    function move(delta) {
+      if (!currentRecord) return;
+      const target = Math.max(
+        0,
+        Math.min(currentRecord.record_count - 1, currentIndex + delta)
+      );
+      loadRecord(target);
+    }
+
+    buildCountInputs("region-counts", regions, "region");
+    buildCountInputs("weak-counts", weakLabels, "weak");
+    document.getElementById("reviewer").value =
+      localStorage.getItem("prd312-screening-reviewer") || "";
+    document.getElementById("previous").addEventListener("click", () => move(-1));
+    document.getElementById("next-pending").addEventListener("click", goNextPending);
+    document.getElementById("save").addEventListener("click", () => saveRecord(false));
+    document.getElementById("save-next").addEventListener("click", () => saveRecord(true));
+    document.getElementById("jump-button").addEventListener("click", () => {
+      const value = Number(document.getElementById("jump-index").value);
+      if (Number.isInteger(value) && value >= 1) loadRecord(value - 1);
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.ctrlKey && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        saveRecord(false);
+      } else if (event.target.tagName !== "INPUT" && event.target.tagName !== "TEXTAREA") {
+        if (event.key === "ArrowLeft") move(-1);
+        if (event.key === "ArrowRight") move(1);
+      }
+    });
+    refreshProgress();
+    loadRecord(0);
+  </script>
+</body>
+</html>

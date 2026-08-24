@@ -2555,6 +2555,25 @@ reports remaining region, weak-label, and multi-target supply deficits.
 to start assigning the locked quota slots; it is not Mask annotation readiness,
 independence attestation, or formal acceptance readiness.
 
+For browser-based screening, start the dedicated service without loading any
+localization model:
+
+```bash
+conda run --no-capture-output -n fashion-prd-312 \
+  python -u scripts/serve_prd_312_acceptance_screening.py \
+  --host 0.0.0.0 \
+  --port 8012
+```
+
+A non-loopback binding generates and prints a random access token. Expose port
+`8012` only through the cloud instance's authenticated custom-service or SSH
+port-forwarding facility, then retain the printed `?token=...` query parameter.
+The page displays only images resolved from the frozen worklist. Each save
+validates the immutable image identity and human evidence, atomically updates
+the CSV, and checkpoints the reviewed JSON and deficit summary. Restarting the
+service resumes from the current CSV. Do not expose the service without its
+token, and stop it after the screening session.
+
 For each slot, the reviewer must provide a complete natural-language query,
 the holdout image path and SHA-256, traceable source record, all target-instance
 Masks, annotation provenance, reviewer identity, timezone-aware review time,
