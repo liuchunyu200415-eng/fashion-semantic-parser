@@ -2524,6 +2524,37 @@ keeps `independence_attested=false` and `formal_holdout_ready=false`: mechanical
 hashing and deduplication do not prove that an image has the requested region or
 that the selected subset remained outside training and model selection.
 
+After the candidate inventory passes, create the model-independent human
+screening package once:
+
+```bash
+python scripts/prepare_prd_312_acceptance_screening.py
+```
+
+This writes a frozen JSON worklist and
+`outputs/localization/prd_312_acceptance_screening_v1.csv`. Do not rerun it with
+`--overwrite` after screening begins. Reviewers may edit only
+`screening_status`, the eight `*_count` target-region columns, the four weak
+target-label count columns, rejection reason, reviewer, timezone-aware review
+time, and notes. The image path, SHA-256, width, and height columns are immutable.
+Set an image to `eligible` only after counting every visible instance of the
+applicable locked regions; set it to `rejected` with a reason when none can
+support the benchmark. Model predictions and localization scores must not be
+used to choose easy acceptance images.
+
+Validate an edited or partially edited CSV with:
+
+```bash
+python scripts/import_prd_312_acceptance_screening.py
+```
+
+The importer fails on missing rows, identity edits, invalid counts, incomplete
+reviewer evidence, or inconsistent weak-label and region counts. Its summary
+reports remaining region, weak-label, and multi-target supply deficits.
+`minimum_supply_ready=true` means only that enough human-screened images exist
+to start assigning the locked quota slots; it is not Mask annotation readiness,
+independence attestation, or formal acceptance readiness.
+
 For each slot, the reviewer must provide a complete natural-language query,
 the holdout image path and SHA-256, traceable source record, all target-instance
 Masks, annotation provenance, reviewer identity, timezone-aware review time,
