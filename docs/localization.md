@@ -2502,6 +2502,28 @@ sleeve, belt, or epaulette Masks must not be renamed to satisfy the missing PRD
 regions. The remaining `375` slots may reuse exact Masks only from an
 independent acceptance holdout and still require human verification.
 
+Freeze the image candidate pool separately before manual screening:
+
+```bash
+find data/raw/fashionpedia/test \
+  -type f \
+  \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) \
+  | sort \
+  > outputs/localization/prd_312_acceptance_holdout_images.txt
+
+python scripts/prepare_prd_312_acceptance_holdout.py
+```
+
+The inventory decodes every image, records its content SHA-256 and dimensions,
+collapses duplicate paths, excludes duplicate bytes, and propagates exclusions
+to every byte-identical copy. The tracked
+`configs/prd_312_acceptance_excluded_images.txt` starts with Fashionpedia test
+images already used by development diagnostics; additional discoveries must be
+appended before freezing the final subset. The resulting candidate inventory
+keeps `independence_attested=false` and `formal_holdout_ready=false`: mechanical
+hashing and deduplication do not prove that an image has the requested region or
+that the selected subset remained outside training and model selection.
+
 For each slot, the reviewer must provide a complete natural-language query,
 the holdout image path and SHA-256, traceable source record, all target-instance
 Masks, annotation provenance, reviewer identity, timezone-aware review time,

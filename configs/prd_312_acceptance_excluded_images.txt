@@ -1,0 +1,2 @@
+# Fashionpedia test images already used during development diagnostics.
+data/raw/fashionpedia/test/0229bef01efc25f915374d55f59cbfdd.jpg
